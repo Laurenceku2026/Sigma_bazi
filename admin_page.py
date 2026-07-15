@@ -67,16 +67,41 @@ def render_admin_page(lang: str, supabase_client) -> None:
         st.warning(t("no_users", lang))
         return
 
+    st.info(
+        f"🔒 本页只管理 **Sigma Fate 八字** 用户（`{supabase_client.schema}` / `{supabase_client.app_id}`），"
+        f"与同项目其他 App（如门户 profiles）物理隔离。"
+        if lang == "zh"
+        else f"🔒 Only Sigma Fate users (`{supabase_client.schema}` / `{supabase_client.app_id}`)."
+    )
     st.caption(f"schema=`{supabase_client.schema}` · app_id=`{supabase_client.app_id}`")
+
+    if st.button(
+        "🧹 清理非本 App 脏数据" if lang == "zh" else "🧹 Purge foreign rows",
+        key="admin_purge_foreign",
+    ):
+        n = supabase_client.purge_foreign_users()
+        st.success(f"已清理 {n} 条" if lang == "zh" else f"Purged {n} rows")
+        st.rerun()
+
     users: List[Dict] = supabase_client.list_users()
+    # 二次保险：前端再滤一次
+    users = [
+        u for u in users
+        if u.get("app_id") == getattr(supabase_client, "app_id", "sigma_fate_v1")
+        and u.get("user_id")
+    ]
     if getattr(supabase_client, "last_error", None):
-        st.error(f"读取用户失败：{supabase_client.last_error}")
-        st.info(
-            "请确认：1) 已执行 sql/001 与 002；2) API Exposed schemas 含 app_sigma_fate；"
-            "3) Secrets 中 SUPABASE_STOCK_URL 与 SERVICE_ROLE 属于同一项目。"
-            if lang == "zh"
-            else "Check SQL migration, exposed schema app_sigma_fate, and matching Supabase URL/key."
-        )
+        err = supabase_client.last_error
+        if "已隔离丢弃" in str(err):
+            st.warning(err)
+        else:
+            st.error(f"读取用户失败：{err}")
+            st.info(
+                "请确认：1) 已执行 sql/001～004；2) Exposed schemas 含 app_sigma_fate；"
+                "3) Secrets 中 URL 与 service_role 属同一项目。"
+                if lang == "zh"
+                else "Check SQL, exposed schema, and matching Supabase URL/key."
+            )
 
     paid = [
         u

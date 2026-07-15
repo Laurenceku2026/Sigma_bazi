@@ -46,12 +46,57 @@ class SupabaseClient:
         options = ClientOptions(schema=self.schema)
         self.client: Client = create_client(url, key, options=options)
         self.last_error: Optional[str] = None
+        # 强制 PostgREST 读写本 App schema（防止落到 public 其他 App 表）
+        self._apply_schema_headers()
+
+    def _apply_schema_headers(self) -> None:
+        try:
+            headers = {
+                "Accept-Profile": self.schema,
+                "Content-Profile": self.schema,
+            }
+            # supabase-py / postgrest-py 常见路径
+            postgrest = getattr(self.client, "postgrest", None)
+            if postgrest is not None:
+                session = getattr(postgrest, "session", None)
+                if session is not None and hasattr(session, "headers"):
+                    session.headers.update(headers)
+                if hasattr(postgrest, "schema"):
+                    try:
+                        postgrest.schema(self.schema)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"schema header setup: {e}")
 
     # ---------- 内部工具 ----------
 
     def _table(self, table_name: str):
         """始终落在本 App schema，避免误打 public 或其他 App。"""
+        self._apply_schema_headers()
+        # 禁止在未锁定 schema 时直接 client.table()
         return self.client.schema(self.schema).table(table_name)
+
+    def _is_own_user_row(self, row: Dict[str, Any]) -> bool:
+        """只认本 App 用户行，过滤掉 public.profiles 等其他表混入数据。"""
+        if not isinstance(row, dict):
+            return False
+        if row.get("app_id") != self.app_id:
+            return False
+        # 本表字段：user_id；拒绝门户 profiles（通常只有 id uuid）
+        if not row.get("user_id"):
+            return False
+        return True
+
+    def _filter_own_users(self, rows: Optional[List[Dict]]) -> List[Dict]:
+        own = [r for r in (rows or []) if self._is_own_user_row(r)]
+        dropped = len(rows or []) - len(own)
+        if dropped > 0:
+            self.last_error = (
+                f"已隔离丢弃 {dropped} 条非本 App 记录"
+                f"（仅保留 schema={self.schema}, app_id={self.app_id}）"
+            )
+        return own
 
     def _now(self) -> str:
         return datetime.utcnow().isoformat() + "Z"
@@ -389,6 +434,7 @@ class SupabaseClient:
     # ---------- 管理员：用户列表 / 订阅 / 次数 ----------
 
     def list_users(self, limit: int = 500) -> List[Dict]:
+        """仅返回本 App（schema + app_id）用户，绝不分其他 App。"""
         self.last_error = None
         try:
             result = (
@@ -399,22 +445,36 @@ class SupabaseClient:
                 .limit(limit)
                 .execute()
             )
-            return result.data or []
+            return self._filter_own_users(result.data)
         except Exception as e:
             self._set_error("List users", e)
-            # created_at 排序失败时降级
             try:
                 result = (
                     self._table("users")
-                    .select("*")
+                    .select("user_id,email,app_id,subscription_tier,free_trials_remaining,"
+                            "subscription_expires_at,created_at,last_login_at,email_confirmed")
                     .eq("app_id", self.app_id)
                     .limit(limit)
                     .execute()
                 )
-                return result.data or []
+                return self._filter_own_users(result.data)
             except Exception as e2:
                 self._set_error("List users fallback", e2)
                 return []
+
+    def purge_foreign_users(self) -> int:
+        """删除误写入本 schema 但 app_id 不是本 App 的行。"""
+        try:
+            result = (
+                self._table("users")
+                .delete()
+                .neq("app_id", self.app_id)
+                .execute()
+            )
+            return len(result.data or [])
+        except Exception as e:
+            self._set_error("purge_foreign_users", e)
+            return 0
 
     def admin_reset_free_trials(self, default_trials: int = 30) -> int:
         """重置所有 free 用户次数，返回更新条数。"""
