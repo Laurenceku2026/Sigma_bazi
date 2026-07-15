@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 from admin_page import render_admin_login, render_admin_page
 from bazi_engine import BaziEngine
-from i18n import region_label, region_longitude, region_options, t
+from ui_texts import region_label, region_longitude, region_options, t
 from membership import PAID_TIERS, TIERS, can_generate_report, tier_outline
 from report_generator import ReportGenerator
 from stripe_payment import StripeClient
@@ -292,6 +292,9 @@ with st.sidebar:
         with st.expander(f"⚠️ {t('init_errors', lang)}", expanded=False):
             for err in st.session_state["_init_errors"]:
                 st.caption(err)
+    st.markdown("---")
+    st.markdown("📧 **聯絡我們**" if lang == "zh" else "📧 **Contact us**")
+    st.caption("✉️ 電郵: Techlife2027@gmail.com" if lang == "zh" else "✉️ Email: Techlife2027@gmail.com")
     st.markdown("---")
     st.caption(f"App：`{APP_ID}`")
 

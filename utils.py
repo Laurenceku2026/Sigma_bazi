@@ -49,7 +49,7 @@ def render_wuxing_bars(stats):
 
 def render_bazi_chart(bazi_data, lang: str = "zh"):
     """在页面内渲染八字命盘（供输入页与命盘页复用）。"""
-    from i18n import t
+    from ui_texts import t
 
     col_show1, col_show2 = st.columns(2)
     with col_show1:

@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
-from i18n import t
+from ui_texts import t
 
 
 def _safe_date(value: Any) -> str:
