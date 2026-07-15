@@ -109,13 +109,78 @@ class BaziEngine:
         # 8. 统计五行
         self.wuxing_stats = self._calculate_wuxing_stats()
         
-        # 9. 计算大运
+        # 9. 计算大运（含各步十年流年）
         self.da_yun = self._calculate_da_yun()
         
-        # 10. 计算流年
+        # 10. 计算流年（近窗）与当前动态柱
         self.liu_nian = self._calculate_liu_nian()
+        self.flow = self._calculate_current_flow()
+        self.xiao_yun = self._calculate_xiao_yun()
+        self.stem_notes, self.branch_notes = self._calculate_ganzhi_notes()
         
         return self
+
+    def _ganzhi_of_year(self, year: int):
+        """公历年 → 年干支（以立春简化为公历年）"""
+        diff = year - 1900
+        return self.TIANGAN[(6 + diff) % 10], self.DIZHI[(0 + diff) % 12]
+
+    def _shishen_of(self, char: str) -> str:
+        """相对日主的十神（天干或地支本气近似）"""
+        if not char or not self.day_master:
+            return ""
+        # 地支取主气藏干
+        if char in self.DIZHI:
+            cangan = self.CANGAN.get(char, [])
+            char = cangan[0] if cangan else char
+        day_tg = self.day_master
+        day_wx = self.WUXING_MAP.get(day_tg, "")
+        day_yy = "阳" if day_tg in ["甲", "丙", "戊", "庚", "壬"] else "阴"
+        wx = self.WUXING_MAP.get(char, "")
+        yy = "阳" if char in ["甲", "丙", "戊", "庚", "壬"] else "阴"
+        if wx == day_wx:
+            return "比肩" if yy == day_yy else "劫财"
+        if self._is_sheng(day_wx, wx):
+            return "食神" if yy == day_yy else "伤官"
+        if self._is_ke(day_wx, wx):
+            return "正财" if yy == day_yy else "偏财"
+        if self._is_ke(wx, day_wx):
+            return "正官" if yy == day_yy else "七杀"
+        if self._is_sheng(wx, day_wx):
+            return "正印" if yy == day_yy else "偏印"
+        return ""
+
+    def _chang_sheng(self, zhi: str) -> str:
+        """十二长生（相对日主）"""
+        order = ["长生", "沐浴", "冠带", "临官", "帝旺", "衰", "病", "死", "墓", "绝", "胎", "养"]
+        yang_start = {"甲": "亥", "丙": "寅", "戊": "寅", "庚": "巳", "壬": "申"}
+        yin_start = {"乙": "午", "丁": "酉", "己": "酉", "辛": "子", "癸": "卯"}
+        dm = self.day_master
+        is_yang = dm in yang_start
+        start = yang_start.get(dm) or yin_start.get(dm)
+        if not start or zhi not in self.DIZHI:
+            return ""
+        start_i = self.DIZHI.index(start)
+        zhi_i = self.DIZHI.index(zhi)
+        if is_yang:
+            idx = (zhi_i - start_i) % 12
+        else:
+            idx = (start_i - zhi_i) % 12
+        return order[idx]
+
+    def _pillar_bundle(self, gan: str, zhi: str, **extra) -> dict:
+        cangan = self.CANGAN.get(zhi, [])
+        return {
+            "gan": gan,
+            "zhi": zhi,
+            "gan_wx": self.WUXING_MAP.get(gan, ""),
+            "zhi_wx": self.WUXING_MAP.get(zhi, ""),
+            "gan_god": self._shishen_of(gan),
+            "zhi_gods": [self._shishen_of(g) for g in cangan],
+            "cangan": cangan,
+            "chang_sheng": self._chang_sheng(zhi),
+            **extra,
+        }
     
     def _true_solar_time_correction(self):
         """真太阳时校正：东经120度为北京时间基准，每度差4分钟"""
@@ -270,65 +335,195 @@ class BaziEngine:
         return stats
     
     def _calculate_da_yun(self):
-        """计算大运（简化版）"""
-        # 根据性别和日主阴阳决定顺逆
+        """计算大运：起运岁、起止公历年、十神、长生、步内十年流年。"""
         day_tg = self.day_master
-        is_yang = day_tg in ['甲', '丙', '戊', '庚', '壬']
-        is_male = self.gender == '男'
-        
-        # 阳男阴女顺排，阴男阳女逆排
+        is_yang = day_tg in ["甲", "丙", "戊", "庚", "壬"]
+        is_male = self.gender == "男"
         is_forward = (is_yang and is_male) or (not is_yang and not is_male)
-        
-        # 从月柱开始排大运
-        month_tg, month_dz = self.bazi['月柱']
+
+        month_tg, month_dz = self.bazi["月柱"]
         tg_index = self.TIANGAN.index(month_tg)
         dz_index = self.DIZHI.index(month_dz)
-        
+        birth_year = self.birth_date.year
+        # 简化起运：2 岁起第一步大运（详算节气交付报告）
+        qi_yun_age = 2
+        now_year = datetime.now().year
+        current_age = max(0, now_year - birth_year)
+
         da_yun = []
-        for i in range(8):  # 排8步大运
+        for i in range(9):  # 9 步覆盖至约 82–92 岁
             if is_forward:
                 tg_idx = (tg_index + i + 1) % 10
                 dz_idx = (dz_index + i + 1) % 12
             else:
                 tg_idx = (tg_index - i - 1) % 10
                 dz_idx = (dz_index - i - 1) % 12
-            
-            # 每步大运10年
-            start_age = i * 10
-            end_age = (i + 1) * 10
-            da_yun.append({
-                'step': i + 1,
-                'gan': self.TIANGAN[tg_idx],
-                'zhi': self.DIZHI[dz_idx],
-                'start_age': start_age,
-                'end_age': end_age,
-                'years': f"{start_age}-{end_age}岁"
-            })
-        
+
+            gan, zhi = self.TIANGAN[tg_idx], self.DIZHI[dz_idx]
+            start_age = qi_yun_age + i * 10
+            end_age = start_age + 9
+            start_year = birth_year + start_age
+            end_year = start_year + 9
+            years_ln = []
+            for y in range(start_year, end_year + 1):
+                yg, yz = self._ganzhi_of_year(y)
+                years_ln.append(
+                    {
+                        "year": y,
+                        "gan": yg,
+                        "zhi": yz,
+                        "gan_god": self._shishen_of(yg),
+                        "is_current": y == now_year,
+                    }
+                )
+            bundle = self._pillar_bundle(
+                gan,
+                zhi,
+                step=i + 1,
+                start_age=start_age,
+                end_age=end_age,
+                start_year=start_year,
+                end_year=end_year,
+                years=f"{start_age:02d}-{end_age:02d}岁",
+                age_label=f"{start_age:02d}岁",
+                liu_nian=years_ln,
+                is_current=start_age <= current_age <= end_age,
+            )
+            da_yun.append(bundle)
         return da_yun
-    
+
+    def _calculate_xiao_yun(self):
+        """起运前小运（简化：起运前不足十年的公历年）。"""
+        if not self.da_yun:
+            return []
+        first = self.da_yun[0]
+        birth_year = self.birth_date.year
+        qi = int(first.get("start_age") or 2)
+        rows = []
+        for age in range(1, qi):
+            year = birth_year + age
+            yg, yz = self._ganzhi_of_year(year)
+            # 小运干支：简化用流年近似展示
+            rows.append(
+                {
+                    "age": age,
+                    "year": year,
+                    "gan": yg,
+                    "zhi": yz,
+                    "gan_god": self._shishen_of(yg),
+                    "liu_nian": f"{yg}{yz}",
+                }
+            )
+        return rows
+
     def _calculate_liu_nian(self):
-        """计算流年（当前年份前后各5年）"""
-        current_year = datetime.now().year
-        liu_nian = []
-        
-        for year in range(current_year - 5, current_year + 6):
-            # 简化：用年份对应干支
-            base_year = 1900
-            base_tg = 6
-            base_dz = 0
-            diff = year - base_year
-            tg_idx = (base_tg + diff) % 10
-            dz_idx = (base_dz + diff) % 12
-            liu_nian.append({
-                'year': year,
-                'gan': self.TIANGAN[tg_idx],
-                'zhi': self.DIZHI[dz_idx],
-                'is_current': year == current_year
-            })
-        
-        return liu_nian
-    
+        """近窗流年（当前大运十年优先，否则前后 5 年）。"""
+        now_year = datetime.now().year
+        current_dy = next((d for d in self.da_yun if d.get("is_current")), None)
+        if current_dy and current_dy.get("liu_nian"):
+            return list(current_dy["liu_nian"])
+        out = []
+        for year in range(now_year - 5, now_year + 6):
+            gan, zhi = self._ganzhi_of_year(year)
+            out.append(
+                {
+                    "year": year,
+                    "gan": gan,
+                    "zhi": zhi,
+                    "gan_god": self._shishen_of(gan),
+                    "is_current": year == now_year,
+                }
+            )
+        return out
+
+    def _calculate_current_flow(self):
+        """当前大运 / 流年 / 流月 / 流日 动态柱（免费盘展示用）。"""
+        now = datetime.now()
+        dy = next((d for d in self.da_yun if d.get("is_current")), self.da_yun[0] if self.da_yun else None)
+        gan_y, zhi_y = self._ganzhi_of_year(now.year)
+        month = now.month
+        dz_m = self.DIZHI[(month + 1) % 12]
+        # 五虎遁：寅月干
+        tiger = {
+            "甲": "丙", "己": "丙", "乙": "戊", "庚": "戊", "丙": "庚", "辛": "庚",
+            "丁": "壬", "壬": "壬", "戊": "甲", "癸": "甲",
+        }
+        start_m = tiger.get(gan_y, "丙")
+        m_off = (self.DIZHI.index(dz_m) - 2) % 12  # 寅=正月
+        gan_m = self.TIANGAN[(self.TIANGAN.index(start_m) + m_off) % 10]
+
+        day_p = self._day_pillar_for(now)
+        day_age = max(0, now.year - self.birth_date.year)
+
+        return {
+            "da_yun": dy,
+            "liu_nian": self._pillar_bundle(
+                gan_y, zhi_y, year=now.year, age=day_age, label="流年"
+            ),
+            "liu_yue": self._pillar_bundle(
+                gan_m, dz_m, month=month, label="流月"
+            ),
+            "liu_ri": self._pillar_bundle(
+                day_p[0], day_p[1], day=now.day, label="流日"
+            ),
+        }
+
+    def _day_pillar_for(self, dt: datetime):
+        """任意公历日的日柱（与排盘日柱公式一致）。"""
+        base = datetime(1900, 1, 1)
+        diff = (dt.date() - base.date()).days
+        # 1900-01-01 为甲戌
+        tg_idx = (0 + diff) % 10
+        dz_idx = (10 + diff) % 12
+        return self.TIANGAN[tg_idx], self.DIZHI[dz_idx]
+
+    def _calculate_ganzhi_notes(self):
+        """天干/地支留意（合冲刑害简化提示，详述在会员报告）。"""
+        stems = [p[0] for p in self.bazi.values()]
+        branches = [p[1] for p in self.bazi.values()]
+        if getattr(self, "flow", None):
+            for key in ("da_yun", "liu_nian", "liu_yue", "liu_ri"):
+                item = self.flow.get(key) or {}
+                if item.get("gan"):
+                    stems.append(item["gan"])
+                if item.get("zhi"):
+                    branches.append(item["zhi"])
+
+        he_tg = {("甲", "己"): "甲己合土", ("乙", "庚"): "乙庚合金",
+                 ("丙", "辛"): "丙辛合水", ("丁", "壬"): "丁壬合木", ("戊", "癸"): "戊癸合火"}
+        chong_tg = {("甲", "庚"): "甲庚冲", ("乙", "辛"): "乙辛冲",
+                    ("丙", "壬"): "丙壬冲", ("丁", "癸"): "丁癸冲"}
+        he_dz = {
+            ("子", "丑"): "子丑合土", ("寅", "亥"): "寅亥合木", ("卯", "戌"): "卯戌合火",
+            ("辰", "酉"): "辰酉合金", ("巳", "申"): "巳申合水", ("午", "未"): "午未合土",
+        }
+        chong_dz = {
+            ("子", "午"): "子午冲", ("丑", "未"): "丑未冲", ("寅", "申"): "寅申冲",
+            ("卯", "酉"): "卯酉冲", ("辰", "戌"): "辰戌冲", ("巳", "亥"): "巳亥冲",
+        }
+        stem_notes, branch_notes = [], []
+        uniq_s, uniq_b = list(dict.fromkeys(stems)), list(dict.fromkeys(branches))
+        for i, a in enumerate(uniq_s):
+            for b in uniq_s[i + 1:]:
+                pair = tuple(sorted([a, b]))
+                # 合冲表按特定阴阳配对
+                for k, v in he_tg.items():
+                    if set(k) == set(pair):
+                        stem_notes.append(v)
+                for k, v in chong_tg.items():
+                    if set(k) == set(pair):
+                        stem_notes.append(v)
+        for i, a in enumerate(uniq_b):
+            for b in uniq_b[i + 1:]:
+                pair = set([a, b])
+                for k, v in he_dz.items():
+                    if set(k) == pair:
+                        branch_notes.append(v)
+                for k, v in chong_dz.items():
+                    if set(k) == pair:
+                        branch_notes.append(v)
+        return stem_notes[:8], branch_notes[:8]
+
     def get_summary(self):
         """获取命盘摘要"""
         pillars = {}
@@ -355,5 +550,10 @@ class BaziEngine:
             "wuxing_stats": self.wuxing_stats,
             "da_yun": self.da_yun,
             "liu_nian": self.liu_nian,
+            "xiao_yun": getattr(self, "xiao_yun", []),
+            "flow": getattr(self, "flow", {}),
+            "stem_notes": getattr(self, "stem_notes", []),
+            "branch_notes": getattr(self, "branch_notes", []),
             "gender": self.gender,
+            "birth_year": self.birth_date.year,
         }

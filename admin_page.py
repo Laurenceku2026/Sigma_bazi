@@ -68,20 +68,33 @@ def render_admin_page(lang: str, supabase_client) -> None:
         return
 
     st.info(
-        f"🔒 本页只管理 **Sigma Fate 八字** 用户（`{supabase_client.schema}` / `{supabase_client.app_id}`），"
-        f"与同项目其他 App（如门户 profiles）物理隔离。"
+        f"🔒 本页只管理 **Sigma Fate** 表 `sf_users`（`{supabase_client.schema}` / `{supabase_client.app_id}`）。"
+        f"若仍看到十余个用户，请在 Supabase 执行 `sql/005_sf_users_isolated.sql` 后 Reboot，并用下方按钮清理匿名行。"
         if lang == "zh"
-        else f"🔒 Only Sigma Fate users (`{supabase_client.schema}` / `{supabase_client.app_id}`)."
+        else f"🔒 Only `sf_users` (`{supabase_client.schema}` / `{supabase_client.app_id}`)."
     )
-    st.caption(f"schema=`{supabase_client.schema}` · app_id=`{supabase_client.app_id}`")
+    st.caption(
+        f"table=`{getattr(supabase_client, 'USER_TABLE', 'sf_users')}` · "
+        f"schema=`{supabase_client.schema}` · app_id=`{supabase_client.app_id}`"
+    )
 
-    if st.button(
-        "🧹 清理非本 App 脏数据" if lang == "zh" else "🧹 Purge foreign rows",
-        key="admin_purge_foreign",
-    ):
-        n = supabase_client.purge_foreign_users()
-        st.success(f"已清理 {n} 条" if lang == "zh" else f"Purged {n} rows")
-        st.rerun()
+    purge_cols = st.columns(2)
+    with purge_cols[0]:
+        if st.button(
+            "🧹 清理非本 App 脏数据" if lang == "zh" else "🧹 Purge foreign rows",
+            key="admin_purge_foreign",
+        ):
+            n = supabase_client.purge_foreign_users()
+            st.success(f"已清理 {n} 条" if lang == "zh" else f"Purged {n} rows")
+            st.rerun()
+    with purge_cols[1]:
+        if st.button(
+            "🧹 删除无邮箱匿名用户" if lang == "zh" else "🧹 Delete anonymous (no email)",
+            key="admin_purge_anon",
+        ):
+            n = supabase_client.purge_anonymous_users()
+            st.success(f"已删除 {n} 条匿名用户" if lang == "zh" else f"Deleted {n} anon rows")
+            st.rerun()
 
     users: List[Dict] = supabase_client.list_users()
     # 二次保险：前端再滤一次
@@ -97,7 +110,7 @@ def render_admin_page(lang: str, supabase_client) -> None:
         else:
             st.error(f"读取用户失败：{err}")
             st.info(
-                "请确认：1) 已执行 sql/001～004；2) Exposed schemas 含 app_sigma_fate；"
+                "请确认：1) 已执行 sql/001～005；2) Exposed schemas 含 app_sigma_fate；"
                 "3) Secrets 中 URL 与 service_role 属同一项目。"
                 if lang == "zh"
                 else "Check SQL, exposed schema, and matching Supabase URL/key."
@@ -130,6 +143,8 @@ def render_admin_page(lang: str, supabase_client) -> None:
         table_rows.append(
             {
                 t("email_col", lang): u.get("email") or "-",
+                ("姓名" if lang == "zh" else "Name"): u.get("display_name") or "-",
+                ("生日" if lang == "zh" else "Birthday"): u.get("birth_date") or "-",
                 t("subscription_col", lang): u.get("subscription_tier", "free"),
                 t("trials_col", lang): u.get("free_trials_remaining", 30),
                 t("expires_col", lang): _safe_date(u.get("subscription_expires_at")),

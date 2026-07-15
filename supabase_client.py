@@ -26,6 +26,7 @@ class SupabaseClient:
 
     DEFAULT_APP_ID = "sigma_fate_v1"
     DEFAULT_SCHEMA = "app_sigma_fate"
+    USER_TABLE = "sf_users"  # 专用表名，避免误读 public.users / 其他 App
 
     def __init__(
         self,
@@ -167,7 +168,7 @@ class SupabaseClient:
         existing = self.get_user_by_email(email)
         if existing:
             try:
-                self._table("users").update(
+                self._table(self.USER_TABLE).update(
                     {
                         "last_login_at": self._now(),
                         "updated_at": self._now(),
@@ -196,7 +197,7 @@ class SupabaseClient:
         )
         try:
             result = (
-                self._table("users")
+                self._table(self.USER_TABLE)
                 .upsert(data, on_conflict="user_id,app_id")
                 .execute()
             )
@@ -249,7 +250,7 @@ class SupabaseClient:
             if metadata is not None:
                 updates["metadata"] = metadata
             try:
-                self._table("users").update(updates).eq(
+                self._table(self.USER_TABLE).update(updates).eq(
                     "user_id", user_id
                 ).eq("app_id", self.app_id).execute()
             except Exception as e:
@@ -295,7 +296,7 @@ class SupabaseClient:
 
         try:
             result = (
-                self._table("users")
+                self._table(self.USER_TABLE)
                 .upsert(data, on_conflict="user_id,app_id")
                 .execute()
             )
@@ -314,7 +315,7 @@ class SupabaseClient:
     def get_user(self, user_id: str) -> Optional[Dict]:
         try:
             result = (
-                self._table("users")
+                self._table(self.USER_TABLE)
                 .select("*")
                 .eq("user_id", user_id)
                 .eq("app_id", self.app_id)
@@ -329,7 +330,7 @@ class SupabaseClient:
     def get_user_by_auth_id(self, auth_user_id: str) -> Optional[Dict]:
         try:
             result = (
-                self._table("users")
+                self._table(self.USER_TABLE)
                 .select("*")
                 .eq("auth_user_id", auth_user_id)
                 .eq("app_id", self.app_id)
@@ -344,7 +345,7 @@ class SupabaseClient:
     def get_user_by_email(self, email: str) -> Optional[Dict]:
         try:
             result = (
-                self._table("users")
+                self._table(self.USER_TABLE)
                 .select("*")
                 .eq("email", email.strip().lower() if email else email)
                 .eq("app_id", self.app_id)
@@ -354,7 +355,7 @@ class SupabaseClient:
             # 兼容大小写存错：再试原样
             if not result.data and email:
                 result = (
-                    self._table("users")
+                    self._table(self.USER_TABLE)
                     .select("*")
                     .ilike("email", email.strip())
                     .eq("app_id", self.app_id)
@@ -381,7 +382,7 @@ class SupabaseClient:
                 data["stripe_customer_id"] = stripe_customer_id
 
             result = (
-                self._table("users")
+                self._table(self.USER_TABLE)
                 .update(data)
                 .eq("user_id", user_id)
                 .eq("app_id", self.app_id)
@@ -438,7 +439,7 @@ class SupabaseClient:
         self.last_error = None
         try:
             result = (
-                self._table("users")
+                self._table(self.USER_TABLE)
                 .select("*")
                 .eq("app_id", self.app_id)
                 .order("created_at", desc=True)
@@ -450,7 +451,7 @@ class SupabaseClient:
             self._set_error("List users", e)
             try:
                 result = (
-                    self._table("users")
+                    self._table(self.USER_TABLE)
                     .select("user_id,email,app_id,subscription_tier,free_trials_remaining,"
                             "subscription_expires_at,created_at,last_login_at,email_confirmed")
                     .eq("app_id", self.app_id)
@@ -466,7 +467,7 @@ class SupabaseClient:
         """删除误写入本 schema 但 app_id 不是本 App 的行。"""
         try:
             result = (
-                self._table("users")
+                self._table(self.USER_TABLE)
                 .delete()
                 .neq("app_id", self.app_id)
                 .execute()
@@ -480,7 +481,7 @@ class SupabaseClient:
         """重置所有 free 用户次数，返回更新条数。"""
         try:
             result = (
-                self._table("users")
+                self._table(self.USER_TABLE)
                 .update(
                     {
                         "free_trials_remaining": default_trials,
@@ -517,7 +518,7 @@ class SupabaseClient:
                 data["email_confirmed"] = email_confirmed
 
             result = (
-                self._table("users")
+                self._table(self.USER_TABLE)
                 .update(data)
                 .eq("user_id", user_id)
                 .eq("app_id", self.app_id)
@@ -538,7 +539,7 @@ class SupabaseClient:
                 "app_id", self.app_id
             ).execute()
             result = (
-                self._table("users")
+                self._table(self.USER_TABLE)
                 .delete()
                 .eq("user_id", user_id)
                 .eq("app_id", self.app_id)
@@ -548,6 +549,78 @@ class SupabaseClient:
         except Exception as e:
             print(f"Admin delete user error: {e}")
             return False
+
+    def save_user_profile(self, user_id: str, birth_info: Dict) -> bool:
+        """注册/排盘后写入姓名、生日等资料到 sf_users。"""
+        if not user_id or not birth_info:
+            return False
+        data: Dict[str, Any] = {
+            "updated_at": self._now(),
+            "last_birth_info": birth_info,
+        }
+        if birth_info.get("name"):
+            data["display_name"] = str(birth_info["name"]).strip()
+        if birth_info.get("gender"):
+            data["gender"] = birth_info["gender"]
+        if birth_info.get("birth_date"):
+            data["birth_date"] = birth_info["birth_date"]
+        if birth_info.get("birth_hour") is not None:
+            try:
+                data["birth_hour"] = int(birth_info["birth_hour"])
+            except (TypeError, ValueError):
+                pass
+        if birth_info.get("birth_minute") is not None:
+            try:
+                data["birth_minute"] = int(birth_info["birth_minute"])
+            except (TypeError, ValueError):
+                pass
+        if birth_info.get("region_id"):
+            data["region_id"] = birth_info["region_id"]
+        if birth_info.get("birth_place") is not None:
+            data["birth_place"] = birth_info.get("birth_place") or ""
+        if birth_info.get("email"):
+            data["email"] = str(birth_info["email"]).strip().lower()
+
+        try:
+            result = (
+                self._table(self.USER_TABLE)
+                .update(data)
+                .eq("user_id", user_id)
+                .eq("app_id", self.app_id)
+                .execute()
+            )
+            return bool(result.data)
+        except Exception as e:
+            self._set_error("save_user_profile", e)
+            return False
+
+    def purge_anonymous_users(self) -> int:
+        """删除无邮箱的测试/匿名行（仅本 app_id）。"""
+        try:
+            result = (
+                self._table(self.USER_TABLE)
+                .delete()
+                .eq("app_id", self.app_id)
+                .is_("email", "null")
+                .execute()
+            )
+            n1 = len(result.data or [])
+        except Exception as e:
+            self._set_error("purge_anonymous_users.null", e)
+            n1 = 0
+        try:
+            result2 = (
+                self._table(self.USER_TABLE)
+                .delete()
+                .eq("app_id", self.app_id)
+                .eq("email", "")
+                .execute()
+            )
+            n2 = len(result2.data or [])
+        except Exception as e:
+            self._set_error("purge_anonymous_users.empty", e)
+            n2 = 0
+        return n1 + n2
 
     # ---------- 报告 ----------
 

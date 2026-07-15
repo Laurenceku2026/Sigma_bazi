@@ -192,6 +192,13 @@ def run_bazi(form: Dict[str, Any]):
     if supabase_client:
         sync_app_user()
         try:
+            supabase_client.save_user_profile(
+                st.session_state.user_id,
+                st.session_state.birth_info,
+            )
+        except Exception:
+            pass
+        try:
             supabase_client.log_action(st.session_state.user_id, "generate_bazi", {})
         except Exception:
             pass

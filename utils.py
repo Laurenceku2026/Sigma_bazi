@@ -89,7 +89,6 @@ def _build_pillars(bazi_data):
     pillars = bazi_data.get("pillars")
     if pillars:
         return pillars
-    # 兼容旧数据
     ten_gods = bazi_data.get("ten_gods") or {}
     out = {}
     for name, (gan, zhi) in bazi_data["bazi"].items():
@@ -118,21 +117,23 @@ def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
         else ["Year", "Month", "Day", "Hour"]
     )
     pillars = _build_pillars(bazi_data)
-    day_master = bazi_data.get("day_master", "")
 
     def cell(name_key, field_fn):
         p = pillars.get(name_key, {})
-        return f"<td style='text-align:center;padding:8px 6px;border:1px solid #ddd;vertical-align:top;'>{field_fn(p, name_key)}</td>"
+        return (
+            f"<td style='text-align:center;padding:8px 6px;border:1px solid #ddd;"
+            f"vertical-align:top;'>{field_fn(p, name_key)}</td>"
+        )
 
     rows = []
-    # header
     ths = "".join(
         f"<th style='background:#f5f5f5;padding:8px;border:1px solid #ddd;'>{lab}</th>"
         for lab in labels
     )
-    rows.append(f"<tr><th style='background:#eee;padding:8px;border:1px solid #ddd;'></th>{ths}</tr>")
+    rows.append(
+        f"<tr><th style='background:#eee;padding:8px;border:1px solid #ddd;'></th>{ths}</tr>"
+    )
 
-    # 十神（天干）
     def gan_god_cell(p, name_key):
         is_day = name_key == "日柱"
         return _god_html("日主" if is_day else p.get("gan_god", ""), is_day)
@@ -143,7 +144,6 @@ def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
         f"{'十神' if lang == 'zh' else 'Ten Gods'}</td>{cells}</tr>"
     )
 
-    # 天干
     def gan_cell(p, _):
         return _char_html(p.get("gan", "·"), "2.4rem")
 
@@ -153,7 +153,6 @@ def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
         f"{'天干' if lang == 'zh' else 'Stem'}</td>{cells}</tr>"
     )
 
-    # 地支
     def zhi_cell(p, _):
         return _char_html(p.get("zhi", "·"), "2.4rem")
 
@@ -163,7 +162,6 @@ def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
         f"{'地支' if lang == 'zh' else 'Branch'}</td>{cells}</tr>"
     )
 
-    # 藏干
     def cangan_cell(p, _):
         parts = []
         for item in p.get("cangan") or []:
@@ -181,23 +179,161 @@ def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
         f"{'藏干' if lang == 'zh' else 'Hidden'}</td>{cells}</tr>"
     )
 
-    # legend
     legend = " · ".join(
         f"<span style='color:{c};font-weight:700;'>{w}</span>"
         for w, c in WUXING_COLORS.items()
     )
     caption = f"<div style='margin-top:8px;font-size:0.85rem;'>五行配色：{legend}</div>"
-    table = (
+    return (
         "<table style='width:100%;border-collapse:collapse;background:#fff;'>"
         + "".join(rows)
         + "</table>"
         + caption
     )
-    return table
+
+
+def render_flow_pillar_table(bazi_data, lang: str = "zh") -> str:
+    """出生四柱 + 当前大运/流年/流月/流日（附图一核心）。"""
+    pillars = _build_pillars(bazi_data)
+    flow = bazi_data.get("flow") or {}
+    order_birth = ["年柱", "月柱", "日柱", "时柱"]
+    labels = {
+        "年柱": ("年柱", "Year"),
+        "月柱": ("月柱", "Month"),
+        "日柱": ("日柱", "Day"),
+        "时柱": ("时柱", "Hour"),
+    }
+    cols = []
+    for name in order_birth:
+        lab = labels[name][0] if lang == "zh" else labels[name][1]
+        cols.append((lab, pillars.get(name) or {}, False, "*"))
+    for zh, en, data in [
+        ("大运", "DaYun", flow.get("da_yun")),
+        ("流年", "LiuNian", flow.get("liu_nian")),
+        ("流月", "LiuYue", flow.get("liu_yue")),
+        ("流日", "LiuRi", flow.get("liu_ri")),
+    ]:
+        data = data or {}
+        age = ""
+        if data.get("start_age") is not None:
+            age = f"{data['start_age']}岁"
+        elif data.get("year") is not None:
+            age = str(data["year"])
+        elif data.get("month") is not None:
+            age = f"{data['month']}月"
+        elif data.get("day") is not None:
+            age = f"{data['day']}日"
+        cols.append((zh if lang == "zh" else en, data, True, age))
+
+    th = "".join(
+        f"<th style='padding:6px;border:1px solid #ddd;background:#f5f5f5;font-size:0.85rem;'>{c[0]}</th>"
+        for c in cols
+    )
+    age_row = "".join(
+        f"<td style='padding:4px;border:1px solid #ddd;text-align:center;font-size:0.8rem;"
+        f"background:{'#eee' if c[2] else '#fff'};'>{c[3]}</td>"
+        for c in cols
+    )
+    gan_row = "".join(
+        f"<td style='padding:8px;border:1px solid #ddd;text-align:center;"
+        f"background:{'#eee' if hl else '#fff'};'>"
+        f"<div style='font-size:0.7rem;color:#888;'>{(d or {}).get('gan_god', '')}</div>"
+        f"{_char_html((d or {}).get('gan', ''), '1.55rem')}</td>"
+        for _, d, hl, _ in cols
+    )
+    zhi_row = "".join(
+        f"<td style='padding:8px;border:1px solid #ddd;text-align:center;"
+        f"background:{'#eee' if hl else '#fff'};'>"
+        f"{_char_html((d or {}).get('zhi', ''), '1.55rem')}</td>"
+        for _, d, hl, _ in cols
+    )
+    return (
+        "<div style='overflow-x:auto;'><table style='width:100%;border-collapse:collapse;"
+        "background:#fff;min-width:560px;'>"
+        f"<tr>{th}</tr><tr>{age_row}</tr><tr>{gan_row}</tr><tr>{zhi_row}</tr>"
+        "</table></div>"
+    )
+
+
+def render_dayun_timeline(bazi_data) -> str:
+    cells = []
+    for dy in bazi_data.get("da_yun") or []:
+        bg = "#dddddd" if dy.get("is_current") else "#fff"
+        cells.append(
+            f"<td style='padding:6px 4px;border:1px solid #ccc;text-align:center;background:{bg};"
+            f"min-width:52px;'>"
+            f"<div style='font-size:0.7rem;'>{dy.get('age_label') or dy.get('start_age')}</div>"
+            f"{_char_html(dy.get('gan', ''), '1.1rem')}{_char_html(dy.get('zhi', ''), '1.1rem')}"
+            f"</td>"
+        )
+    return (
+        f"<div style='overflow-x:auto;'><table style='border-collapse:collapse;'>"
+        f"<tr>{''.join(cells)}</tr></table></div>"
+    )
+
+
+def render_liunian_timeline(bazi_data) -> str:
+    cells = []
+    for ln in bazi_data.get("liu_nian") or []:
+        bg = "#dddddd" if ln.get("is_current") else "#fff"
+        cells.append(
+            f"<td style='padding:6px 4px;border:1px solid #ccc;text-align:center;background:{bg};"
+            f"min-width:48px;'>"
+            f"<div style='font-size:0.7rem;'>{ln.get('year', '')}</div>"
+            f"{_char_html(ln.get('gan', ''), '1.05rem')}{_char_html(ln.get('zhi', ''), '1.05rem')}"
+            f"</td>"
+        )
+    return (
+        f"<div style='overflow-x:auto;'><table style='border-collapse:collapse;'>"
+        f"<tr>{''.join(cells)}</tr></table></div>"
+    )
+
+
+def render_dayun_liunian_matrix(bazi_data, lang: str = "zh") -> str:
+    """附图二：每列一步大运，下列十年流年（五行上色）。"""
+    da_yun = bazi_data.get("da_yun") or []
+    if not da_yun:
+        return "<div>—</div>"
+
+    def col_block(dy: dict) -> str:
+        bg = "#f0f0f0" if dy.get("is_current") else "#fff"
+        gods = "、".join([g for g in (dy.get("zhi_gods") or []) if g])
+        rows = [
+            f"<div style='font-size:0.75rem;color:#555;'>{dy.get('age_label', '')}</div>",
+            f"<div style='font-size:0.7rem;color:#888;'>"
+            f"{'始于' if lang == 'zh' else 'from'} {dy.get('start_year', '')}</div>",
+            f"<div style='font-size:0.7rem;color:#888;'>{dy.get('gan_god', '')}</div>",
+            f"<div style='margin:4px 0;'>{_char_html(dy.get('gan', ''), '1.35rem')}"
+            f"{_char_html(dy.get('zhi', ''), '1.35rem')}</div>",
+            f"<div style='font-size:0.65rem;color:#777;line-height:1.3;'>{gods}</div>",
+            f"<div style='font-size:0.7rem;color:#888;'>{dy.get('chang_sheng', '')}</div>",
+            f"<div style='font-size:0.7rem;color:#888;'>"
+            f"{'止于' if lang == 'zh' else 'to'} {dy.get('end_year', '')}</div>",
+            "<hr style='border:none;border-top:1px solid #ddd;margin:6px 0;'>",
+        ]
+        for ln in dy.get("liu_nian") or []:
+            hl = "font-weight:700;" if ln.get("is_current") else ""
+            rows.append(
+                f"<div style='padding:2px 0;{hl}'>"
+                f"<span style='font-size:0.7rem;color:#666;margin-right:4px;'>{ln.get('year', '')}</span>"
+                f"{_char_html(ln.get('gan', ''), '1.05rem')}{_char_html(ln.get('zhi', ''), '1.05rem')}"
+                f"</div>"
+            )
+        return (
+            f"<td style='vertical-align:top;padding:8px 6px;border:1px solid #ddd;"
+            f"background:{bg};text-align:center;min-width:72px;'>{''.join(rows)}</td>"
+        )
+
+    body = "".join(col_block(dy) for dy in da_yun)
+    return (
+        "<div style='overflow-x:auto;'>"
+        f"<table style='border-collapse:collapse;background:#fff;'><tr>{body}</tr></table>"
+        "</div>"
+    )
 
 
 def render_bazi_chart(bazi_data, lang: str = "zh"):
-    """在页面内渲染八字命盘（彩色四柱 + 五行条 + 大运流年）。"""
+    """彩色四柱 + 五行 + 附图风格的大运/流年双表。"""
     from ui_texts import t
 
     info = st.session_state.get("birth_info") or {}
@@ -234,27 +370,65 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
             st.progress(min(max(bar["pct"] / 100.0, 0.0), 1.0))
 
     st.markdown("---")
-    st.markdown(f"### {t('dayun', lang)}")
+    st.markdown(
+        "### " + ("🧭 当前运势柱（大运 · 流年 · 流月 · 流日）" if lang == "zh"
+                  else "🧭 Current luck pillars")
+    )
+    st.caption(
+        "此区块对应附图一；干支与留意在免费盘展示，会员报告详述吉凶建议。"
+        if lang == "zh"
+        else "Matches reference chart 1; membership report expands commentary."
+    )
+    st.markdown(render_flow_pillar_table(bazi_data, lang), unsafe_allow_html=True)
+
     if bazi_data.get("da_yun"):
-        for dy in bazi_data["da_yun"][:6]:
-            gan, zhi = dy["gan"], dy["zhi"]
-            c0, c1, c2 = st.columns([1, 2, 1])
-            c0.markdown(f"**{t('step', lang, n=dy['step'])}**")
-            c1.markdown(
-                f"{_char_html(gan, '1.4rem')}{_char_html(zhi, '1.4rem')}",
-                unsafe_allow_html=True,
-            )
-            c2.markdown(f"_{dy['years']}_")
+        st.markdown("**大运时间轴**" if lang == "zh" else "**Decade timeline**")
+        st.markdown(render_dayun_timeline(bazi_data), unsafe_allow_html=True)
+    if bazi_data.get("liu_nian"):
+        st.markdown(
+            "**流年时间轴（当前大运十年）**" if lang == "zh" else "**Annual timeline**"
+        )
+        st.markdown(render_liunian_timeline(bazi_data), unsafe_allow_html=True)
+
+    notes_s = bazi_data.get("stem_notes") or []
+    notes_b = bazi_data.get("branch_notes") or []
+    if notes_s or notes_b:
+        st.markdown(
+            f"<div style='margin-top:10px;font-size:0.9rem;line-height:1.7;'>"
+            f"<div><b>{'天干留意' if lang == 'zh' else 'Stem notes'}：</b>"
+            f"{'、'.join(notes_s) if notes_s else '—'}</div>"
+            f"<div><b>{'地支留意' if lang == 'zh' else 'Branch notes'}：</b>"
+            f"{'、'.join(notes_b) if notes_b else '—'}</div>"
+            f"<div style='color:#888;font-size:0.8rem;'>"
+            f"{'神煞与深度解读见会员报告' if lang == 'zh' else 'Detailed reading in membership report'}"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
 
     st.markdown("---")
-    st.markdown(f"### {t('liunian', lang)}")
-    if bazi_data.get("liu_nian"):
-        for ln in bazi_data["liu_nian"]:
-            year_label = f"**{ln['year']}**" if ln.get("is_current") else str(ln["year"])
-            st.markdown(
-                f"{year_label}：{_char_html(ln['gan'], '1.2rem')}{_char_html(ln['zhi'], '1.2rem')}",
-                unsafe_allow_html=True,
-            )
+    st.markdown(
+        "### " + ("📅 大运 · 流年表" if lang == "zh" else "📅 Decade × Annual table")
+    )
+    st.caption(
+        "对应附图二：每步大运下嵌套十年流年（亦属流年体系）；详批在报告中展开。"
+        if lang == "zh"
+        else "Matches reference chart 2: Liu Nian nested under each Da Yun."
+    )
+    st.markdown(render_dayun_liunian_matrix(bazi_data, lang), unsafe_allow_html=True)
+
+    xiao = bazi_data.get("xiao_yun") or []
+    if xiao:
+        st.markdown("**起运前小运**" if lang == "zh" else "**Small luck (pre–Da Yun)**")
+        cells = "".join(
+            f"<td style='padding:4px 8px;border:1px solid #eee;text-align:center;'>"
+            f"{x['age']}岁<br>{_char_html(x['gan'], '1rem')}{_char_html(x['zhi'], '1rem')}"
+            f"<br><span style='font-size:0.75rem;color:#666;'>{x.get('year', '')}</span></td>"
+            for x in xiao
+        )
+        st.markdown(
+            f"<table style='border-collapse:collapse;'><tr>{cells}</tr></table>",
+            unsafe_allow_html=True,
+        )
 
 
 def generate_pdf_report(report_content, birth_info, bazi_data):
