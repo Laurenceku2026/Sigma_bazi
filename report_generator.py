@@ -22,7 +22,15 @@ class ReportGenerator:
         ("page6", "感情流年详批 (Part 1)", "感情事件预测、桃花、注意事项"),
         ("page7", "感情流年详批 (Part 2)", "风水布局、另一半特质、感情时机"),
         ("page8", "健康流年详批", "健康风险、易病月份、五脏对应、就医建议"),
-        ("page9", "流年预测专章", "流年刑冲合害、旺防月、四大领域评分与开运建议"),
+        ("page9", "流年预测专章", "流年总论 + 四季（春夏秋冬）预测与建议，每季点出1～2个关键流月"),
+    ]
+
+    # 四时与地支（命理惯例：季内三支合局气）
+    SEASON_SPECS = [
+        ("春", "寅卯辰", "约公历2–4月", "木旺 · 生发"),
+        ("夏", "巳午未", "约公历5–7月", "火旺 · 发扬"),
+        ("秋", "申酉戌", "约公历8–10月", "金旺 · 收敛"),
+        ("冬", "亥子丑", "约公历11–次年1月", "水旺 · 蓄养"),
     ]
 
     FORBIDDEN_PLAIN = (
@@ -41,9 +49,12 @@ class ReportGenerator:
         context = self._bazi_context(bazi_data, birth_info)
 
         report: Dict = {}
-        # 每次 1 页，内容更深、分段更稳
+        # 每次 1 页，内容更深、分段更稳；流年专章用四季结构
         for spec in pages:
-            chunk = self._generate_batch(context, [spec])
+            if spec[0] == "page9":
+                chunk = self._generate_liunian_chapter(context, spec)
+            else:
+                chunk = self._generate_batch(context, [spec])
             report.update(chunk)
 
         for key, title, _ in pages:
@@ -110,7 +121,161 @@ class ReportGenerator:
             f"日主：{bazi_data.get('day_master')}；"
             f"五行：{json.dumps(bazi_data.get('wuxing_stats', {}), ensure_ascii=False)}；"
             f"当前大运：{dy}；当前流年：{ln}。"
+            "分析结合流年与命局；流年专章按四时分述（春寅卯辰、夏巳午未、秋申酉戌、冬亥子丑），"
+            "每季点出一至两个关键流月，勿写成十二个月流水账。"
         )
+
+    def _generate_liunian_chapter(self, context: str, spec: tuple) -> Dict:
+        """流年专章：年度总论 + 四季预测（命理取四时，兼顾可读性）。"""
+        key, title, focus = spec
+        seasons_hint = "\n".join(
+            f"- {name}季（{zhi}月，{cal}，{wx}）"
+            for name, zhi, cal, wx in self.SEASON_SPECS
+        )
+        prompt = f"""根据命盘写《{title}》。只输出合法 JSON，不要 markdown 代码块。
+
+命盘：{context}
+主题：{focus}
+
+【命理写法】传统「流月」更细，本专章以「四时/四季」为主：春寅卯辰、夏巳午未、秋申酉戌、冬亥子丑，
+对应生发→发扬→收敛→蓄养；每季只点 1～2 个关键流月或节气，避免十二个月堆砌。
+
+四季对照：
+{seasons_hint}
+
+【输出】
+"{key}": {{
+  "title": "{title}",
+  "professional": [
+    "流年总论：干支与命局大势（60-90字）",
+    "事业/财运今年节奏（60-90字）",
+    "感情/人际与健康提要（60-90字）",
+    "全年最旺与需防时段总括（60-90字）"
+  ],
+  "quarters": [
+    {{"name":"春季","branch":"寅卯辰","months":"约2–4月","outlook":"本季专业判断60-90字","focus_months":"点出1～2个关键流月或节气","advice":"本季行动建议40-60字"}},
+    {{"name":"夏季","branch":"巳午未","months":"约5–7月","outlook":"...","focus_months":"...","advice":"..."}},
+    {{"name":"秋季","branch":"申酉戌","months":"约8–10月","outlook":"...","focus_months":"...","advice":"..."}},
+    {{"name":"冬季","branch":"亥子丑","months":"约11–次年1月","outlook":"...","focus_months":"...","advice":"..."}}
+  ],
+  "plain": {{
+    "summary":"一句人话总结全年（≤40字，零术语）",
+    "points":["全年建议1","全年建议2","全年建议3"],
+    "detail":"80-120字白话总说",
+    "quarters_plain":[
+      {{"name":"春季","summary":"本季人话≤30字","tips":["建议A","建议B"]}},
+      {{"name":"夏季","summary":"...","tips":["...","..."]}},
+      {{"name":"秋季","summary":"...","tips":["...","..."]}},
+      {{"name":"冬季","summary":"...","tips":["...","..."]}}
+    ]
+  }}
+}}
+
+硬性要求：quarters 恰好春夏秋冬四季；plain/quarters_plain 严禁 {self.FORBIDDEN_PLAIN}
+"""
+        raw = self._call_deepseek(prompt)
+        parsed = self._parse_json_loose(raw)
+        if isinstance(parsed, dict) and key not in parsed:
+            if "quarters" in parsed or "professional" in parsed:
+                parsed = {key: parsed}
+        item = parsed.get(key) if isinstance(parsed, dict) else None
+        page = self._coerce_page(item, title, raw)
+        page = self._normalize_quarters(page)
+        page = self._ensure_plain_section(page, title)
+        page = self._ensure_quarters_plain(page)
+        page["content"] = ReportGenerator.build_content_markdown(page)
+        return {key: page}
+
+    def _normalize_quarters(self, page: Dict[str, Any]) -> Dict[str, Any]:
+        raw = page.get("quarters")
+        if not isinstance(raw, list) or not raw:
+            page["quarters"] = [
+                {
+                    "name": f"{name}季",
+                    "branch": zhi,
+                    "months": cal,
+                    "outlook": f"{name}季运势需结合流年再看（可重试生成以补全）。",
+                    "focus_months": "关注季中节气前后",
+                    "advice": "稳妥行事，重大决定留有余地。",
+                }
+                for name, zhi, cal, _wx in self.SEASON_SPECS
+            ]
+            return page
+        fixed = []
+        for i, (name, zhi, cal, _wx) in enumerate(self.SEASON_SPECS):
+            src = raw[i] if i < len(raw) and isinstance(raw[i], dict) else {}
+            fixed.append(
+                {
+                    "name": str(src.get("name") or f"{name}季"),
+                    "branch": str(src.get("branch") or zhi),
+                    "months": str(src.get("months") or cal),
+                    "outlook": str(src.get("outlook") or "").strip(),
+                    "focus_months": str(src.get("focus_months") or src.get("关键月") or "").strip(),
+                    "advice": str(src.get("advice") or src.get("建议") or "").strip(),
+                }
+            )
+        page["quarters"] = fixed
+        return page
+
+    def _ensure_quarters_plain(self, page: Dict[str, Any]) -> Dict[str, Any]:
+        plain = page.get("plain") if isinstance(page.get("plain"), dict) else {}
+        qp = plain.get("quarters_plain")
+        if isinstance(qp, list) and len(qp) >= 4 and all(
+            isinstance(x, dict) and str(x.get("summary") or "").strip() for x in qp[:4]
+        ):
+            page["plain"] = plain
+            return page
+
+        quarters = page.get("quarters") or []
+        blob = "\n".join(
+            f"{q.get('name')}/{q.get('months')}：{q.get('outlook')}；关键：{q.get('focus_months')}；建议：{q.get('advice')}"
+            for q in quarters
+        )
+        prompt = f"""把下面四季专业流年改成普通人能懂的四季白话。只输出 JSON：
+{{"quarters_plain":[
+  {{"name":"春季","summary":"≤30字","tips":["建议1","建议2"]}},
+  {{"name":"夏季","summary":"...","tips":["...","..."]}},
+  {{"name":"秋季","summary":"...","tips":["...","..."]}},
+  {{"name":"冬季","summary":"...","tips":["...","..."]}}
+]}}
+严禁：{self.FORBIDDEN_PLAIN}
+
+专业四季：
+{blob[:2000]}
+"""
+        try:
+            raw = self._call_deepseek(prompt)
+            parsed = self._parse_json_loose(raw)
+            qp2 = []
+            if isinstance(parsed, dict):
+                qp2 = parsed.get("quarters_plain") or []
+            if isinstance(qp2, list) and qp2:
+                plain["quarters_plain"] = []
+                for i, q in enumerate(qp2[:4]):
+                    if not isinstance(q, dict):
+                        continue
+                    tips = q.get("tips") or []
+                    if isinstance(tips, str):
+                        tips = [t.strip() for t in re.split(r"[；;\n]+", tips) if t.strip()]
+                    plain["quarters_plain"].append(
+                        {
+                            "name": str(q.get("name") or self.SEASON_SPECS[i][0] + "季"),
+                            "summary": str(q.get("summary") or "").strip(),
+                            "tips": [str(t).strip() for t in tips if str(t).strip()][:3],
+                        }
+                    )
+        except Exception as e:
+            print(f"ensure_quarters_plain error: {e}")
+            plain["quarters_plain"] = [
+                {
+                    "name": f"{n}季",
+                    "summary": f"{n}季宜顺势调整节奏。",
+                    "tips": ["大事不赶在季初硬推", "季中做检视，季末再定下一步"],
+                }
+                for n, *_ in self.SEASON_SPECS
+            ]
+        page["plain"] = plain
+        return page
 
     def _generate_batch(self, context: str, batch: List) -> Dict:
         keys = [b[0] for b in batch]
@@ -236,6 +401,10 @@ class ReportGenerator:
                     ),
                 }
             page["plain"] = filled
+            # 保留已有四季白话
+            if isinstance(plain, dict) and plain.get("quarters_plain") and not filled.get("quarters_plain"):
+                filled["quarters_plain"] = plain["quarters_plain"]
+                page["plain"] = filled
         except Exception as e:
             print(f"ensure_plain_section error: {e}")
             page["plain"] = {
@@ -308,6 +477,8 @@ class ReportGenerator:
                     or ""
                 ).strip(),
             }
+            if plain_raw.get("quarters_plain"):
+                plain["quarters_plain"] = plain_raw.get("quarters_plain")
         else:
             plain = {"summary": "", "points": [], "detail": ""}
 
@@ -327,6 +498,8 @@ class ReportGenerator:
             "professional": paragraphs,
             "plain": plain,
         }
+        if item.get("quarters"):
+            page["quarters"] = item.get("quarters")
         page["content"] = ReportGenerator.build_content_markdown(page)
         return page
 
@@ -416,6 +589,26 @@ class ReportGenerator:
         for p in page.get("professional") or []:
             lines.append(str(p).strip())
             lines.append("")
+        quarters = page.get("quarters") or []
+        if quarters:
+            lines.append("#### 四季流年")
+            lines.append("")
+            for q in quarters:
+                if not isinstance(q, dict):
+                    continue
+                lines.append(
+                    f"**{q.get('name', '')}（{q.get('branch', '')} · {q.get('months', '')}）**"
+                )
+                lines.append("")
+                if q.get("outlook"):
+                    lines.append(str(q["outlook"]))
+                    lines.append("")
+                if q.get("focus_months"):
+                    lines.append(f"关键月：{q['focus_months']}")
+                    lines.append("")
+                if q.get("advice"):
+                    lines.append(f"建议：{q['advice']}")
+                    lines.append("")
         lines.append("---")
         lines.append("")
         lines.append("#### 白话说明")
@@ -435,6 +628,17 @@ class ReportGenerator:
             if plain.get("detail"):
                 lines.append(str(plain["detail"]).strip())
                 lines.append("")
+            qp = plain.get("quarters_plain") or []
+            if qp:
+                lines.append("**四季白话：**")
+                lines.append("")
+                for q in qp:
+                    if not isinstance(q, dict):
+                        continue
+                    lines.append(f"- **{q.get('name', '')}**：{q.get('summary', '')}")
+                    for tip in q.get("tips") or []:
+                        lines.append(f"  - {tip}")
+                lines.append("")
         elif isinstance(plain, str) and plain.strip():
             lines.append(plain.strip())
         return "\n".join(lines).strip()
@@ -444,8 +648,11 @@ class ReportGenerator:
         """页面展示用：视觉分段卡片，避免挤成一团。"""
         pro_title = "专业解读" if lang == "zh" else "Professional"
         plain_title = "白话说明" if lang == "zh" else "In plain words"
+        season_title = "四季流年预测" if lang == "zh" else "Seasonal outlook"
         summary_l = "一句话" if lang == "zh" else "In one line"
         how_l = "怎么做" if lang == "zh" else "What to do"
+        focus_l = "关键月" if lang == "zh" else "Key months"
+        advice_l = "建议" if lang == "zh" else "Advice"
 
         pro_blocks = []
         for p in page.get("professional") or []:
@@ -455,11 +662,39 @@ class ReportGenerator:
             pro_blocks.append(
                 f"<p style='margin:0 0 14px 0;line-height:1.85;color:#333;font-size:0.98rem;'>{p}</p>"
             )
-        if not pro_blocks and page.get("content"):
-            # 旧数据回退
+        if not pro_blocks and page.get("content") and not page.get("quarters"):
             return (
                 f"<div style='line-height:1.85;white-space:pre-wrap;'>"
                 f"{ReportGenerator._escape(str(page.get('content')))}</div>"
+            )
+
+        season_html = ""
+        quarters = page.get("quarters") or []
+        if quarters:
+            cards = []
+            for q in quarters:
+                if not isinstance(q, dict):
+                    continue
+                cards.append(
+                    f"<div style='padding:12px 14px;border:1px solid #e0e0e0;border-radius:8px;"
+                    f"background:#fff;margin:0 0 10px 0;'>"
+                    f"<div style='font-weight:800;color:#1565C0;margin-bottom:6px;'>"
+                    f"{ReportGenerator._escape(str(q.get('name', '')))}"
+                    f"<span style='font-weight:500;color:#666;font-size:0.85rem;'>"
+                    f" · {ReportGenerator._escape(str(q.get('branch', '')))}"
+                    f" · {ReportGenerator._escape(str(q.get('months', '')))}</span></div>"
+                    f"<p style='margin:0 0 8px 0;line-height:1.75;color:#333;'>"
+                    f"{ReportGenerator._escape(str(q.get('outlook', '')))}</p>"
+                    f"<div style='font-size:0.9rem;color:#555;margin-bottom:4px;'><b>{focus_l}</b>："
+                    f"{ReportGenerator._escape(str(q.get('focus_months', '')))}</div>"
+                    f"<div style='font-size:0.9rem;color:#555;'><b>{advice_l}</b>："
+                    f"{ReportGenerator._escape(str(q.get('advice', '')))}</div>"
+                    f"</div>"
+                )
+            season_html = (
+                f"<div style='padding:14px 16px;border:1px solid #bbdefb;border-radius:10px;background:#e3f2fd;'>"
+                f"<div style='font-weight:800;font-size:1.05rem;margin-bottom:12px;color:#0d47a1;'>{season_title}</div>"
+                f"{''.join(cards)}</div>"
             )
 
         plain = page.get("plain") or {}
@@ -491,17 +726,47 @@ class ReportGenerator:
                 f"{ReportGenerator._escape(str(plain['detail']))}</p>"
             )
 
+        qp_html = ""
+        qp = plain.get("quarters_plain") or []
+        if qp:
+            bits = []
+            for q in qp:
+                if not isinstance(q, dict):
+                    continue
+                tips = "".join(
+                    f"<li style='margin:0 0 4px 0;'>{ReportGenerator._escape(str(t))}</li>"
+                    for t in (q.get("tips") or [])
+                )
+                bits.append(
+                    f"<div style='margin:0 0 12px 0;padding:10px 12px;background:#fff;border-radius:8px;"
+                    f"border:1px solid #c8e6c9;'>"
+                    f"<div style='font-weight:700;color:#2e7d32;'>{ReportGenerator._escape(str(q.get('name','')))}</div>"
+                    f"<div style='margin:4px 0 6px 0;line-height:1.6;'>{ReportGenerator._escape(str(q.get('summary','')))}</div>"
+                    f"<ul style='margin:0;padding-left:1.2rem;'>{tips}</ul></div>"
+                )
+            qp_html = (
+                f"<div style='font-weight:700;margin:14px 0 8px 0;'>"
+                f"{'四季白话' if lang == 'zh' else 'Season tips'}</div>{''.join(bits)}"
+            )
+
+        pro_section = ""
+        if pro_blocks:
+            pro_section = (
+                f"<div style='padding:14px 16px;border:1px solid #e0e0e0;border-radius:10px;background:#fafafa;'>"
+                f"<div style='font-weight:800;font-size:1.05rem;margin-bottom:12px;color:#424242;'>{pro_title}</div>"
+                f"{''.join(pro_blocks)}</div>"
+            )
+
         return f"""
 <div style="display:flex;flex-direction:column;gap:18px;">
-  <div style="padding:14px 16px;border:1px solid #e0e0e0;border-radius:10px;background:#fafafa;">
-    <div style="font-weight:800;font-size:1.05rem;margin-bottom:12px;color:#424242;">{pro_title}</div>
-    {''.join(pro_blocks)}
-  </div>
+  {pro_section}
+  {season_html}
   <div style="padding:16px 18px;border:1px solid #c8e6c9;border-radius:10px;background:#f1f8f4;">
     <div style="font-weight:800;font-size:1.1rem;margin-bottom:12px;color:#2e7d32;">{plain_title}</div>
     {summary_html}
     {points_html}
     {detail_html}
+    {qp_html}
   </div>
 </div>
 """.strip()

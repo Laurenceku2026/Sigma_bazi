@@ -558,8 +558,23 @@ def generate_pdf_report(report_content, birth_info, bazi_data):
                 p = P(para, style_body)
                 if p:
                     story.append(p)
+        quarters = page.get("quarters") if isinstance(page.get("quarters"), list) else []
+        if quarters:
+            story.append(Paragraph(escape("四季流年预测"), style_h2))
+            for q in quarters:
+                if not isinstance(q, dict):
+                    continue
+                head = f"{q.get('name', '')}（{q.get('branch', '')} · {q.get('months', '')}）"
+                p = P(head, style_h2)
+                if p:
+                    story.append(p)
+                for lab, key in (("局势", "outlook"), ("关键月", "focus_months"), ("建议", "advice")):
+                    if q.get(key):
+                        pp = P(f"{lab}：{q[key]}", style_body)
+                        if pp:
+                            story.append(pp)
         plain = page.get("plain") if isinstance(page.get("plain"), dict) else None
-        if plain and (plain.get("summary") or plain.get("points") or plain.get("detail")):
+        if plain and (plain.get("summary") or plain.get("points") or plain.get("detail") or plain.get("quarters_plain")):
             story.append(Paragraph(escape("白话说明"), style_h2))
             if plain.get("summary"):
                 p = P(f"一句话：{plain['summary']}", style_body)
@@ -576,6 +591,16 @@ def generate_pdf_report(report_content, birth_info, bazi_data):
                 p = P(plain["detail"], style_body)
                 if p:
                     story.append(p)
+            for q in plain.get("quarters_plain") or []:
+                if not isinstance(q, dict):
+                    continue
+                p = P(f"{q.get('name', '')}：{q.get('summary', '')}", style_body)
+                if p:
+                    story.append(p)
+                for j, tip in enumerate(q.get("tips") or [], 1):
+                    pp = P(f"{j}. {tip}", style_bullet)
+                    if pp:
+                        story.append(pp)
         elif page.get("content"):
             content = re.sub(r"[#*`]+", "", str(page.get("content") or ""))
             for block in re.split(r"\n\s*\n+", content):

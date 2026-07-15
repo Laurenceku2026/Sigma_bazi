@@ -48,13 +48,13 @@ def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
             "gold": [
                 "All Silver benefits",
                 "Dedicated annual luck chapter (predictions & advice)",
-                "Month-by-month guidance for the current year",
+                "Four seasons + key months (classical four-season timing)",
                 "10 full reports + annual luck reports",
             ],
             "diamond": [
                 "All Gold benefits",
                 "Unlimited reports for 12 months",
-                "Priority annual luck updates",
+                "Seasonal annual luck updates anytime",
                 "Best value for frequent users",
             ],
         }
@@ -70,14 +70,14 @@ def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
             ],
             "gold": [
                 "银卡全部内容",
-                "专属流年预测专章（吉凶趋势 + 行动建议）",
-                "当年逐月流年要点与注意事项",
-                "含 10 次八页报告 + 流年报告",
+                "专属流年预测专章（四季预测 + 每季关键月 + 行动建议）",
+                "春夏秋冬分述，兼顾命理四时与可读性",
+                "含 10 次八页报告 + 流年专章",
             ],
             "diamond": [
                 "金卡全部内容",
                 "一年内无限次生成报告",
-                "流年预测随用随更",
+                "流年四季预测随用随更",
                 "适合高频使用者",
             ],
         }
