@@ -169,7 +169,7 @@ def render_admin_page(lang: str, supabase_client) -> None:
     view_users = users if show_all else profiled
     if not show_all and len(profiled) < len(users):
         st.caption(
-            f"默认只显示有姓名/生日的用户（{len(profiled}/{len(users)}）。勾选上方可看全部。"
+            f"默认只显示有姓名/生日的用户（{len(profiled)}/{len(users)}）。勾选上方可看全部。"
             if lang == "zh"
             else f"Showing profiled users only ({len(profiled)}/{len(users)})."
         )
