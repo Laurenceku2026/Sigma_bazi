@@ -389,21 +389,25 @@ def do_register(email: str, password: str, password2: str) -> bool:
 def render_login_panel(key_prefix: str = "main") -> None:
     st.markdown(f"### {t('login_heading', lang)}")
     st.caption(t("login_caption", lang))
-    email = st.text_input(
-        t("email", lang),
-        placeholder=t("email_ph", lang),
-        key=f"{key_prefix}_login_email",
-    )
-    password = st.text_input(
-        t("password", lang),
-        type="password",
-        key=f"{key_prefix}_login_password",
-    )
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        if st.button(t("login_submit", lang), type="primary", use_container_width=True, key=f"{key_prefix}_login_go"):
-            if do_login(email, password):
+    # 必须用 form：普通 button 提交时浏览器常清空 password 控件，导致误判「密码至少 6 位」
+    with st.form(f"{key_prefix}_login_form", clear_on_submit=False):
+        email = st.text_input(
+            t("email", lang),
+            placeholder=t("email_ph", lang),
+            key=f"{key_prefix}_login_email",
+        )
+        password = st.text_input(
+            t("password", lang),
+            type="password",
+            key=f"{key_prefix}_login_password",
+        )
+        submitted = st.form_submit_button(
+            t("login_submit", lang), type="primary", use_container_width=True
+        )
+        if submitted:
+            if do_login(email or "", password or ""):
                 st.rerun()
+    c2, c3 = st.columns(2)
     with c2:
         if st.button(t("register_btn_short", lang), use_container_width=True, key=f"{key_prefix}_login_to_reg"):
             st.session_state.show_register = True
@@ -418,21 +422,22 @@ def render_login_panel(key_prefix: str = "main") -> None:
 def render_register_panel(key_prefix: str = "main", after_ok=None) -> None:
     st.markdown(f"### {t('register_heading', lang)}")
     st.caption(t("register_caption", lang))
-    email = st.text_input(t("email", lang), key=f"{key_prefix}_reg_email")
-    password = st.text_input(t("password", lang), type="password", key=f"{key_prefix}_reg_password")
-    password2 = st.text_input(t("password_confirm", lang), type="password", key=f"{key_prefix}_reg_password2")
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button(t("register_submit", lang), type="primary", use_container_width=True, key=f"{key_prefix}_reg_go"):
-            if do_register(email, password, password2):
+    with st.form(f"{key_prefix}_reg_form", clear_on_submit=False):
+        email = st.text_input(t("email", lang), key=f"{key_prefix}_reg_email")
+        password = st.text_input(t("password", lang), type="password", key=f"{key_prefix}_reg_password")
+        password2 = st.text_input(t("password_confirm", lang), type="password", key=f"{key_prefix}_reg_password2")
+        submitted = st.form_submit_button(
+            t("register_submit", lang), type="primary", use_container_width=True
+        )
+        if submitted:
+            if do_register(email or "", password or "", password2 or ""):
                 if callable(after_ok):
                     after_ok()
                 st.rerun()
-    with c2:
-        if st.button(t("login_btn", lang), use_container_width=True, key=f"{key_prefix}_reg_to_login"):
-            st.session_state.show_login = True
-            st.session_state.show_register = False
-            st.rerun()
+    if st.button(t("login_btn", lang), use_container_width=True, key=f"{key_prefix}_reg_to_login"):
+        st.session_state.show_login = True
+        st.session_state.show_register = False
+        st.rerun()
 
 
 def sync_app_user(email: Optional[str] = None):
