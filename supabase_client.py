@@ -367,6 +367,29 @@ class SupabaseClient:
             self._set_error("Get user by email", e)
             return None
 
+    def login_by_email(self, email: str) -> Optional[Dict]:
+        """邮箱登录：只查找已有用户，不新建。成功则刷新 last_login。"""
+        self.last_error = None
+        if not email or not str(email).strip():
+            self.last_error = "email required"
+            return None
+        profile = self.get_user_by_email(email.strip())
+        if not profile:
+            self.last_error = "account_not_found"
+            return None
+        try:
+            self._table(self.USER_TABLE).update(
+                {
+                    "last_login_at": self._now(),
+                    "updated_at": self._now(),
+                    "email_confirmed": True,
+                }
+            ).eq("user_id", profile["user_id"]).eq("app_id", self.app_id).execute()
+        except Exception as e:
+            self._set_error("login_by_email.update", e)
+        refreshed = self.get_user(profile["user_id"]) or profile
+        return refreshed
+
     def update_subscription(
         self,
         user_id: str,

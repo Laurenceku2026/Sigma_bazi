@@ -39,6 +39,7 @@ for key, default in [
     ("show_admin", False),
     ("user_email", ""),
     ("show_register", False),
+    ("show_login", False),
     ("pending_form", None),
     ("selected_plan", None),
     ("show_join_membership", False),
@@ -125,6 +126,198 @@ def is_registered() -> bool:
             st.session_state.user_email = u["email"]
             return True
     return False
+
+
+def _parse_birth_date(value) -> Optional[date]:
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    s = str(value)[:10]
+    try:
+        return date.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def birth_info_from_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """从用户表 / last_birth_info 拼出可恢复的 birth_info。"""
+    raw = profile.get("last_birth_info") or {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    info = dict(raw)
+    if profile.get("display_name") and not info.get("name"):
+        info["name"] = profile["display_name"]
+    if profile.get("gender") and not info.get("gender"):
+        info["gender"] = profile["gender"]
+    if profile.get("birth_date") and not info.get("birth_date"):
+        info["birth_date"] = str(profile["birth_date"])[:10]
+    if profile.get("birth_hour") is not None and info.get("birth_hour") is None:
+        info["birth_hour"] = profile["birth_hour"]
+    if profile.get("birth_minute") is not None and info.get("birth_minute") is None:
+        info["birth_minute"] = profile["birth_minute"]
+    if profile.get("region_id") and not info.get("region_id"):
+        info["region_id"] = profile["region_id"]
+    if profile.get("birth_place") is not None and info.get("birth_place") is None:
+        info["birth_place"] = profile["birth_place"]
+    if profile.get("email"):
+        info["email"] = profile["email"]
+    return info
+
+
+def prefills_form_from_birth_info(info: Dict[str, Any]) -> None:
+    """写入输入框 widget session keys（下次 rerun 生效）。"""
+    if not info:
+        return
+    if info.get("name"):
+        st.session_state.input_name = info["name"]
+    g = info.get("gender") or ""
+    if g in ("男", "male", "Male"):
+        st.session_state.input_gender = t("male", lang)
+    elif g in ("女", "female", "Female"):
+        st.session_state.input_gender = t("female", lang)
+    bd = _parse_birth_date(info.get("birth_date"))
+    if bd:
+        st.session_state.input_birth_date = bd
+    if info.get("birth_hour") is not None:
+        try:
+            st.session_state.input_hour = int(info["birth_hour"])
+        except (TypeError, ValueError):
+            pass
+    if info.get("birth_minute") is not None:
+        try:
+            st.session_state.input_minute = int(info["birth_minute"])
+        except (TypeError, ValueError):
+            pass
+    rid = info.get("region_id")
+    if rid:
+        _, reg_ids, _ = region_options(lang)
+        if rid in reg_ids:
+            st.session_state.input_region = reg_ids.index(rid)
+    if info.get("birth_place") is not None:
+        st.session_state.input_place = info.get("birth_place") or ""
+
+
+def restore_session_from_profile(profile: Dict[str, Any]) -> None:
+    """登录成功后：对齐 user_id/会员档，恢复资料、命盘、报告。"""
+    if profile.get("user_id"):
+        st.session_state.user_id = profile["user_id"]
+    if profile.get("email"):
+        st.session_state.user_email = profile["email"]
+    db_tier = profile.get("subscription_tier")
+    if db_tier in ("free", "silver", "gold", "diamond", "monthly", "quarterly", "annual"):
+        st.session_state.subscription_tier = db_tier
+
+    info = birth_info_from_profile(profile)
+    st.session_state.birth_info = info if info else None
+    prefills_form_from_birth_info(info)
+
+    reports = []
+    if supabase_client and profile.get("user_id"):
+        try:
+            reports = supabase_client.get_reports(profile["user_id"], limit=5) or []
+        except Exception:
+            reports = []
+
+    restored_bazi = None
+    restored_report = None
+    if reports:
+        latest = reports[0]
+        restored_bazi = latest.get("bazi_data")
+        restored_report = latest.get("report_content")
+        if not info and latest.get("birth_info"):
+            info = latest["birth_info"] if isinstance(latest["birth_info"], dict) else {}
+            st.session_state.birth_info = info
+            prefills_form_from_birth_info(info)
+
+    if restored_bazi:
+        st.session_state.bazi_data = restored_bazi
+    elif info and info.get("birth_date") and info.get("name"):
+        try:
+            bd = _parse_birth_date(info.get("birth_date"))
+            if bd:
+                form = {
+                    "name": info.get("name", ""),
+                    "gender": info.get("gender") or "男",
+                    "birth_date": bd,
+                    "birth_hour": int(info.get("birth_hour") or 12),
+                    "birth_minute": int(info.get("birth_minute") or 0),
+                    "region_id": info.get("region_id") or "huabei",
+                    "use_true_solar": True,
+                    "birth_place": info.get("birth_place") or "",
+                }
+                run_bazi(form)
+        except Exception:
+            pass
+
+    if restored_report:
+        st.session_state.report_content = restored_report
+        st.session_state.report_generated = True
+
+    st.session_state.app_user_synced = True
+    st.session_state.show_login = False
+    st.session_state.show_register = False
+
+
+def logout_user() -> None:
+    st.session_state.user_id = str(uuid.uuid4())
+    st.session_state.user_email = ""
+    st.session_state.subscription_tier = "free"
+    st.session_state.bazi_data = None
+    st.session_state.birth_info = None
+    st.session_state.report_content = None
+    st.session_state.report_generated = False
+    st.session_state.app_user_synced = False
+    st.session_state.show_login = False
+    st.session_state.show_register = False
+    st.session_state.pending_form = None
+    for k in (
+        "input_name", "input_gender", "input_birth_date", "input_hour",
+        "input_minute", "input_region", "input_place", "input_solar",
+    ):
+        if k in st.session_state:
+            del st.session_state[k]
+
+
+def do_login(email: str) -> bool:
+    """邮箱登录；成功返回 True。"""
+    if not supabase_client:
+        st.error("数据库未连接，无法登录。请检查 Secrets。")
+        return False
+    if not valid_email(email):
+        st.error(t("need_register", lang))
+        return False
+    profile = supabase_client.login_by_email(email.strip())
+    if not profile:
+        st.error(t("login_not_found", lang))
+        return False
+    restore_session_from_profile(profile)
+    st.success(t("login_ok", lang))
+    return True
+
+
+def render_login_panel(key_prefix: str = "main") -> None:
+    st.markdown(f"### {t('login_heading', lang)}")
+    st.caption(t("login_caption", lang))
+    email = st.text_input(
+        t("email", lang),
+        placeholder=t("email_ph", lang),
+        key=f"{key_prefix}_login_email",
+    )
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button(t("login_submit", lang), type="primary", use_container_width=True, key=f"{key_prefix}_login_go"):
+            if do_login(email):
+                st.rerun()
+    with c2:
+        if st.button("取消" if lang == "zh" else "Cancel", use_container_width=True, key=f"{key_prefix}_login_cancel"):
+            st.session_state.show_login = False
+            st.rerun()
 
 
 def sync_app_user(email: Optional[str] = None):
@@ -306,9 +499,12 @@ if st.session_state.show_admin:
 
 # --- 侧边栏 ---
 with st.sidebar:
-    # 顶部：已登录邮箱
+    # 顶部：登录状态 / 登录按钮
     if is_registered():
-        display_name = st.session_state.user_email.split("@")[0]
+        display_name = (
+            (st.session_state.birth_info or {}).get("name")
+            or st.session_state.user_email.split("@")[0]
+        )
         st.markdown(
             f"<div style='padding:8px 10px;background:#f0f7ff;border-radius:8px;margin-bottom:8px;'>"
             f"<div style='font-size:0.8rem;color:#666;'>{'已登录' if lang == 'zh' else 'Signed in'}</div>"
@@ -317,8 +513,15 @@ with st.sidebar:
             f"</div>",
             unsafe_allow_html=True,
         )
+        if st.button(t("logout_btn", lang), key="sidebar_logout", use_container_width=True):
+            logout_user()
+            st.rerun()
     else:
-        st.caption("尚未注册" if lang == "zh" else "Not registered")
+        st.caption("尚未登录" if lang == "zh" else "Not signed in")
+        if st.button(t("login_btn", lang), key="sidebar_login_btn", use_container_width=True, type="primary"):
+            st.session_state.show_login = True
+            st.session_state.show_register = False
+            st.rerun()
 
     st.markdown(f"# {t('sidebar_brand', lang)}\n## Sigma Fate · BaZi")
     st.markdown("---")
@@ -337,7 +540,7 @@ with st.sidebar:
 
     # 加入会员
     join_label = "💎 加入会员" if lang == "zh" else "💎 Join Membership"
-    if st.button(join_label, key="sidebar_join_membership", use_container_width=True, type="primary"):
+    if st.button(join_label, key="sidebar_join_membership", use_container_width=True):
         st.session_state.show_join_membership = True
         if not is_registered():
             st.session_state.show_register = True
@@ -356,6 +559,30 @@ with st.sidebar:
 st.title(t("app_title", lang))
 st.markdown(f"*{t('app_subtitle', lang)}*")
 
+# --- 主区顶部：登录入口 ---
+if not is_registered():
+    top_l, top_r = st.columns([3, 1])
+    with top_l:
+        st.info(t("login_prompt", lang))
+    with top_r:
+        if st.button(t("login_btn", lang), key="main_login_btn", use_container_width=True, type="primary"):
+            st.session_state.show_login = True
+            st.session_state.show_register = False
+            st.rerun()
+else:
+    name_hint = (st.session_state.birth_info or {}).get("name") or ""
+    st.success(
+        f"{t('registered_as', lang)}：{st.session_state.user_email}"
+        + (f"（{name_hint}）" if name_hint else "")
+    )
+    if st.session_state.bazi_data is not None:
+        st.caption(t("returning_hint", lang))
+
+# --- 登录面板（侧栏或主区触发）---
+if st.session_state.get("show_login") and not is_registered():
+    with st.container(border=True):
+        render_login_panel("main")
+
 # --- 侧边栏「加入会员」：主区弹注册 + 三档支付 ---
 if st.session_state.get("show_join_membership"):
     with st.container(border=True):
@@ -367,14 +594,21 @@ if st.session_state.get("show_join_membership"):
                 placeholder=t("email_ph", lang),
                 key="join_register_email",
             )
-            if st.button(t("register_btn", lang), key="join_do_register", type="primary"):
-                if not valid_email(join_email):
-                    st.error(t("need_register", lang))
-                else:
-                    st.session_state.user_email = join_email.strip()
-                    sync_app_user(join_email.strip())
-                    st.session_state.show_register = False
-                    st.success(t("register_ok", lang))
+            jc1, jc2 = st.columns(2)
+            with jc1:
+                if st.button(t("register_btn", lang), key="join_do_register", type="primary", use_container_width=True):
+                    if not valid_email(join_email):
+                        st.error(t("need_register", lang))
+                    else:
+                        st.session_state.user_email = join_email.strip()
+                        sync_app_user(join_email.strip())
+                        st.session_state.show_register = False
+                        st.success(t("register_ok", lang))
+                        st.rerun()
+            with jc2:
+                if st.button(t("login_btn", lang), key="join_switch_login", use_container_width=True):
+                    st.session_state.show_login = True
+                    st.session_state.show_join_membership = False
                     st.rerun()
         else:
             st.caption(f"{t('registered_as', lang)}: {st.session_state.user_email}")
@@ -451,18 +685,37 @@ with tab1:
         st.markdown(f"### {t('register_heading', lang)}")
         st.caption(t("register_caption", lang) + ("（无需密码，仅邮箱即可）" if lang == "zh" else " (email only, no password)"))
         reg_email = st.text_input(t("email", lang), placeholder=t("email_ph", lang), key="register_email")
-        if st.button(t("register_btn", lang), type="primary", use_container_width=True, key="do_register"):
-            if not valid_email(reg_email):
-                st.error(t("need_register", lang))
-            else:
-                st.session_state.user_email = reg_email.strip()
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            if st.button(t("register_btn", lang), type="primary", use_container_width=True, key="do_register"):
+                if not valid_email(reg_email):
+                    st.error(t("need_register", lang))
+                else:
+                    email_n = reg_email.strip()
+                    st.session_state.user_email = email_n
+                    st.session_state.show_register = False
+                    # 若邮箱已存在：先对齐账号；再按本次表单排盘
+                    existing = None
+                    if supabase_client:
+                        existing = supabase_client.get_user_by_email(email_n)
+                    sync_app_user(email_n)
+                    if existing:
+                        # 对齐 user_id / 会员档，再保存新排盘
+                        if existing.get("user_id"):
+                            st.session_state.user_id = existing["user_id"]
+                        db_tier = existing.get("subscription_tier")
+                        if db_tier in ("free", "silver", "gold", "diamond", "monthly", "quarterly", "annual"):
+                            st.session_state.subscription_tier = db_tier
+                    pending = st.session_state.pending_form or form_snapshot
+                    with st.spinner(t("generating", lang)):
+                        run_bazi(pending)
+                    st.session_state.pending_form = None
+                    st.success(t("register_ok", lang))
+                    st.rerun()
+        with rc2:
+            if st.button(t("login_btn", lang), use_container_width=True, key="register_switch_login"):
+                st.session_state.show_login = True
                 st.session_state.show_register = False
-                sync_app_user(reg_email.strip())
-                pending = st.session_state.pending_form or form_snapshot
-                with st.spinner(t("generating", lang)):
-                    run_bazi(pending)
-                st.session_state.pending_form = None
-                st.success(t("register_ok", lang))
                 st.rerun()
 
     # 已排盘：同页展示命盘 + 会员
@@ -477,21 +730,28 @@ with tab1:
 with tab2:
     if st.session_state.bazi_data is None:
         st.info(t("need_input", lang))
+        if not is_registered():
+            st.caption(t("login_prompt", lang))
+            if st.button(t("login_btn", lang), key="tab2_login"):
+                st.session_state.show_login = True
+                st.rerun()
     else:
         render_bazi_chart(st.session_state.bazi_data, lang)
 
 # ========== Tab 3 ==========
 with tab3:
     tier = st.session_state.subscription_tier
-    if tier == "free" or not st.session_state.report_content:
-        st.warning(t("locked_report", lang))
-        st.markdown(f"### {t('unlock_heading', lang)}")
-        st.markdown(t("unlock_body", lang))
-        render_membership_plans("tab_report")
-    else:
+    has_report = bool(st.session_state.report_content)
+    if has_report:
         report = st.session_state.report_content
         st.markdown(f"### {t('your_report', lang)}")
         st.caption(f"{t('generated_at', lang)}：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        if tier == "free":
+            st.info(
+                "已恢复历史报告预览；升级会员可继续生成新报告。"
+                if lang == "zh"
+                else "Restored past report. Upgrade to generate new ones."
+            )
         max_page = 9 if tier in ("gold", "diamond") else 8
         labels_zh = [
             "页一：八字命盘与基本信息", "页二：事业流年详批 (Part 1)", "页三：事业流年详批 (Part 2)",
@@ -504,17 +764,29 @@ with tab3:
             "Page 7: Relationship (2)", "Page 8: Health", "Page 9: Annual luck",
         ]
         labels = labels_zh if lang == "zh" else labels_en
-        for i in range(1, max_page + 1):
+        # 按实际内容页数展示
+        available = [i for i in range(1, 10) if f"page{i}" in report]
+        show_n = available[-1] if available else max_page
+        for i in range(1, show_n + 1):
             pk = f"page{i}"
-            with st.expander(labels[i - 1], expanded=(i == 1)):
+            with st.expander(labels[i - 1] if i <= len(labels) else pk, expanded=(i == 1)):
                 if pk in report:
                     st.markdown(report[pk].get("content", ""))
         st.markdown("---")
         col_dl1, col_dl2 = st.columns(2)
         with col_dl1:
             try:
-                pdf_buffer = generate_pdf_report(report, st.session_state.birth_info, st.session_state.bazi_data)
-                st.download_button(t("download_pdf", lang), pdf_buffer, f"bazi_{datetime.now():%Y%m%d}.pdf", "application/pdf")
+                pdf_buffer = generate_pdf_report(
+                    report,
+                    st.session_state.birth_info or {},
+                    st.session_state.bazi_data or {},
+                )
+                st.download_button(
+                    t("download_pdf", lang),
+                    pdf_buffer,
+                    f"bazi_{datetime.now():%Y%m%d}.pdf",
+                    "application/pdf",
+                )
             except Exception:
                 st.warning(t("pdf_warn", lang))
         with col_dl2:
@@ -524,6 +796,26 @@ with tab3:
                 f"bazi_{datetime.now():%Y%m%d}.json",
                 "application/json",
             )
+        if tier in PAID_TIERS:
+            st.markdown("---")
+            render_generate_report_button("tab_report_regen")
+    elif tier == "free":
+        st.warning(t("locked_report", lang))
+        st.markdown(f"### {t('unlock_heading', lang)}")
+        st.markdown(t("unlock_body", lang))
+        if not is_registered():
+            st.caption(t("login_prompt", lang))
+            if st.button(t("login_btn", lang), key="tab3_login"):
+                st.session_state.show_login = True
+                st.rerun()
+        render_membership_plans("tab_report")
+    else:
+        st.info(t("need_generate", lang) if st.session_state.bazi_data is None else (
+            "请在命盘页生成完整报告" if lang == "zh" else "Generate the full report from the chart tab"
+        ))
+        render_membership_plans("tab_report")
+        if st.session_state.bazi_data is not None:
+            render_generate_report_button("tab_report")
 
 st.markdown("---")
 st.caption(t("footer", lang))
