@@ -68,10 +68,13 @@ def render_admin_page(lang: str, supabase_client) -> None:
         return
 
     st.info(
-        f"🔒 本页管理 `sf_users`。**只有完成排盘（有姓名/生日）才是真正使用本 App 的用户**；"
-        f"仅有邮箱的空资料行多为测试或「加入会员」未排盘产生，请用下方红色按钮清理。"
+        f"🔒 本页只管理本 App 表 **`sf_users`**（`{supabase_client.schema}` / `{supabase_client.app_id}`）。\n\n"
+        f"- 列表里「无姓名无生日」的邮箱，多半是以前无密码注册/试登留下的，**可以删**。\n"
+        f"- 删除这里的行 **不会** 删除赛马 App / 门户的账号，也 **不会** 删掉 Supabase Auth 的总账号；"
+        f"只是本八字 App 看不到他们。\n"
+        f"- 推荐：点「只保留有资料用户」清掉空行，或下方逐个删除。"
         if lang == "zh"
-        else f"🔒 Managing `sf_users`. Rows without name/birthday are empty registrations."
+        else f"🔒 Managing `sf_users` only. Deleting rows here does NOT remove Horse racing / portal Auth accounts."
     )
     st.caption(
         f"table=`{getattr(supabase_client, 'USER_TABLE', 'sf_users')}` · "

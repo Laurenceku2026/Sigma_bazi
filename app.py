@@ -21,7 +21,8 @@ from membership import PAID_TIERS, TIERS, can_generate_report, tier_outline
 from report_generator import ReportGenerator
 from stripe_payment import StripeClient
 from supabase_client import AppAccessDenied, SupabaseClient
-from utils import format_bazi_display, generate_pdf_report, render_bazi_chart
+from utils import format_bazi_display, generate_pdf_report, pdf_filename, render_bazi_chart
+from auth_supabase import SupabaseAuth
 
 st.set_page_config(page_title="六西格玛命理 - 八字", page_icon="🔮", layout="wide")
 
@@ -40,6 +41,8 @@ for key, default in [
     ("user_email", ""),
     ("show_register", False),
     ("show_login", False),
+    ("auth_ok", False),
+    ("access_token", ""),
     ("pending_form", None),
     ("selected_plan", None),
     ("show_join_membership", False),
@@ -82,7 +85,7 @@ ADMIN_USERNAME = _cfg("ADMIN_USERNAME", "Laurence_ku")
 ADMIN_PASSWORD = _cfg("ADMIN_PASSWORD", "Ku_product$2026")
 
 lang = st.session_state.lang
-supabase_client = stripe_client = report_gen = None
+supabase_client = stripe_client = report_gen = auth_client = None
 _init_errors: list[str] = []
 
 if SUPABASE_URL and SUPABASE_KEY:
@@ -94,6 +97,14 @@ if SUPABASE_URL and SUPABASE_KEY:
         )
     except Exception as e:
         _init_errors.append(f"Supabase: {e}")
+
+if SUPABASE_URL and SUPABASE_ANON_KEY:
+    try:
+        auth_client = SupabaseAuth(SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY)
+    except Exception as e:
+        _init_errors.append(f"Auth: {e}")
+elif SUPABASE_URL:
+    _init_errors.append("缺少 SUPABASE_STOCK_ANON_KEY，无法邮箱密码登录（请对照赛马 App 配置 Anon Key）")
 
 if STRIPE_SECRET_KEY:
     try:
@@ -118,13 +129,9 @@ def valid_email(email: str) -> bool:
 
 
 def is_registered() -> bool:
-    if valid_email(st.session_state.get("user_email", "")):
+    """须完成邮箱+密码登录（auth_ok）。"""
+    if st.session_state.get("auth_ok") and valid_email(st.session_state.get("user_email", "")):
         return True
-    if supabase_client:
-        u = supabase_client.get_user(st.session_state.user_id)
-        if u and valid_email(u.get("email", "")):
-            st.session_state.user_email = u["email"]
-            return True
     return False
 
 
@@ -262,6 +269,9 @@ def restore_session_from_profile(profile: Dict[str, Any]) -> None:
     st.session_state.app_user_synced = True
     st.session_state.show_login = False
     st.session_state.show_register = False
+    # 保留密码登录态
+    if st.session_state.get("access_token") or st.session_state.get("auth_ok"):
+        st.session_state.auth_ok = True
 
 
 def logout_user() -> None:
@@ -273,6 +283,8 @@ def logout_user() -> None:
     st.session_state.report_content = None
     st.session_state.report_generated = False
     st.session_state.app_user_synced = False
+    st.session_state.auth_ok = False
+    st.session_state.access_token = ""
     st.session_state.show_login = False
     st.session_state.show_register = False
     st.session_state.pending_form = None
@@ -284,20 +296,120 @@ def logout_user() -> None:
             del st.session_state[k]
 
 
-def do_login(email: str) -> bool:
-    """邮箱登录；成功返回 True。"""
+def _ensure_sf_profile(email: str, auth_user_id: str):
+    """Auth 成功后写入/对齐本 App 的 sf_users。"""
+    if not supabase_client:
+        return None
+    return supabase_client.register_by_email(
+        email,
+        auth_user_id,
+        subscription_tier=st.session_state.subscription_tier or "free",
+        metadata={"source": "supabase_auth", "app": APP_ID},
+    )
+
+
+def do_login(email: str, password: str) -> bool:
+    """邮箱+密码登录（Supabase Auth，同赛马 App）。"""
+    if not auth_client or not auth_client.configured:
+        st.error("认证未配置：请在 Secrets 设置 SUPABASE_STOCK_ANON_KEY")
+        return False
     if not supabase_client:
         st.error("数据库未连接，无法登录。请检查 Secrets。")
         return False
     if not valid_email(email):
         st.error(t("need_register", lang))
         return False
-    profile = supabase_client.login_by_email(email.strip())
-    if not profile:
-        st.error(t("login_not_found", lang))
+    if not password or len(password) < 6:
+        st.error("请输入至少 6 位密码" if lang == "zh" else "Password must be at least 6 characters")
         return False
+
+    ok, msg, payload = auth_client.sign_in(email.strip(), password)
+    if not ok or not payload:
+        st.error(msg)
+        return False
+
+    auth_uid = payload["user_id"]
+    uemail = payload["email"]
+    st.session_state.access_token = payload.get("access_token") or ""
+    st.session_state.user_id = auth_uid
+    st.session_state.user_email = uemail
+    st.session_state.auth_ok = True
+
+    try:
+        profile = _ensure_sf_profile(uemail, auth_uid)
+    except Exception as e:
+        st.error(f"同步本 App 用户失败：{e}")
+        return False
+    if not profile:
+        st.error("无法写入本 App 用户表，请检查 sf_users / SQL 005")
+        return False
+
     restore_session_from_profile(profile)
+    st.session_state.auth_ok = True
     st.success(t("login_ok", lang))
+    return True
+
+
+def do_register(email: str, password: str, password2: str) -> bool:
+    """邮箱+密码注册。"""
+    if not auth_client or not auth_client.configured:
+        st.error("认证未配置：请在 Secrets 设置 SUPABASE_STOCK_ANON_KEY")
+        return False
+    if not supabase_client:
+        st.error("数据库未连接。")
+        return False
+    if not valid_email(email):
+        st.error(t("need_register", lang))
+        return False
+    if not password or len(password) < 6:
+        st.error("密码至少 6 位" if lang == "zh" else "Password min 6 chars")
+        return False
+    if password != password2:
+        st.error("两次密码不一致" if lang == "zh" else "Passwords do not match")
+        return False
+
+    ok, msg, auth_uid = auth_client.sign_up(email.strip(), password)
+    if msg == "exists":
+        st.warning(
+            "该邮箱已注册（可能在赛马或其他同项目 App）。请直接用原密码登录。"
+            if lang == "zh"
+            else "Email already registered. Please sign in with your password."
+        )
+        st.session_state.show_login = True
+        st.session_state.show_register = False
+        return False
+    if not ok:
+        st.error(msg)
+        return False
+
+    # 若 signup 未立即返回 uid（需邮件确认），仍尝试密码登录拿 session
+    if not auth_uid:
+        ok2, msg2, payload = auth_client.sign_in(email.strip(), password)
+        if ok2 and payload:
+            auth_uid = payload["user_id"]
+            st.session_state.access_token = payload.get("access_token") or ""
+        else:
+            st.info(msg)
+            return False
+    else:
+        # 再登录一次拿到 access_token
+        ok2, _, payload = auth_client.sign_in(email.strip(), password)
+        if ok2 and payload:
+            st.session_state.access_token = payload.get("access_token") or ""
+            auth_uid = payload["user_id"]
+
+    st.session_state.user_id = auth_uid
+    st.session_state.user_email = email.strip().lower()
+    st.session_state.auth_ok = True
+    try:
+        profile = _ensure_sf_profile(st.session_state.user_email, auth_uid)
+    except Exception as e:
+        st.error(f"写入本 App 用户失败：{e}")
+        return False
+    if profile:
+        restore_session_from_profile(profile)
+    st.session_state.auth_ok = True
+    st.success(t("register_ok", lang))
     return True
 
 
@@ -309,20 +421,52 @@ def render_login_panel(key_prefix: str = "main") -> None:
         placeholder=t("email_ph", lang),
         key=f"{key_prefix}_login_email",
     )
-    c1, c2 = st.columns(2)
+    password = st.text_input(
+        t("password", lang),
+        type="password",
+        key=f"{key_prefix}_login_password",
+    )
+    c1, c2, c3 = st.columns(3)
     with c1:
         if st.button(t("login_submit", lang), type="primary", use_container_width=True, key=f"{key_prefix}_login_go"):
-            if do_login(email):
+            if do_login(email, password):
                 st.rerun()
     with c2:
+        if st.button(t("register_btn_short", lang), use_container_width=True, key=f"{key_prefix}_login_to_reg"):
+            st.session_state.show_register = True
+            st.session_state.show_login = False
+            st.rerun()
+    with c3:
         if st.button("取消" if lang == "zh" else "Cancel", use_container_width=True, key=f"{key_prefix}_login_cancel"):
             st.session_state.show_login = False
+            st.rerun()
+
+
+def render_register_panel(key_prefix: str = "main", after_ok=None) -> None:
+    st.markdown(f"### {t('register_heading', lang)}")
+    st.caption(t("register_caption", lang))
+    email = st.text_input(t("email", lang), key=f"{key_prefix}_reg_email")
+    password = st.text_input(t("password", lang), type="password", key=f"{key_prefix}_reg_password")
+    password2 = st.text_input(t("password_confirm", lang), type="password", key=f"{key_prefix}_reg_password2")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button(t("register_submit", lang), type="primary", use_container_width=True, key=f"{key_prefix}_reg_go"):
+            if do_register(email, password, password2):
+                if callable(after_ok):
+                    after_ok()
+                st.rerun()
+    with c2:
+        if st.button(t("login_btn", lang), use_container_width=True, key=f"{key_prefix}_reg_to_login"):
+            st.session_state.show_login = True
+            st.session_state.show_register = False
             st.rerun()
 
 
 def sync_app_user(email: Optional[str] = None):
     if not supabase_client:
         st.warning("数据库未连接，用户不会出现在管理员列表。请检查 Secrets。")
+        return None
+    if not st.session_state.get("auth_ok"):
         return None
     try:
         use_email = (email or st.session_state.user_email or "").strip()
@@ -340,7 +484,6 @@ def sync_app_user(email: Optional[str] = None):
                 subscription_tier=st.session_state.subscription_tier,
                 metadata={"source": "streamlit", "app": APP_ID},
             )
-        # 与数据库用户 id 对齐
         if profile.get("user_id"):
             st.session_state.user_id = profile["user_id"]
         if profile.get("email"):
@@ -583,28 +726,30 @@ if st.session_state.get("show_login") and not is_registered():
     with st.container(border=True):
         render_login_panel("main")
 
+# --- 注册面板（排盘前 / 主动打开）---
+if st.session_state.get("show_register") and not is_registered() and not st.session_state.get("show_login"):
+    with st.container(border=True):
+        def _after_reg():
+            pending = st.session_state.pending_form
+            if pending:
+                with st.spinner(t("generating", lang)):
+                    run_bazi(pending)
+                st.session_state.pending_form = None
+
+        render_register_panel("main_reg", after_ok=_after_reg)
+
 # --- 侧边栏「加入会员」：主区弹注册 + 三档支付 ---
 if st.session_state.get("show_join_membership"):
     with st.container(border=True):
         st.markdown(f"### {join_label}")
         if not is_registered():
-            st.caption(t("register_caption", lang) + ("（无需密码）" if lang == "zh" else " (no password required)"))
-            join_email = st.text_input(
-                t("email", lang),
-                placeholder=t("email_ph", lang),
-                key="join_register_email",
-            )
+            st.caption(t("register_caption", lang))
             jc1, jc2 = st.columns(2)
             with jc1:
-                if st.button(t("register_btn", lang), key="join_do_register", type="primary", use_container_width=True):
-                    if not valid_email(join_email):
-                        st.error(t("need_register", lang))
-                    else:
-                        st.session_state.user_email = join_email.strip()
-                        sync_app_user(join_email.strip())
-                        st.session_state.show_register = False
-                        st.success(t("register_ok", lang))
-                        st.rerun()
+                if st.button(t("register_btn_short", lang), key="join_open_register", type="primary", use_container_width=True):
+                    st.session_state.show_register = True
+                    st.session_state.show_join_membership = False
+                    st.rerun()
             with jc2:
                 if st.button(t("login_btn", lang), key="join_switch_login", use_container_width=True):
                     st.session_state.show_login = True
@@ -679,44 +824,9 @@ with tab1:
                 run_bazi(form_snapshot)
             st.rerun()
 
-    # 注册页
+    # 注册：改由顶部统一注册面板处理（含密码）
     if st.session_state.show_register and not is_registered():
-        st.markdown("---")
-        st.markdown(f"### {t('register_heading', lang)}")
-        st.caption(t("register_caption", lang) + ("（无需密码，仅邮箱即可）" if lang == "zh" else " (email only, no password)"))
-        reg_email = st.text_input(t("email", lang), placeholder=t("email_ph", lang), key="register_email")
-        rc1, rc2 = st.columns(2)
-        with rc1:
-            if st.button(t("register_btn", lang), type="primary", use_container_width=True, key="do_register"):
-                if not valid_email(reg_email):
-                    st.error(t("need_register", lang))
-                else:
-                    email_n = reg_email.strip()
-                    st.session_state.user_email = email_n
-                    st.session_state.show_register = False
-                    # 若邮箱已存在：先对齐账号；再按本次表单排盘
-                    existing = None
-                    if supabase_client:
-                        existing = supabase_client.get_user_by_email(email_n)
-                    sync_app_user(email_n)
-                    if existing:
-                        # 对齐 user_id / 会员档，再保存新排盘
-                        if existing.get("user_id"):
-                            st.session_state.user_id = existing["user_id"]
-                        db_tier = existing.get("subscription_tier")
-                        if db_tier in ("free", "silver", "gold", "diamond", "monthly", "quarterly", "annual"):
-                            st.session_state.subscription_tier = db_tier
-                    pending = st.session_state.pending_form or form_snapshot
-                    with st.spinner(t("generating", lang)):
-                        run_bazi(pending)
-                    st.session_state.pending_form = None
-                    st.success(t("register_ok", lang))
-                    st.rerun()
-        with rc2:
-            if st.button(t("login_btn", lang), use_container_width=True, key="register_switch_login"):
-                st.session_state.show_login = True
-                st.session_state.show_register = False
-                st.rerun()
+        st.info(t("need_register", lang))
 
     # 已排盘：同页展示命盘 + 会员
     if st.session_state.bazi_data is not None:
@@ -805,7 +915,7 @@ with tab3:
                 st.download_button(
                     t("download_pdf", lang),
                     pdf_buffer,
-                    f"bazi_{datetime.now():%Y%m%d}.pdf",
+                    pdf_filename(st.session_state.birth_info or {}),
                     "application/pdf",
                 )
             except Exception:

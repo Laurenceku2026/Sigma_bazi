@@ -168,13 +168,16 @@ class SupabaseClient:
         existing = self.get_user_by_email(email)
         if existing:
             try:
-                self._table(self.USER_TABLE).update(
-                    {
-                        "last_login_at": self._now(),
-                        "updated_at": self._now(),
-                        "email_confirmed": True,
-                    }
-                ).eq("user_id", existing["user_id"]).eq("app_id", self.app_id).execute()
+                upd = {
+                    "last_login_at": self._now(),
+                    "updated_at": self._now(),
+                    "email_confirmed": True,
+                }
+                if session_user_id:
+                    upd["auth_user_id"] = session_user_id
+                self._table(self.USER_TABLE).update(upd).eq(
+                    "user_id", existing["user_id"]
+                ).eq("app_id", self.app_id).execute()
             except Exception as e:
                 self._set_error("register_by_email.update", e)
             return existing

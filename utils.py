@@ -432,39 +432,183 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
 
 
 def generate_pdf_report(report_content, birth_info, bazi_data):
-    """生成PDF报告（简化版）"""
-    from reportlab.lib.pagesizes import letter
-    from reportlab.pdfgen import canvas
+    """生成多页中文 PDF（ReportLab CID 宋体，避免黑体小方块）。"""
     import io
+    import re
+    from xml.sax.saxutils import escape
+
+    from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
+
+    font_name = "STSong-Light"
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+    except Exception:
+        font_name = "Helvetica"
 
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=1.8 * cm,
+        rightMargin=1.8 * cm,
+        topMargin=1.8 * cm,
+        bottomMargin=1.8 * cm,
+        title="六西格玛命理 · 八字报告",
+        author=str((birth_info or {}).get("name") or "Sigma Fate"),
+    )
 
-    y = 750
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(100, y, "Sigma Fate - BaZi Report")
+    styles = getSampleStyleSheet()
+    style_cover = ParagraphStyle(
+        "Cover",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=20,
+        leading=28,
+        alignment=TA_CENTER,
+        spaceAfter=18,
+    )
+    style_h1 = ParagraphStyle(
+        "H1CN",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=14,
+        leading=22,
+        spaceBefore=8,
+        spaceAfter=10,
+    )
+    style_h2 = ParagraphStyle(
+        "H2CN",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=12,
+        leading=18,
+        spaceBefore=10,
+        spaceAfter=6,
+    )
+    style_body = ParagraphStyle(
+        "BodyCN",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=10.5,
+        leading=17,
+        alignment=TA_JUSTIFY,
+        spaceAfter=8,
+    )
+    style_meta = ParagraphStyle(
+        "MetaCN",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=11,
+        leading=18,
+        alignment=TA_CENTER,
+        spaceAfter=6,
+    )
+    style_bullet = ParagraphStyle(
+        "BulletCN",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=10.5,
+        leading=17,
+        leftIndent=14,
+        spaceAfter=4,
+    )
 
-    y -= 30
-    c.setFont("Helvetica", 12)
-    c.drawString(100, y, f"Name: {birth_info.get('name', '')}")
-    y -= 20
-    c.drawString(100, y, f"Gender: {birth_info.get('gender', '')}")
+    def P(text: str, style=style_body):
+        t = escape(str(text or "").strip()).replace("\n", "<br/>")
+        if not t:
+            return None
+        return Paragraph(t, style)
 
-    for i in range(1, 10):
-        y -= 30
-        page_key = f"page{i}"
-        if page_key in report_content:
-            c.setFont("Helvetica-Bold", 14)
-            c.drawString(100, y, f"Page {i}: {report_content[page_key].get('title', '')}")
-            y -= 15
-            c.setFont("Helvetica", 10)
-            content = report_content[page_key].get("content", "")[:200] + "..."
-            c.drawString(100, y, content[:80])
+    story = []
+    name = str((birth_info or {}).get("name") or "")
+    gender = str((birth_info or {}).get("gender") or (bazi_data or {}).get("gender") or "")
+    birth = str((birth_info or {}).get("birth_date") or "")
 
-        if y < 100:
-            c.showPage()
-            y = 750
+    story.append(Spacer(1, 2.2 * cm))
+    story.append(Paragraph(escape("六西格玛命理 · 八字报告"), style_cover))
+    story.append(Paragraph(escape("Sigma Fate BaZi Report"), style_meta))
+    story.append(Spacer(1, 0.6 * cm))
+    if name:
+        story.append(Paragraph(escape(f"姓名：{name}"), style_meta))
+    if gender:
+        story.append(Paragraph(escape(f"性别：{gender}"), style_meta))
+    if birth:
+        story.append(Paragraph(escape(f"出生：{birth}"), style_meta))
+    dm = (bazi_data or {}).get("day_master") if isinstance(bazi_data, dict) else ""
+    if dm:
+        story.append(Paragraph(escape(f"日主：{dm}"), style_meta))
+    story.append(Spacer(1, 1.0 * cm))
+    story.append(Paragraph(escape("本报告仅供参考，请理性看待。"), style_meta))
+    story.append(PageBreak())
 
-    c.save()
+    def add_page_block(page: dict, fallback_title: str):
+        title = page.get("title") or fallback_title
+        story.append(Paragraph(escape(str(title)), style_h1))
+
+        pro = page.get("professional")
+        if isinstance(pro, list) and pro:
+            story.append(Paragraph(escape("专业解读"), style_h2))
+            for para in pro:
+                p = P(para, style_body)
+                if p:
+                    story.append(p)
+        plain = page.get("plain") if isinstance(page.get("plain"), dict) else None
+        if plain and (plain.get("summary") or plain.get("points") or plain.get("detail")):
+            story.append(Paragraph(escape("白话说明"), style_h2))
+            if plain.get("summary"):
+                p = P(f"一句话：{plain['summary']}", style_body)
+                if p:
+                    story.append(p)
+            pts = plain.get("points") or []
+            if pts:
+                story.append(Paragraph(escape("怎么做："), style_body))
+                for i, pt in enumerate(pts, 1):
+                    p = P(f"{i}. {pt}", style_bullet)
+                    if p:
+                        story.append(p)
+            if plain.get("detail"):
+                p = P(plain["detail"], style_body)
+                if p:
+                    story.append(p)
+        elif page.get("content"):
+            content = re.sub(r"[#*`]+", "", str(page.get("content") or ""))
+            for block in re.split(r"\n\s*\n+", content):
+                p = P(block, style_body)
+                if p:
+                    story.append(p)
+        story.append(PageBreak())
+
+    if isinstance(report_content, dict):
+        for i in range(1, 10):
+            pk = f"page{i}"
+            if pk not in report_content:
+                continue
+            page = report_content[pk]
+            if not isinstance(page, dict):
+                page = {"content": str(page), "title": f"第{i}页"}
+            add_page_block(page, f"第{i}页")
+    else:
+        story.append(Paragraph(escape("暂无报告内容。"), style_body))
+
+    if story and isinstance(story[-1], PageBreak):
+        story.pop()
+
+    doc.build(story)
     buffer.seek(0)
     return buffer
+
+
+def pdf_filename(birth_info) -> str:
+    """下载文件名：含姓名。"""
+    import re
+    from datetime import datetime
+
+    raw = str((birth_info or {}).get("name") or "user").strip()
+    safe = re.sub(r'[\\/:*?"<>|\s]+', "_", raw).strip("_") or "user"
+    return f"bazi_{safe[:40]}_{datetime.now():%Y%m%d}.pdf"
