@@ -46,6 +46,7 @@ for key, default in [
     ("pending_form", None),
     ("selected_plan", None),
     ("show_join_membership", False),
+    ("ui_tab", 0),
 ]:
     if key == "user_id":
         if "user_id" not in st.session_state:
@@ -578,44 +579,237 @@ def render_membership_plans(key_prefix: str = "main"):
             st.warning(t("pay_unconfigured", lang))
 
 
-def render_generate_report_button(key_prefix: str = "main"):
+def generate_full_report(*, consume_quota: bool = True) -> bool:
+    """生成报告写入 session；成功返回 True。"""
     tier = st.session_state.subscription_tier
+    if not report_gen:
+        st.error("报告引擎未配置" if lang == "zh" else "Report engine not configured")
+        return False
+    if not st.session_state.bazi_data or not st.session_state.birth_info:
+        st.error(t("need_input", lang))
+        return False
+    try:
+        if consume_quota and tier in PAID_TIERS and supabase_client:
+            if not supabase_client.consume_report_quota(st.session_state.user_id):
+                st.error("次数已用完" if lang == "zh" else "No quota left")
+                return False
+        report = report_gen.generate(
+            st.session_state.bazi_data,
+            st.session_state.birth_info,
+            tier if tier in PAID_TIERS else "silver",  # 免费预览用银卡页数结构
+        )
+        # 免费用户流年专章不开放：截到 8 页
+        if tier == "free" or tier not in ("gold", "diamond"):
+            report = {k: v for k, v in report.items() if k != "page9"}
+        st.session_state.report_content = report
+        st.session_state.report_generated = True
+        if supabase_client and st.session_state.get("auth_ok"):
+            try:
+                supabase_client.save_report(
+                    st.session_state.user_id,
+                    st.session_state.birth_info,
+                    st.session_state.bazi_data,
+                    report,
+                    payment_tier=tier or "free",
+                )
+            except Exception:
+                pass
+        return True
+    except Exception as e:
+        st.error(f"{t('report_fail', lang)}{e}")
+        return False
+
+
+def go_report_tab():
+    st.session_state.ui_tab = 2
+
+
+def render_report_cta(key_prefix: str = "main"):
+    """命盘下方大号入口：付费看/生成报告；免费预览（带遮挡）。"""
+    tier = st.session_state.subscription_tier
+    paid = tier in PAID_TIERS
+    has_report = bool(st.session_state.report_content)
     profile = supabase_client.get_user(st.session_state.user_id) if supabase_client else None
     trials = int((profile or {}).get("free_trials_remaining") or 0)
     expires = (profile or {}).get("subscription_expires_at")
 
-    if tier in PAID_TIERS:
-        st.caption(f"{t('remaining_reports', lang)}：{trials if tier != 'diamond' else '∞'}")
+    st.markdown(
+        """
+<style>
+div[data-testid="stButton"] > button[kind="primary"] {
+  min-height: 3.4rem !important;
+  font-size: 1.25rem !important;
+  font-weight: 700 !important;
+  border-radius: 12px !important;
+  letter-spacing: 0.02em;
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    if tier in PAID_TIERS and can_generate_report(tier, trials, expires) and report_gen:
-        if st.button(
-            "📄 " + ("生成完整报告" if lang == "zh" else "Generate full report"),
-            key=f"{key_prefix}_gen_full_report",
-        ):
-            with st.spinner(t("generating", lang)):
+    if paid:
+        st.caption(f"{t('remaining_reports', lang)}：{trials if tier != 'diamond' else '∞'}")
+        if has_report:
+            if st.button(
+                "📄 " + t("tab_report", lang).replace("📄 ", ""),
+                key=f"{key_prefix}_view_full_report",
+                type="primary",
+                use_container_width=True,
+            ):
+                go_report_tab()
+                st.rerun()
+            # 小号重新生成
+            if can_generate_report(tier, trials, expires) and report_gen:
+                if st.button(
+                    "🔄 " + ("重新生成报告" if lang == "zh" else "Regenerate report"),
+                    key=f"{key_prefix}_regen_report",
+                    use_container_width=True,
+                ):
+                    with st.spinner(t("generating", lang)):
+                        if generate_full_report(consume_quota=True):
+                            st.success(t("report_ok", lang))
+                            go_report_tab()
+                            st.rerun()
+        elif can_generate_report(tier, trials, expires) and report_gen:
+            if st.button(
+                "📄 " + ("生成完整报告" if lang == "zh" else "Generate full report"),
+                key=f"{key_prefix}_gen_full_report",
+                type="primary",
+                use_container_width=True,
+            ):
+                with st.spinner(t("generating", lang)):
+                    if generate_full_report(consume_quota=True):
+                        st.success(t("report_ok", lang))
+                        go_report_tab()
+                        st.rerun()
+        else:
+            st.warning("会员次数不足或已到期，请续费后再生成。" if lang == "zh" else "No quota or expired.")
+    else:
+        # 免费：可预览
+        st.caption(
+            "免费可预览完整报告（遮挡预览 · 不可复制/下载）。升级会员可无遮挡阅读并下载。"
+            if lang == "zh"
+            else "Free preview with watermark — no copy/download. Upgrade to unlock."
+        )
+        btn_label = (
+            ("📄 完整报告（免费预览）" if has_report else "📄 生成并预览完整报告")
+            if lang == "zh"
+            else ("📄 Full report (free preview)" if has_report else "📄 Generate free preview")
+        )
+        if st.button(btn_label, key=f"{key_prefix}_free_preview_report", type="primary", use_container_width=True):
+            if not has_report:
+                if not report_gen:
+                    st.error("报告引擎未配置")
+                else:
+                    with st.spinner(t("generating", lang)):
+                        if generate_full_report(consume_quota=False):
+                            go_report_tab()
+                            st.rerun()
+            else:
+                go_report_tab()
+                st.rerun()
+
+
+def _wrap_protected_html(inner_html: str, mark: str) -> str:
+    """免费预览：条码水印 + 禁选禁复制（浏览器层，无法绝对禁止截屏）。"""
+    mark_esc = (
+        (mark or "preview")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+    # 条码感条纹 + 斜向水印字
+    return f"""
+<div class="sf-protected" style="position:relative;user-select:none;-webkit-user-select:none;
+  -webkit-touch-callout:none;overflow:hidden;border-radius:10px;"
+  oncopy="return false;" oncut="return false;" oncontextmenu="return false;"
+  ondragstart="return false;">
+  <div style="position:relative;z-index:1;filter:contrast(0.95);">{inner_html}</div>
+  <div aria-hidden="true" style="pointer-events:none;position:absolute;inset:0;z-index:2;
+    background:
+      repeating-linear-gradient(90deg,
+        rgba(0,0,0,0.07) 0px, rgba(0,0,0,0.07) 2px,
+        transparent 2px, transparent 5px,
+        rgba(0,0,0,0.04) 5px, rgba(0,0,0,0.04) 6px,
+        transparent 6px, transparent 11px),
+      repeating-linear-gradient(-28deg,
+        transparent 0 46px,
+        rgba(45,90,45,0.10) 46px 58px);
+    mix-blend-mode:multiply;"></div>
+  <div aria-hidden="true" style="pointer-events:none;position:absolute;inset:-20%;z-index:3;
+    display:flex;flex-wrap:wrap;align-content:space-around;justify-content:space-around;
+    transform:rotate(-24deg);opacity:0.22;font-weight:800;font-size:15px;color:#1b5e20;
+    letter-spacing:0.08em;line-height:2.4;word-break:break-all;">
+    {" ".join([mark_esc] * 36)}
+  </div>
+  <div style="position:absolute;left:0;right:0;bottom:0;z-index:4;padding:8px 12px;
+    background:linear-gradient(transparent, rgba(255,255,255,0.92));
+    color:#c62828;font-size:0.85rem;font-weight:700;text-align:center;">
+    免费预览 · 含水印条码 · 禁止复制/下载 · 截图亦含水印标识
+  </div>
+</div>
+<script>
+(function(){{
+  document.querySelectorAll('.sf-protected').forEach(function(el){{
+    el.addEventListener('copy', function(e){{ e.preventDefault(); }});
+    el.addEventListener('cut', function(e){{ e.preventDefault(); }});
+  }});
+}})();
+</script>
+""".strip()
+
+
+def render_report_pages(report: dict, *, protected: bool = False):
+    """渲染各页报告；protected=True 时加水印条码且禁选复制。"""
+    tier = st.session_state.subscription_tier
+    max_page = 9 if tier in ("gold", "diamond") else 8
+    labels_zh = [
+        "页一：八字命盘与基本信息", "页二：事业流年详批 (Part 1)", "页三：事业流年详批 (Part 2)",
+        "页四：财运流年详批 (Part 1)", "页五：财运流年详批 (Part 2)", "页六：感情流年详批 (Part 1)",
+        "页七：感情流年详批 (Part 2)", "页八：健康流年详批", "页九：流年预测专章",
+    ]
+    labels_en = [
+        "Page 1: Chart", "Page 2: Career (1)", "Page 3: Career (2)",
+        "Page 4: Wealth (1)", "Page 5: Wealth (2)", "Page 6: Relationship (1)",
+        "Page 7: Relationship (2)", "Page 8: Health", "Page 9: Annual luck",
+    ]
+    labels = labels_zh if lang == "zh" else labels_en
+    available = [i for i in range(1, 10) if f"page{i}" in report]
+    show_n = min(available[-1] if available else max_page, max_page)
+    mark = st.session_state.get("user_email") or (st.session_state.birth_info or {}).get("name") or "SIGMA-FATE"
+
+    for i in range(1, show_n + 1):
+        pk = f"page{i}"
+        with st.expander(labels[i - 1] if i <= len(labels) else pk, expanded=(i == 1)):
+            if pk not in report:
+                continue
+            page = report[pk]
+            if not isinstance(page, dict):
+                page = {"content": str(page), "title": labels[i - 1]}
+            if not page.get("professional") and page.get("content"):
+                page = ReportGenerator._split_legacy_content(
+                    str(page.get("content")),
+                    page.get("title") or labels[i - 1],
+                )
+            if report_gen and report_gen._plain_missing(page.get("plain")):
                 try:
-                    if supabase_client and not supabase_client.consume_report_quota(st.session_state.user_id):
-                        st.error("次数已用完" if lang == "zh" else "No quota left")
-                        return
-                    report = report_gen.generate(
-                        st.session_state.bazi_data,
-                        st.session_state.birth_info,
-                        tier,
+                    page = report_gen._ensure_plain_section(
+                        page, page.get("title") or labels[i - 1]
                     )
-                    st.session_state.report_content = report
-                    st.session_state.report_generated = True
-                    if supabase_client:
-                        supabase_client.save_report(
-                            st.session_state.user_id,
-                            st.session_state.birth_info,
-                            st.session_state.bazi_data,
-                            report,
-                            payment_tier=tier,
-                        )
-                    st.success(t("report_ok", lang))
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"{t('report_fail', lang)}{e}")
+                    st.session_state.report_content[pk] = page
+                except Exception:
+                    pass
+            html = ReportGenerator.render_page_html(page, lang)
+            if protected:
+                html = _wrap_protected_html(html, str(mark))
+            st.markdown(html, unsafe_allow_html=True)
+
+
+def render_generate_report_button(key_prefix: str = "main"):
+    """兼容旧调用名 → 大号报告入口。"""
+    render_report_cta(key_prefix)
 
 
 # --- 顶栏 ---
@@ -762,10 +956,29 @@ if st.session_state.get("show_join_membership"):
                 st.session_state.show_join_membership = False
                 st.rerun()
 
-tab1, tab2, tab3 = st.tabs([t("tab_input", lang), t("tab_chart", lang), t("tab_report", lang)])
+# --- 主导航（可用按钮跳到「完整报告」）---
+_nav = [
+    t("tab_input", lang),
+    t("tab_chart", lang),
+    t("tab_report", lang),
+]
+nav_cols = st.columns(3)
+for i, lab in enumerate(_nav):
+    with nav_cols[i]:
+        is_on = int(st.session_state.get("ui_tab", 0)) == i
+        if st.button(
+            lab,
+            key=f"ui_tab_btn_{i}",
+            type="primary" if is_on else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state.ui_tab = i
+            st.rerun()
 
-# ========== Tab 1：输入 + 注册 + 命盘 ==========
-with tab1:
+_tab = int(st.session_state.get("ui_tab", 0))
+
+# ========== Tab 1：输入 + 命盘 ==========
+if _tab == 0:
     st.markdown(f"### {t('input_heading', lang)}")
     st.caption(t("input_caption", lang))
 
@@ -837,7 +1050,7 @@ with tab1:
         render_membership_plans("tab_input")
 
 # ========== Tab 2 ==========
-with tab2:
+elif _tab == 1:
     if st.session_state.bazi_data is None:
         st.info(t("need_input", lang))
         if not is_registered():
@@ -847,106 +1060,71 @@ with tab2:
                 st.rerun()
     else:
         render_bazi_chart(st.session_state.bazi_data, lang)
+        st.markdown("---")
+        render_report_cta("tab_chart")
 
-# ========== Tab 3 ==========
-with tab3:
+# ========== Tab 3：完整报告 ==========
+elif _tab == 2:
     tier = st.session_state.subscription_tier
+    paid = tier in PAID_TIERS
     has_report = bool(st.session_state.report_content)
-    if has_report:
+
+    if not has_report:
+        if st.session_state.bazi_data is None:
+            st.info(t("need_input", lang))
+        else:
+            st.info(
+                "尚未生成报告。请点击下方按钮。"
+                if lang == "zh"
+                else "No report yet — use the button below."
+            )
+            render_report_cta("tab_report_empty")
+        if not paid:
+            st.markdown("---")
+            render_membership_plans("tab_report")
+    else:
         report = st.session_state.report_content
         st.markdown(f"### {t('your_report', lang)}")
-        st.caption(f"{t('generated_at', lang)}：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
-        if tier == "free":
-            st.info(
-                "已恢复历史报告预览；升级会员可继续生成新报告。"
-                if lang == "zh"
-                else "Restored past report. Upgrade to generate new ones."
-            )
-        max_page = 9 if tier in ("gold", "diamond") else 8
-        labels_zh = [
-            "页一：八字命盘与基本信息", "页二：事业流年详批 (Part 1)", "页三：事业流年详批 (Part 2)",
-            "页四：财运流年详批 (Part 1)", "页五：财运流年详批 (Part 2)", "页六：感情流年详批 (Part 1)",
-            "页七：感情流年详批 (Part 2)", "页八：健康流年详批", "页九：流年预测专章",
-        ]
-        labels_en = [
-            "Page 1: Chart", "Page 2: Career (1)", "Page 3: Career (2)",
-            "Page 4: Wealth (1)", "Page 5: Wealth (2)", "Page 6: Relationship (1)",
-            "Page 7: Relationship (2)", "Page 8: Health", "Page 9: Annual luck",
-        ]
-        labels = labels_zh if lang == "zh" else labels_en
-        # 按实际内容页数展示
-        available = [i for i in range(1, 10) if f"page{i}" in report]
-        show_n = available[-1] if available else max_page
-        for i in range(1, show_n + 1):
-            pk = f"page{i}"
-            with st.expander(labels[i - 1] if i <= len(labels) else pk, expanded=(i == 1)):
-                if pk in report:
-                    page = report[pk]
-                    if not isinstance(page, dict):
-                        page = {"content": str(page), "title": labels[i - 1]}
-                    # 旧报告只有 content 长文：拆成结构再渲染
-                    if not page.get("professional") and page.get("content"):
-                        page = ReportGenerator._split_legacy_content(
-                            str(page.get("content")),
-                            page.get("title") or labels[i - 1],
-                        )
-                    # 白话空壳/占位：在线补写（有 DeepSeek 时）
-                    if report_gen and report_gen._plain_missing(page.get("plain")):
-                        try:
-                            page = report_gen._ensure_plain_section(
-                                page, page.get("title") or labels[i - 1]
-                            )
-                            st.session_state.report_content[pk] = page
-                        except Exception:
-                            pass
-                    st.markdown(
-                        ReportGenerator.render_page_html(page, lang),
-                        unsafe_allow_html=True,
-                    )
-        st.markdown("---")
-        col_dl1, col_dl2 = st.columns(2)
-        with col_dl1:
-            try:
-                pdf_buffer = generate_pdf_report(
-                    report,
-                    st.session_state.birth_info or {},
-                    st.session_state.bazi_data or {},
-                )
-                st.download_button(
-                    t("download_pdf", lang),
-                    pdf_buffer,
-                    pdf_filename(st.session_state.birth_info or {}),
-                    "application/pdf",
-                )
-            except Exception:
-                st.warning(t("pdf_warn", lang))
-        with col_dl2:
-            st.download_button(
-                t("export_json", lang),
-                json.dumps(report, ensure_ascii=False, indent=2),
-                f"bazi_{datetime.now():%Y%m%d}.json",
-                "application/json",
-            )
-        if tier in PAID_TIERS:
+        if paid:
+            st.caption(f"{t('generated_at', lang)}：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+            render_report_pages(report, protected=False)
             st.markdown("---")
-            render_generate_report_button("tab_report_regen")
-    elif tier == "free":
-        st.warning(t("locked_report", lang))
-        st.markdown(f"### {t('unlock_heading', lang)}")
-        st.markdown(t("unlock_body", lang))
-        if not is_registered():
-            st.caption(t("login_prompt", lang))
-            if st.button(t("login_btn", lang), key="tab3_login"):
-                st.session_state.show_login = True
-                st.rerun()
-        render_membership_plans("tab_report")
-    else:
-        st.info(t("need_generate", lang) if st.session_state.bazi_data is None else (
-            "请在命盘页生成完整报告" if lang == "zh" else "Generate the full report from the chart tab"
-        ))
-        render_membership_plans("tab_report")
-        if st.session_state.bazi_data is not None:
-            render_generate_report_button("tab_report")
+            col_dl1, col_dl2 = st.columns(2)
+            with col_dl1:
+                try:
+                    pdf_buffer = generate_pdf_report(
+                        report,
+                        st.session_state.birth_info or {},
+                        st.session_state.bazi_data or {},
+                    )
+                    st.download_button(
+                        t("download_pdf", lang),
+                        pdf_buffer,
+                        pdf_filename(st.session_state.birth_info or {}),
+                        "application/pdf",
+                    )
+                except Exception:
+                    st.warning(t("pdf_warn", lang))
+            with col_dl2:
+                st.download_button(
+                    t("export_json", lang),
+                    json.dumps(report, ensure_ascii=False, indent=2),
+                    f"bazi_{datetime.now():%Y%m%d}.json",
+                    "application/json",
+                )
+            st.markdown("---")
+            render_report_cta("tab_report_paid")
+        else:
+            st.warning(
+                "免费预览模式：含水印条码，不可复制、不可下载。升级会员可清晰阅读并下载 PDF。"
+                if lang == "zh"
+                else "Free preview with watermark — no copy/download. Upgrade to unlock."
+            )
+            render_report_pages(report, protected=True)
+            st.markdown("---")
+            st.markdown(f"### {t('unlock_heading', lang)}")
+            st.markdown(t("unlock_body", lang))
+            render_membership_plans("tab_report_free")
 
 st.markdown("---")
 st.caption(t("footer", lang))
