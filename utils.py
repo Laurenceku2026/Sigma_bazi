@@ -47,6 +47,49 @@ def render_wuxing_bars(stats):
         })
     return bars
 
+def render_bazi_chart(bazi_data, lang: str = "zh"):
+    """在页面内渲染八字命盘（供输入页与命盘页复用）。"""
+    from i18n import t
+
+    col_show1, col_show2 = st.columns(2)
+    with col_show1:
+        st.markdown(f"### {t('four_pillars', lang)}")
+        bazi_display = format_bazi_display(bazi_data["bazi"])
+        cols = st.columns(4)
+        for i, (pillar, value) in enumerate(bazi_display.items()):
+            with cols[i]:
+                st.markdown(f"**{pillar}**")
+                st.markdown(
+                    f"<h1 style='text-align:center;font-size:3rem;'>{value}</h1>",
+                    unsafe_allow_html=True,
+                )
+        st.markdown(f"**{t('day_master', lang)}：** {bazi_data['day_master']}")
+        st.markdown(f"**{t('gender', lang)}：** {bazi_data['gender']}")
+    with col_show2:
+        st.markdown(f"### {t('wuxing', lang)}")
+        bars = render_wuxing_bars(bazi_data["wuxing_stats"])
+        for bar in bars:
+            st.markdown(f"{bar['wuxing']}：{'■' * int(bar['pct'] / 10)} ({bar['count']})")
+            st.progress(min(max(bar["pct"] / 100.0, 0.0), 1.0))
+            st.caption(f"{bar['pct']:.0f}%")
+
+    st.markdown("---")
+    st.markdown(f"### {t('dayun', lang)}")
+    if bazi_data.get("da_yun"):
+        for dy in bazi_data["da_yun"][:6]:
+            c0, c1, c2 = st.columns([1, 2, 1])
+            c0.markdown(f"**{t('step', lang, n=dy['step'])}**")
+            c1.markdown(f"{dy['gan']}{dy['zhi']}")
+            c2.markdown(f"_{dy['years']}_")
+
+    st.markdown("---")
+    st.markdown(f"### {t('liunian', lang)}")
+    if bazi_data.get("liu_nian"):
+        for ln in bazi_data["liu_nian"]:
+            year_label = f"**{ln['year']}**" if ln.get("is_current") else str(ln["year"])
+            st.markdown(f"{year_label}：{ln['gan']}{ln['zhi']}")
+
+
 def generate_pdf_report(report_content, birth_info, bazi_data):
     """生成PDF报告（简化版）"""
     from reportlab.lib.pagesizes import letter

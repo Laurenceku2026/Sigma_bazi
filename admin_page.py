@@ -71,7 +71,7 @@ def render_admin_page(lang: str, supabase_client) -> None:
     paid = [
         u
         for u in users
-        if u.get("subscription_tier") in ("monthly", "quarterly", "annual", "pro")
+        if u.get("subscription_tier") in ("silver", "gold", "diamond", "monthly", "quarterly", "annual", "pro")
     ]
     free = [u for u in users if u.get("subscription_tier", "free") == "free"]
     configured = [u for u in users if u.get("email")]
@@ -127,7 +127,7 @@ def render_admin_page(lang: str, supabase_client) -> None:
     st.markdown("---")
     st.markdown(f"### 📝 {t('edit_subscription', lang)}")
     col_a, col_b = st.columns(2)
-    tiers = ["free", "monthly", "quarterly", "annual"]
+    tiers = ["free", "silver", "gold", "diamond", "monthly", "quarterly", "annual"]
     cur_tier = selected_user.get("subscription_tier", "free")
     with col_a:
         new_tier = st.selectbox(

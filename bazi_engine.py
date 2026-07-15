@@ -43,7 +43,7 @@ class BaziEngine:
     
     def __init__(self, year, month, day, hour, minute=0, 
                  gender='男', timezone='Asia/Shanghai', 
-                 is_dst=False, true_solar_time=True):
+                 is_dst=False, true_solar_time=True, longitude=None):
         """
         初始化八字排盘
         
@@ -63,6 +63,7 @@ class BaziEngine:
         self.timezone = timezone
         self.is_dst = is_dst
         self.true_solar_time = true_solar_time
+        self.longitude = longitude if longitude is not None else 120.0
         
         # 计算结果
         self.bazi = {}  # 年柱、月柱、日柱、时柱
@@ -117,10 +118,8 @@ class BaziEngine:
         return self
     
     def _true_solar_time_correction(self):
-        """真太阳时校正（简化版）"""
-        # 东经120度为北京时间基准，每度差4分钟
-        # 这里使用上海经度约121.5度
-        longitude = 121.5
+        """真太阳时校正：东经120度为北京时间基准，每度差4分钟"""
+        longitude = self.longitude
         time_diff = (longitude - 120) * 4  # 分钟
         self.birth_date += timedelta(minutes=time_diff)
         return self.birth_date

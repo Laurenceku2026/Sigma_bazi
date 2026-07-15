@@ -1,19 +1,20 @@
-"""中英文文案与时区标签。"""
+"""中英文文案与中国地域真太阳时基准。"""
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, List, Tuple
 
-TIMEZONES = [
-    ("Asia/Shanghai", "中国（上海 / 北京）", "China (Shanghai / Beijing)"),
-    ("Asia/Hong_Kong", "中国香港", "Hong Kong"),
-    ("Asia/Taipei", "中国台湾（台北）", "Taiwan (Taipei)"),
-    ("Asia/Tokyo", "日本（东京）", "Japan (Tokyo)"),
-    ("Asia/Singapore", "新加坡", "Singapore"),
-    ("America/New_York", "美国东部（纽约）", "US Eastern (New York)"),
-    ("America/Los_Angeles", "美国西部（洛杉矶）", "US Pacific (Los Angeles)"),
-    ("Europe/London", "英国（伦敦）", "UK (London)"),
-    ("Europe/Paris", "欧洲中部（巴黎）", "Central Europe (Paris)"),
-    ("UTC", "协调世界时 UTC", "Coordinated Universal Time (UTC)"),
+# (region_id, 中文名, 英文名, 基准经度用于真太阳时)
+REGIONS: List[Tuple[str, str, str, float]] = [
+    ("huabei", "华北（北京、天津、河北、山西、内蒙古）", "North China (Beijing region)", 116.4),
+    ("dongbei", "东北（辽宁、吉林、黑龙江）", "Northeast China", 125.3),
+    ("huadong", "华东（上海、江苏、浙江、安徽、山东、福建）", "East China (Shanghai region)", 121.5),
+    ("huazhong", "华中（河南、湖北、湖南、江西）", "Central China", 114.3),
+    ("huanan", "华南（广东、广西、海南）", "South China (Guangdong region)", 113.3),
+    ("xinan", "西南（四川、重庆、云南、贵州、西藏）", "Southwest China", 104.1),
+    ("xibei", "西北（陕西、甘肃、青海、宁夏、新疆）", "Northwest China", 108.9),
+    ("gangao", "港澳台", "Hong Kong / Macau / Taiwan", 114.2),
+    ("overseas_east", "海外 · 东亚时区", "Overseas · East Asia TZ", 135.0),
+    ("overseas_west", "海外 · 欧美时区", "Overseas · US/EU TZ", -75.0),
 ]
 
 TEXTS: Dict[str, Dict[str, str]] = {
@@ -33,9 +34,10 @@ TEXTS: Dict[str, Dict[str, str]] = {
         ),
         "current_status": "当前状态",
         "tier_free": "🆓 免费版",
-        "tier_monthly": "🌟 月度会员",
-        "tier_quarterly": "👑 季度会员",
-        "free_warning": "⚠️ 免费版仅可查看基本命盘，完整报告需订阅",
+        "tier_silver": "🥈 银卡会员",
+        "tier_gold": "🥇 金卡会员",
+        "tier_diamond": "💎 钻石会员",
+        "free_warning": "⚠️ 免费版可查看基础命盘；完整报告请选购会员",
         "tab_input": "📝 输入信息",
         "tab_chart": "📊 八字命盘",
         "tab_report": "📄 完整报告",
@@ -50,19 +52,29 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "birth_hour": "🕐 出生时辰（24小时制）",
         "birth_hour_help": "如果您不确定准确时间，可选择12:00（午时）",
         "birth_minute": "🕐 出生分钟",
-        "timezone": "🌍 出生时区",
+        "region": "🗺️ 出生地域（用于真太阳时校正）",
+        "region_help": "按中国传统地理分区选择，非具体城市名",
         "true_solar": "☀️ 启用真太阳时校正（推荐）",
-        "true_solar_help": "根据出生地的经度校正时间，使排盘更精准",
+        "true_solar_help": "根据所选地域经度校正时辰，使排盘更精准",
         "more_info": "📌 更多信息（可选）",
-        "birth_place": "出生地点",
-        "birth_place_ph": "例如：中国 上海",
+        "birth_place": "出生地点（可选备注）",
+        "birth_place_ph": "例如：广州、洛阳（仅作记录）",
         "email": "📧 电子邮箱",
-        "email_ph": "用于接收报告和订阅通知",
-        "more_tip": "💡 提供更多信息有助于生成更精准的报告",
-        "choose_tier": "💎 选择报告版本",
-        "btn_free": "🆓 免费版\n\n基础命盘展示",
-        "btn_monthly": "🌟 月度会员\n¥XX/月\n\n完整八页报告",
-        "btn_quarterly": "👑 季度会员\n¥XX/季\n\n完整报告 + 优先咨询",
+        "email_ph": "用于注册与接收报告",
+        "register_heading": "📧 注册 / 登录",
+        "register_caption": "首次使用请用邮箱注册，已有账号请输入同一邮箱",
+        "register_btn": "确认注册并继续",
+        "register_ok": "注册成功！正在为您排盘…",
+        "need_register": "请先完成邮箱注册，再生成命盘",
+        "registered_as": "当前账号",
+        "membership_heading": "💎 升级会员 · 解锁完整报告",
+        "btn_silver": "🥈 银卡会员\n\nHK$10 · 10次\n完整八页报告",
+        "btn_gold": "🥇 金卡会员\n\nHK$100 · 10次\n八页报告 + 流年报告",
+        "btn_diamond": "💎 钻石会员\n\nHK$999 · 一年无限\n八页报告 + 流年报告",
+        "outline_title": "📋 报告大纲预览",
+        "pay_now": "💳 前往支付",
+        "remaining_reports": "剩余报告次数",
+        "chart_section": "📊 您的八字命盘",
         "pay_link": "点击这里前往支付",
         "pay_jump": "正在跳转支付页面...",
         "pay_error": "支付系统暂时不可用，请联系客服。错误：",
@@ -83,9 +95,10 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "locked_report": "🔒 您当前为免费用户，完整八页报告需要订阅会员",
         "unlock_heading": "💎 订阅会员解锁完整报告",
         "unlock_body": (
-            "**月度会员**：解锁完整八页报告 + 实时流年更新\n"
-            "**季度会员**：全部权益 + 专属咨询 + 五行风水建议\n\n"
-            "请在「输入信息」标签页选择订阅"
+            "**银卡**：10次完整八页报告\n"
+            "**金卡**：10次八页报告 + 流年预测专章\n"
+            "**钻石**：一年内无限次报告 + 流年预测\n\n"
+            "排盘后在下方选择会员方案"
         ),
         "preview": "📄 报告预览（仅限会员）",
         "need_generate": "👆 请先在「输入信息」标签页生成报告",
@@ -159,9 +172,10 @@ TEXTS: Dict[str, Dict[str, str]] = {
         ),
         "current_status": "Status",
         "tier_free": "🆓 Free",
-        "tier_monthly": "🌟 Monthly",
-        "tier_quarterly": "👑 Quarterly",
-        "free_warning": "⚠️ Free tier shows the chart only; subscribe for full reports",
+        "tier_silver": "🥈 Silver",
+        "tier_gold": "🥇 Gold",
+        "tier_diamond": "💎 Diamond",
+        "free_warning": "⚠️ Free tier: basic chart only; upgrade for full reports",
         "tab_input": "📝 Input",
         "tab_chart": "📊 Chart",
         "tab_report": "📄 Full Report",
@@ -176,19 +190,29 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "birth_hour": "🕐 Birth hour (24h)",
         "birth_hour_help": "If unsure, use 12:00 (Wu hour)",
         "birth_minute": "🕐 Birth minute",
-        "timezone": "🌍 Birth timezone",
+        "region": "🗺️ Birth region (true solar time)",
+        "region_help": "Chinese geographic regions, not city names",
         "true_solar": "☀️ Enable true solar time (recommended)",
-        "true_solar_help": "Adjust by longitude for higher chart accuracy",
+        "true_solar_help": "Adjust hour by regional longitude",
         "more_info": "📌 More info (optional)",
-        "birth_place": "Birth place",
-        "birth_place_ph": "e.g. Shanghai, China",
+        "birth_place": "Birth place (note only)",
+        "birth_place_ph": "e.g. Guangzhou (for records)",
         "email": "📧 Email",
-        "email_ph": "For report delivery and subscription notices",
-        "more_tip": "💡 Extra details help improve report relevance",
-        "choose_tier": "💎 Choose report tier",
-        "btn_free": "🆓 Free\n\nBasic chart",
-        "btn_monthly": "🌟 Monthly\n¥XX/mo\n\nFull 8-page report",
-        "btn_quarterly": "👑 Quarterly\n¥XX/qtr\n\nReport + priority consult",
+        "email_ph": "For registration and reports",
+        "register_heading": "📧 Register / Sign in",
+        "register_caption": "New users: register with email. Returning users: same email",
+        "register_btn": "Register & continue",
+        "register_ok": "Registered! Calculating chart…",
+        "need_register": "Please register with email first",
+        "registered_as": "Signed in as",
+        "membership_heading": "💎 Upgrade · Unlock full reports",
+        "btn_silver": "🥈 Silver\n\nHK$10 · 10 uses\nFull 8-page report",
+        "btn_gold": "🥇 Gold\n\nHK$100 · 10 uses\n8 pages + annual luck",
+        "btn_diamond": "💎 Diamond\n\nHK$999 · 1 year unlimited\n8 pages + annual luck",
+        "outline_title": "📋 Report outline",
+        "pay_now": "💳 Pay now",
+        "remaining_reports": "Reports remaining",
+        "chart_section": "📊 Your BaZi chart",
         "pay_link": "Click here to pay",
         "pay_jump": "Redirecting to payment...",
         "pay_error": "Payment unavailable. Error: ",
@@ -209,9 +233,10 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "locked_report": "🔒 Full 8-page report requires a paid subscription",
         "unlock_heading": "💎 Subscribe to unlock",
         "unlock_body": (
-            "**Monthly**: full 8-page report + annual updates\n"
-            "**Quarterly**: all benefits + consult + feng shui tips\n\n"
-            "Choose a plan on the Input tab"
+            "**Silver**: 10 full 8-page reports\n"
+            "**Gold**: 10 reports + annual luck chapter\n"
+            "**Diamond**: unlimited reports for 1 year\n\n"
+            "Choose a plan below after charting"
         ),
         "preview": "📄 Report preview (members only)",
         "need_generate": "👆 Generate a report on the Input tab first",
@@ -282,18 +307,29 @@ def t(key: str, lang: str = "zh", **kwargs) -> str:
     return text
 
 
+def region_options(lang: str = "zh"):
+    labels, ids, longitudes = [], [], []
+    for rid, zh, en, lon in REGIONS:
+        ids.append(rid)
+        labels.append(zh if lang == "zh" else en)
+        longitudes.append(lon)
+    return labels, ids, longitudes
+
+
+def region_longitude(region_id: str) -> float:
+    for rid, _, _, lon in REGIONS:
+        if rid == region_id:
+            return lon
+    return 120.0
+
+
+def region_label(region_id: str, lang: str = "zh") -> str:
+    for rid, zh, en, _ in REGIONS:
+        if rid == region_id:
+            return zh if lang == "zh" else en
+    return region_id
+
+
+# 兼容旧 import
 def timezone_options(lang: str = "zh"):
-    """返回 (显示名列表, 值列表)。"""
-    labels = []
-    values = []
-    for tz_id, zh_name, en_name in TIMEZONES:
-        values.append(tz_id)
-        labels.append(zh_name if lang == "zh" else en_name)
-    return labels, values
-
-
-def timezone_label(tz_id: str, lang: str = "zh") -> str:
-    for tid, zh_name, en_name in TIMEZONES:
-        if tid == tz_id:
-            return zh_name if lang == "zh" else en_name
-    return tz_id
+    return region_options(lang)[:2]

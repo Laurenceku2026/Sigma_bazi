@@ -13,30 +13,20 @@ class ReportGenerator:
         self.base_url = base_url
         self.model = model
         
-    def generate(self, bazi_data, birth_info, payment_tier='monthly'):
+    def generate(self, bazi_data, birth_info, payment_tier='silver'):
         """
-        生成完整八页报告
+        生成命理报告
         
         Args:
-            bazi_data: 八字排盘数据
-            birth_info: 出生信息（姓名、性别、出生时间等）
-            payment_tier: 'monthly' 或 'quarterly'
-        
-        Returns:
-            dict: 八页报告内容
+            payment_tier: silver / gold / diamond
         """
-        # 构建提示词
-        prompt = self._build_prompt(bazi_data, birth_info)
-        
-        # 调用DeepSeek API
+        include_liunian = payment_tier in ('gold', 'diamond')
+        prompt = self._build_prompt(bazi_data, birth_info, include_liunian=include_liunian)
         response = self._call_deepseek(prompt)
-        
-        # 解析返回的JSON
-        report = self._parse_response(response)
-        
+        report = self._parse_response(response, include_liunian=include_liunian)
         return report
     
-    def _build_prompt(self, bazi_data, birth_info):
+    def _build_prompt(self, bazi_data, birth_info, include_liunian=False):
         """构建系统提示词"""
         
         # 提取关键数据
@@ -118,8 +108,25 @@ class ReportGenerator:
 - 哪类疾病最容易中招
 - 就医建议（找什么类型的医生、哪方向医院更有利）
 
+### 流年总论（贯穿各页，必须体现）
+- 事业/财运/感情/健康各页须结合当年流年干支与命局作用
+- 写明流年吉凶趋势、关键月份、具体行动建议（宜进取/宜守/宜避险）
+"""
+        if include_liunian:
+            prompt += """
+### 页九：流年预测专章（金卡/钻石专属）
+- 当年流年干支深度解读（与日主、大运的刑冲合害）
+- 全年运势曲线：旺月与防月
+- 四大领域流年综合评分与开运建议
+- 「知进退」策略与五行补益方向
+
+## 输出格式（含 page9）
+"""
+        else:
+            prompt += """
 ## 输出格式
-必须输出为严格的JSON格式，结构如下：
+"""
+        prompt += """必须输出严格 JSON：
 {{
   "page1": {{"title": "八字命盘与基本信息", "content": "..."}},
   "page2": {{"title": "事业流年详批 (Part 1)", "content": "..."}},
@@ -128,10 +135,14 @@ class ReportGenerator:
   "page5": {{"title": "财运流年详批 (Part 2)", "content": "..."}},
   "page6": {{"title": "感情流年详批 (Part 1)", "content": "..."}},
   "page7": {{"title": "感情流年详批 (Part 2)", "content": "..."}},
-  "page8": {{"title": "健康流年详批", "content": "..."}}
+  "page8": {{"title": "健康流年详批", "content": "..."}}"""
+        if include_liunian:
+            prompt += """,
+  "page9": {{"title": "流年预测专章", "content": "..."}}"""
+        prompt += """
 }}
 
-请确保内容专业、详细、有针对性，避免泛泛而谈。每个页面的content至少500字。
+每页 content 至少 400 字，专业、有针对性。
 """
         return prompt
     
@@ -165,7 +176,7 @@ class ReportGenerator:
         else:
             raise Exception(f"DeepSeek API错误: {response.status_code} - {response.text}")
     
-    def _parse_response(self, response_text):
+    def _parse_response(self, response_text, include_liunian=False):
         """解析DeepSeek返回的JSON"""
         try:
             # 尝试提取JSON（可能被markdown包裹）
@@ -182,6 +193,8 @@ class ReportGenerator:
             
             # 确保所有页面都存在
             pages = ['page1', 'page2', 'page3', 'page4', 'page5', 'page6', 'page7', 'page8']
+            if include_liunian:
+                pages.append('page9')
             for page in pages:
                 if page not in report:
                     report[page] = {

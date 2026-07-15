@@ -257,7 +257,40 @@ class SupabaseClient:
         user = self.get_user(user_id)
         if not user or user.get("app_id") != self.app_id:
             return False
-        return user.get("subscription_tier") in ("monthly", "quarterly", "annual")
+        return user.get("subscription_tier") in (
+            "silver", "gold", "diamond", "monthly", "quarterly", "annual"
+        )
+
+    def apply_membership_tier(self, user_id: str, tier: str) -> bool:
+        """支付成功后应用会员档（银/金/钻）。"""
+        from datetime import timedelta
+
+        trials = 10
+        expires = None
+        if tier == "diamond":
+            trials = 9999
+            exp = datetime.utcnow() + timedelta(days=365)
+            expires = exp.isoformat() + "Z"
+        return self.admin_update_user(
+            user_id,
+            subscription_tier=tier,
+            free_trials_remaining=trials,
+            subscription_expires_at=expires,
+        )
+
+    def consume_report_quota(self, user_id: str) -> bool:
+        user = self.get_user(user_id)
+        if not user:
+            return False
+        tier = user.get("subscription_tier", "free")
+        if tier == "diamond":
+            return True
+        if tier in ("silver", "gold"):
+            remaining = int(user.get("free_trials_remaining") or 0)
+            if remaining <= 0:
+                return False
+            return self.admin_update_user(user_id, free_trials_remaining=remaining - 1)
+        return False
 
     # ---------- 管理员：用户列表 / 订阅 / 次数 ----------
 
@@ -275,6 +308,26 @@ class SupabaseClient:
         except Exception as e:
             print(f"List users error: {e}")
             return []
+
+    def admin_reset_free_trials(self, default_trials: int = 30) -> int:
+        """重置所有 free 用户次数，返回更新条数。"""
+        try:
+            result = (
+                self._table("users")
+                .update(
+                    {
+                        "free_trials_remaining": default_trials,
+                        "updated_at": self._now(),
+                    }
+                )
+                .eq("app_id", self.app_id)
+                .eq("subscription_tier", "free")
+                .execute()
+            )
+            return len(result.data or [])
+        except Exception as e:
+            print(f"Admin reset free trials error: {e}")
+            return 0
 
     def admin_update_user(
         self,
@@ -328,26 +381,6 @@ class SupabaseClient:
         except Exception as e:
             print(f"Admin delete user error: {e}")
             return False
-
-    def admin_reset_free_trials(self, default_trials: int = 30) -> int:
-        """重置所有 free 用户次数，返回更新条数。"""
-        try:
-            result = (
-                self._table("users")
-                .update(
-                    {
-                        "free_trials_remaining": default_trials,
-                        "updated_at": self._now(),
-                    }
-                )
-                .eq("app_id", self.app_id)
-                .eq("subscription_tier", "free")
-                .execute()
-            )
-            return len(result.data or [])
-        except Exception as e:
-            print(f"Admin reset free trials error: {e}")
-            return 0
 
     # ---------- 报告 ----------
 
