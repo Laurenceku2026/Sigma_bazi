@@ -622,6 +622,22 @@ class SupabaseClient:
             n2 = 0
         return n1 + n2
 
+    def purge_users_without_profile(self) -> int:
+        """删除从未排盘的用户（无姓名且无生日），只保留真实使用本 App 的记录。"""
+        users = self.list_users(limit=1000)
+        deleted = 0
+        for u in users:
+            has_name = bool(str(u.get("display_name") or "").strip())
+            has_birth = bool(u.get("birth_date"))
+            if has_name or has_birth:
+                continue
+            uid = u.get("user_id")
+            if not uid:
+                continue
+            if self.admin_delete_user(uid):
+                deleted += 1
+        return deleted
+
     # ---------- 报告 ----------
 
     def save_report(

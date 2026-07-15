@@ -68,17 +68,17 @@ def render_admin_page(lang: str, supabase_client) -> None:
         return
 
     st.info(
-        f"🔒 本页只管理 **Sigma Fate** 表 `sf_users`（`{supabase_client.schema}` / `{supabase_client.app_id}`）。"
-        f"若仍看到十余个用户，请在 Supabase 执行 `sql/005_sf_users_isolated.sql` 后 Reboot，并用下方按钮清理匿名行。"
+        f"🔒 本页管理 `sf_users`。**只有完成排盘（有姓名/生日）才是真正使用本 App 的用户**；"
+        f"仅有邮箱的空资料行多为测试或「加入会员」未排盘产生，请用下方红色按钮清理。"
         if lang == "zh"
-        else f"🔒 Only `sf_users` (`{supabase_client.schema}` / `{supabase_client.app_id}`)."
+        else f"🔒 Managing `sf_users`. Rows without name/birthday are empty registrations."
     )
     st.caption(
         f"table=`{getattr(supabase_client, 'USER_TABLE', 'sf_users')}` · "
         f"schema=`{supabase_client.schema}` · app_id=`{supabase_client.app_id}`"
     )
 
-    purge_cols = st.columns(2)
+    purge_cols = st.columns(3)
     with purge_cols[0]:
         if st.button(
             "🧹 清理非本 App 脏数据" if lang == "zh" else "🧹 Purge foreign rows",
@@ -95,6 +95,19 @@ def render_admin_page(lang: str, supabase_client) -> None:
             n = supabase_client.purge_anonymous_users()
             st.success(f"已删除 {n} 条匿名用户" if lang == "zh" else f"Deleted {n} anon rows")
             st.rerun()
+    with purge_cols[2]:
+        if st.button(
+            "🗑 只保留有资料用户（删空行）" if lang == "zh" else "🗑 Keep profiled users only",
+            key="admin_purge_empty_profile",
+            type="primary",
+        ):
+            n = supabase_client.purge_users_without_profile()
+            st.success(
+                f"已删除 {n} 个无姓名无生日的空用户，已排盘用户保留"
+                if lang == "zh"
+                else f"Deleted {n} empty-profile users"
+            )
+            st.rerun()
 
     users: List[Dict] = supabase_client.list_users()
     # 二次保险：前端再滤一次
@@ -110,11 +123,23 @@ def render_admin_page(lang: str, supabase_client) -> None:
         else:
             st.error(f"读取用户失败：{err}")
             st.info(
-                "请确认：1) 已执行 sql/001～005；2) Exposed schemas 含 app_sigma_fate；"
+                "请确认：1) 已执行 sql/001～006；2) Exposed schemas 含 app_sigma_fate；"
                 "3) Secrets 中 URL 与 service_role 属同一项目。"
                 if lang == "zh"
                 else "Check SQL, exposed schema, and matching Supabase URL/key."
             )
+
+    empty_n = sum(
+        1 for u in users
+        if not str(u.get("display_name") or "").strip() and not u.get("birth_date")
+    )
+    if empty_n:
+        st.warning(
+            f"当前有 **{empty_n}** 个仅邮箱、无排盘资料的用户（例如测试邮箱）。"
+            f"点击上方「只保留有资料用户」可一次删掉；或在 Supabase 跑 `sql/006_purge_empty_profile_users.sql`。"
+            if lang == "zh"
+            else f"{empty_n} email-only empty profiles. Use Keep profiled users only."
+        )
 
     paid = [
         u
@@ -123,23 +148,48 @@ def render_admin_page(lang: str, supabase_client) -> None:
     ]
     free = [u for u in users if u.get("subscription_tier", "free") == "free"]
     configured = [u for u in users if u.get("email")]
+    profiled = [
+        u for u in users
+        if str(u.get("display_name") or "").strip() or u.get("birth_date")
+    ]
 
     st.markdown(f"### 📊 {t('sys_stats', lang)}")
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric(t("total_users", lang), len(users))
-    c2.metric(t("paid_users", lang), len(paid))
-    c3.metric(t("free_users", lang), len(free))
-    c4.metric(t("configured_users", lang), len(configured))
+    c2.metric("有资料" if lang == "zh" else "With profile", len(profiled))
+    c3.metric(t("paid_users", lang), len(paid))
+    c4.metric(t("free_users", lang), len(free))
+    c5.metric(t("configured_users", lang), len(configured))
+
+    show_all = st.checkbox(
+        "显示全部（含无资料空行）" if lang == "zh" else "Show all (incl. empty profiles)",
+        value=False,
+        key="admin_show_all_users",
+    )
+    view_users = users if show_all else profiled
+    if not show_all and len(profiled) < len(users):
+        st.caption(
+            f"默认只显示有姓名/生日的用户（{len(profiled}/{len(users)}）。勾选上方可看全部。"
+            if lang == "zh"
+            else f"Showing profiled users only ({len(profiled)}/{len(users)})."
+        )
 
     st.markdown("---")
     st.markdown(f"### 📋 {t('user_list', lang)}")
 
-    if not users:
-        st.info(t("no_users", lang))
-        return
+    if not view_users:
+        st.info(
+            t("no_users", lang)
+            if not users
+            else ("暂无已排盘用户；请勾选「显示全部」或先在 App 排盘。" if lang == "zh" else "No profiled users yet.")
+        )
+        if not users:
+            return
+        # 仍允许在全部模式下管理；若默认空但 users 非空，用全部继续选用户
+        view_users = users
 
     table_rows = []
-    for u in users:
+    for u in view_users:
         table_rows.append(
             {
                 t("email_col", lang): u.get("email") or "-",
@@ -155,16 +205,17 @@ def render_admin_page(lang: str, supabase_client) -> None:
         )
     st.dataframe(table_rows, use_container_width=True, hide_index=True, height=360)
 
-    # 选择用户
+    # 选择用户（编辑时用完整列表）
+    manage_users = users
     options = [
-        f"{u.get('email') or u.get('user_id')}|{u.get('user_id')}" for u in users
+        f"{u.get('email') or u.get('user_id')}|{u.get('user_id')}" for u in manage_users
     ]
     labels = [o.split("|")[0] for o in options]
     selected_label = st.selectbox(t("select_user", lang), labels, key="admin_select_user")
     selected_user = next(
         (
             u
-            for u, lab in zip(users, labels)
+            for u, lab in zip(manage_users, labels)
             if lab == selected_label
         ),
         None,
