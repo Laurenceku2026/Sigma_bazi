@@ -1,42 +1,28 @@
 -- =============================================================================
--- Sigma Fate (BaZi) — 多 App 隔离 Schema
--- 在共享 Supabase 项目中执行本脚本一次即可。
+-- Sigma Fate (BaZi) — 多 App 隔离 Schema（可重复执行）
 --
--- 隔离原则：
--- 1. 独立 schema：app_sigma_fate（与其他 App 的 public / app_xxx 物理隔离）
--- 2. 行级 app_id：默认 sigma_fate_v1，所有表强制写入/查询带 app_id
--- 3. RLS：按 app_id +（可选）auth.uid() 限制跨 App / 跨用户读写
---
--- 执行后请到 Supabase Dashboard → Settings → API → Exposed schemas
--- 把 app_sigma_fate 加入暴露列表（否则 PostgREST 访问不到自定义 schema）。
+-- 42703 column "app_id" does not exist 的常见原因：
+-- 表已存在但没有 app_id，CREATE TABLE IF NOT EXISTS 不会补列，
+-- 后面的 INDEX / POLICY 引用 app_id 就会报错。
+-- 本脚本会：建表 → 补齐缺失列 → 再建索引/约束/RLS/暴露 schema。
 -- =============================================================================
 
 CREATE SCHEMA IF NOT EXISTS app_sigma_fate;
 
--- ---------- users ----------
+-- ---------- 建表（仅在不存在时创建；已存在的旧表靠下面 ALTER 补列） ----------
 CREATE TABLE IF NOT EXISTS app_sigma_fate.users (
     id                  BIGSERIAL PRIMARY KEY,
     user_id             TEXT NOT NULL,
     auth_user_id        TEXT,
     email               TEXT,
     app_id              TEXT NOT NULL DEFAULT 'sigma_fate_v1',
-    subscription_tier   TEXT NOT NULL DEFAULT 'free'
-                        CHECK (subscription_tier IN ('free', 'monthly', 'quarterly', 'annual')),
+    subscription_tier   TEXT NOT NULL DEFAULT 'free',
     stripe_customer_id  TEXT,
     metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT users_user_app_uniq UNIQUE (user_id, app_id),
-    CONSTRAINT users_auth_app_uniq UNIQUE (auth_user_id, app_id)
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_app_email
-    ON app_sigma_fate.users (app_id, email);
-
-CREATE INDEX IF NOT EXISTS idx_users_app_auth
-    ON app_sigma_fate.users (app_id, auth_user_id);
-
--- ---------- reports ----------
 CREATE TABLE IF NOT EXISTS app_sigma_fate.reports (
     id                  BIGSERIAL PRIMARY KEY,
     report_id           TEXT NOT NULL,
@@ -46,14 +32,9 @@ CREATE TABLE IF NOT EXISTS app_sigma_fate.reports (
     bazi_data           JSONB NOT NULL DEFAULT '{}'::jsonb,
     report_content      JSONB NOT NULL DEFAULT '{}'::jsonb,
     payment_tier        TEXT,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT reports_id_app_uniq UNIQUE (report_id, app_id)
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_reports_app_user_created
-    ON app_sigma_fate.reports (app_id, user_id, created_at DESC);
-
--- ---------- payments ----------
 CREATE TABLE IF NOT EXISTS app_sigma_fate.payments (
     id                  BIGSERIAL PRIMARY KEY,
     payment_id          TEXT NOT NULL,
@@ -65,14 +46,9 @@ CREATE TABLE IF NOT EXISTS app_sigma_fate.payments (
     tier                TEXT,
     status              TEXT NOT NULL DEFAULT 'pending',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    completed_at        TIMESTAMPTZ,
-    CONSTRAINT payments_id_app_uniq UNIQUE (payment_id, app_id)
+    completed_at        TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_payments_app_user
-    ON app_sigma_fate.payments (app_id, user_id);
-
--- ---------- access_logs ----------
 CREATE TABLE IF NOT EXISTS app_sigma_fate.access_logs (
     id                  BIGSERIAL PRIMARY KEY,
     user_id             TEXT,
@@ -82,10 +58,186 @@ CREATE TABLE IF NOT EXISTS app_sigma_fate.access_logs (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- ---------- 补齐旧表缺失列（解决 42703） ----------
+ALTER TABLE app_sigma_fate.users
+    ADD COLUMN IF NOT EXISTS user_id TEXT,
+    ADD COLUMN IF NOT EXISTS auth_user_id TEXT,
+    ADD COLUMN IF NOT EXISTS email TEXT,
+    ADD COLUMN IF NOT EXISTS app_id TEXT,
+    ADD COLUMN IF NOT EXISTS subscription_tier TEXT,
+    ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT,
+    ADD COLUMN IF NOT EXISTS metadata JSONB,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+
+ALTER TABLE app_sigma_fate.reports
+    ADD COLUMN IF NOT EXISTS report_id TEXT,
+    ADD COLUMN IF NOT EXISTS user_id TEXT,
+    ADD COLUMN IF NOT EXISTS app_id TEXT,
+    ADD COLUMN IF NOT EXISTS birth_info JSONB,
+    ADD COLUMN IF NOT EXISTS bazi_data JSONB,
+    ADD COLUMN IF NOT EXISTS report_content JSONB,
+    ADD COLUMN IF NOT EXISTS payment_tier TEXT,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+
+ALTER TABLE app_sigma_fate.payments
+    ADD COLUMN IF NOT EXISTS payment_id TEXT,
+    ADD COLUMN IF NOT EXISTS user_id TEXT,
+    ADD COLUMN IF NOT EXISTS app_id TEXT,
+    ADD COLUMN IF NOT EXISTS stripe_session_id TEXT,
+    ADD COLUMN IF NOT EXISTS amount INTEGER,
+    ADD COLUMN IF NOT EXISTS currency TEXT,
+    ADD COLUMN IF NOT EXISTS tier TEXT,
+    ADD COLUMN IF NOT EXISTS status TEXT,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
+ALTER TABLE app_sigma_fate.access_logs
+    ADD COLUMN IF NOT EXISTS user_id TEXT,
+    ADD COLUMN IF NOT EXISTS app_id TEXT,
+    ADD COLUMN IF NOT EXISTS action TEXT,
+    ADD COLUMN IF NOT EXISTS metadata JSONB,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+
+-- 填充默认值，再收紧 NOT NULL
+UPDATE app_sigma_fate.users
+SET app_id = COALESCE(NULLIF(app_id, ''), 'sigma_fate_v1'),
+    subscription_tier = COALESCE(NULLIF(subscription_tier, ''), 'free'),
+    metadata = COALESCE(metadata, '{}'::jsonb),
+    created_at = COALESCE(created_at, NOW()),
+    updated_at = COALESCE(updated_at, NOW());
+
+UPDATE app_sigma_fate.reports
+SET app_id = COALESCE(NULLIF(app_id, ''), 'sigma_fate_v1'),
+    birth_info = COALESCE(birth_info, '{}'::jsonb),
+    bazi_data = COALESCE(bazi_data, '{}'::jsonb),
+    report_content = COALESCE(report_content, '{}'::jsonb),
+    created_at = COALESCE(created_at, NOW());
+
+UPDATE app_sigma_fate.payments
+SET app_id = COALESCE(NULLIF(app_id, ''), 'sigma_fate_v1'),
+    currency = COALESCE(NULLIF(currency, ''), 'CNY'),
+    status = COALESCE(NULLIF(status, ''), 'pending'),
+    created_at = COALESCE(created_at, NOW());
+
+UPDATE app_sigma_fate.access_logs
+SET app_id = COALESCE(NULLIF(app_id, ''), 'sigma_fate_v1'),
+    metadata = COALESCE(metadata, '{}'::jsonb),
+    created_at = COALESCE(created_at, NOW()),
+    action = COALESCE(NULLIF(action, ''), 'unknown');
+
+ALTER TABLE app_sigma_fate.users
+    ALTER COLUMN app_id SET DEFAULT 'sigma_fate_v1',
+    ALTER COLUMN app_id SET NOT NULL,
+    ALTER COLUMN subscription_tier SET DEFAULT 'free',
+    ALTER COLUMN subscription_tier SET NOT NULL,
+    ALTER COLUMN metadata SET DEFAULT '{}'::jsonb,
+    ALTER COLUMN metadata SET NOT NULL,
+    ALTER COLUMN created_at SET DEFAULT NOW(),
+    ALTER COLUMN created_at SET NOT NULL,
+    ALTER COLUMN updated_at SET DEFAULT NOW(),
+    ALTER COLUMN updated_at SET NOT NULL;
+
+ALTER TABLE app_sigma_fate.reports
+    ALTER COLUMN app_id SET DEFAULT 'sigma_fate_v1',
+    ALTER COLUMN app_id SET NOT NULL,
+    ALTER COLUMN birth_info SET DEFAULT '{}'::jsonb,
+    ALTER COLUMN birth_info SET NOT NULL,
+    ALTER COLUMN bazi_data SET DEFAULT '{}'::jsonb,
+    ALTER COLUMN bazi_data SET NOT NULL,
+    ALTER COLUMN report_content SET DEFAULT '{}'::jsonb,
+    ALTER COLUMN report_content SET NOT NULL,
+    ALTER COLUMN created_at SET DEFAULT NOW(),
+    ALTER COLUMN created_at SET NOT NULL;
+
+ALTER TABLE app_sigma_fate.payments
+    ALTER COLUMN app_id SET DEFAULT 'sigma_fate_v1',
+    ALTER COLUMN app_id SET NOT NULL,
+    ALTER COLUMN currency SET DEFAULT 'CNY',
+    ALTER COLUMN status SET DEFAULT 'pending',
+    ALTER COLUMN status SET NOT NULL,
+    ALTER COLUMN created_at SET DEFAULT NOW(),
+    ALTER COLUMN created_at SET NOT NULL;
+
+ALTER TABLE app_sigma_fate.access_logs
+    ALTER COLUMN app_id SET DEFAULT 'sigma_fate_v1',
+    ALTER COLUMN app_id SET NOT NULL,
+    ALTER COLUMN metadata SET DEFAULT '{}'::jsonb,
+    ALTER COLUMN metadata SET NOT NULL,
+    ALTER COLUMN created_at SET DEFAULT NOW(),
+    ALTER COLUMN created_at SET NOT NULL;
+
+-- subscription_tier 检查约束（存在则跳过）
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'users_subscription_tier_check'
+          AND conrelid = 'app_sigma_fate.users'::regclass
+    ) THEN
+        ALTER TABLE app_sigma_fate.users
+            ADD CONSTRAINT users_subscription_tier_check
+            CHECK (subscription_tier IN ('free', 'monthly', 'quarterly', 'annual'));
+    END IF;
+END $$;
+
+-- 唯一约束（存在则跳过）
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'users_user_app_uniq'
+          AND conrelid = 'app_sigma_fate.users'::regclass
+    ) THEN
+        ALTER TABLE app_sigma_fate.users
+            ADD CONSTRAINT users_user_app_uniq UNIQUE (user_id, app_id);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'users_auth_app_uniq'
+          AND conrelid = 'app_sigma_fate.users'::regclass
+    ) THEN
+        ALTER TABLE app_sigma_fate.users
+            ADD CONSTRAINT users_auth_app_uniq UNIQUE (auth_user_id, app_id);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'reports_id_app_uniq'
+          AND conrelid = 'app_sigma_fate.reports'::regclass
+    ) THEN
+        ALTER TABLE app_sigma_fate.reports
+            ADD CONSTRAINT reports_id_app_uniq UNIQUE (report_id, app_id);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'payments_id_app_uniq'
+          AND conrelid = 'app_sigma_fate.payments'::regclass
+    ) THEN
+        ALTER TABLE app_sigma_fate.payments
+            ADD CONSTRAINT payments_id_app_uniq UNIQUE (payment_id, app_id);
+    END IF;
+END $$;
+
+-- ---------- 索引（app_id 已存在后才能建） ----------
+CREATE INDEX IF NOT EXISTS idx_users_app_email
+    ON app_sigma_fate.users (app_id, email);
+
+CREATE INDEX IF NOT EXISTS idx_users_app_auth
+    ON app_sigma_fate.users (app_id, auth_user_id);
+
+CREATE INDEX IF NOT EXISTS idx_reports_app_user_created
+    ON app_sigma_fate.reports (app_id, user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_payments_app_user
+    ON app_sigma_fate.payments (app_id, user_id);
+
 CREATE INDEX IF NOT EXISTS idx_access_logs_app_created
     ON app_sigma_fate.access_logs (app_id, created_at DESC);
 
--- ---------- 防止跨 App 篡改 app_id（触发器） ----------
+-- ---------- 防止跨 App 篡改 app_id ----------
 CREATE OR REPLACE FUNCTION app_sigma_fate.enforce_app_id()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -118,7 +270,7 @@ CREATE TRIGGER trg_logs_enforce_app_id
     BEFORE INSERT OR UPDATE ON app_sigma_fate.access_logs
     FOR EACH ROW EXECUTE FUNCTION app_sigma_fate.enforce_app_id();
 
--- ---------- 权限：仅开放本 schema，不碰其他 App ----------
+-- ---------- 权限 ----------
 GRANT USAGE ON SCHEMA app_sigma_fate TO anon, authenticated, service_role;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app_sigma_fate
@@ -139,9 +291,6 @@ ALTER TABLE app_sigma_fate.reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_sigma_fate.payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_sigma_fate.access_logs ENABLE ROW LEVEL SECURITY;
 
--- service_role 默认绕过 RLS；以下策略约束 anon / authenticated
-
--- users: 本 App +（已登录时）只能碰自己的行；Streamlit 匿名 UUID 场景允许按 app_id 读写
 DROP POLICY IF EXISTS users_app_isolation ON app_sigma_fate.users;
 CREATE POLICY users_app_isolation ON app_sigma_fate.users
     FOR ALL
@@ -166,20 +315,10 @@ CREATE POLICY access_logs_app_isolation ON app_sigma_fate.access_logs
     USING (app_id = 'sigma_fate_v1')
     WITH CHECK (app_id = 'sigma_fate_v1');
 
--- 可选：当接入 Supabase Auth 后，收紧为「本 App + 本人」
--- DROP POLICY IF EXISTS users_own_row ON app_sigma_fate.users;
--- CREATE POLICY users_own_row ON app_sigma_fate.users
---     FOR ALL
---     USING (app_id = 'sigma_fate_v1' AND auth_user_id = auth.uid()::text)
---     WITH CHECK (app_id = 'sigma_fate_v1' AND auth_user_id = auth.uid()::text);
-
 COMMENT ON SCHEMA app_sigma_fate IS 'Sigma Fate BaZi app — isolated from other apps in the same Supabase project';
 COMMENT ON TABLE app_sigma_fate.users IS 'App-local users; UNIQUE(user_id, app_id) prevents collision with other apps';
 
--- =============================================================================
--- 等价于 Dashboard → Settings → API → Exposed schemas 勾选 app_sigma_fate
--- PostgREST 只暴露 authenticator 角色上的 pgrst.db_schemas；此处自动追加并 reload。
--- =============================================================================
+-- ---------- Exposed schemas（Dashboard 等价操作） ----------
 DO $$
 DECLARE
   cfg text[];
@@ -199,7 +338,6 @@ BEGIN
   END IF;
 
   IF schemas IS NULL OR length(trim(schemas)) = 0 THEN
-    -- Supabase 常见默认暴露（若项目另有自定义 schema，会被下面的追加逻辑保留）
     schemas := 'public, storage, graphql_public';
   END IF;
 
@@ -210,6 +348,5 @@ BEGIN
   EXECUTE format('ALTER ROLE authenticator SET pgrst.db_schemas TO %L', schemas);
 END $$;
 
--- 让 PostgREST 立刻重新加载配置（无需再去 Dashboard 手点 Exposed schemas）
 NOTIFY pgrst, 'reload config';
 NOTIFY pgrst, 'reload schema';
