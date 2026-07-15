@@ -33,6 +33,9 @@ CANGAN = {
 }
 
 
+from bazi_i18n import chart_label, gan_display, ten_god_display, wuxing_display
+
+
 def validate_birth_date(year, month, day, hour):
     try:
         datetime(year, month, day, hour)
@@ -54,19 +57,31 @@ def get_wuxing_color(wuxing):
     return WUXING_COLORS.get(wuxing, "#666666")
 
 
-def _char_html(ch: str, size: str = "2.2rem", extra: str = "") -> str:
+def _char_html(ch: str, size: str = "2.2rem", extra: str = "", lang: str = "zh") -> str:
     wx = WUXING_MAP.get(ch, "")
     color = get_wuxing_color(wx)
+    label = gan_display(ch, lang)
+    if lang == "en" and label != ch:
+        # 汉字 + 罗马音（行业通用展示）
+        return (
+            f"<span style='display:inline-block;line-height:1.15;text-align:center;' {extra}>"
+            f"<span style='color:{color};font-size:{size};font-weight:700;"
+            f"font-family:\"Noto Serif SC\",\"Source Han Serif SC\",serif;'>{ch}</span>"
+            f"<br><span style='color:{color};font-size:0.72rem;font-weight:600;'>"
+            f"{label.split(' ', 1)[-1]}</span></span>"
+        )
     return (
         f"<span style='color:{color};font-size:{size};font-weight:700;"
         f"font-family:\"Noto Serif SC\",\"Source Han Serif SC\",serif;' {extra}>{ch}</span>"
     )
 
 
-def _god_html(god: str, is_day_master: bool = False) -> str:
+def _god_html(god: str, is_day_master: bool = False, lang: str = "zh") -> str:
     if is_day_master:
-        return "<span style='color:#1565C0;font-weight:600;'>日主</span>"
-    return f"<span style='color:#555;font-size:0.85rem;'>{god or '—'}</span>"
+        label = ten_god_display("日主", lang)
+        return f"<span style='color:#1565C0;font-weight:600;'>{label}</span>"
+    shown = ten_god_display(god, lang) if god else "—"
+    return f"<span style='color:#555;font-size:0.85rem;'>{shown}</span>"
 
 
 def render_wuxing_bars(stats):
@@ -111,10 +126,11 @@ def _build_pillars(bazi_data):
 def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
     """四柱彩色表格 HTML（年/月/日/时）。"""
     order = ["年柱", "月柱", "日柱", "时柱"]
+    zh = lang != "en"
     labels = (
-        ["年柱", "月柱", "日柱", "时柱"]
-        if lang == "zh"
-        else ["Year", "Month", "Day", "Hour"]
+        [chart_label(x, lang) for x in order]
+        if zh
+        else [chart_label(x, "en") for x in order]
     )
     pillars = _build_pillars(bazi_data)
 
@@ -136,30 +152,34 @@ def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
 
     def gan_god_cell(p, name_key):
         is_day = name_key == "日柱"
-        return _god_html("日主" if is_day else p.get("gan_god", ""), is_day)
+        return _god_html(
+            "日主" if is_day else p.get("gan_god", ""),
+            is_day,
+            lang=lang,
+        )
 
     cells = "".join(cell(k, gan_god_cell) for k in order)
     rows.append(
         f"<tr><td style='background:#fafafa;padding:8px;border:1px solid #ddd;font-weight:600;'>"
-        f"{'十神' if lang == 'zh' else 'Ten Gods'}</td>{cells}</tr>"
+        f"{chart_label('十神', lang)}</td>{cells}</tr>"
     )
 
     def gan_cell(p, _):
-        return _char_html(p.get("gan", "·"), "2.4rem")
+        return _char_html(p.get("gan", "·"), "2.4rem", lang=lang)
 
     cells = "".join(cell(k, gan_cell) for k in order)
     rows.append(
         f"<tr><td style='background:#fafafa;padding:8px;border:1px solid #ddd;font-weight:600;'>"
-        f"{'天干' if lang == 'zh' else 'Stem'}</td>{cells}</tr>"
+        f"{chart_label('天干', lang)}</td>{cells}</tr>"
     )
 
     def zhi_cell(p, _):
-        return _char_html(p.get("zhi", "·"), "2.4rem")
+        return _char_html(p.get("zhi", "·"), "2.4rem", lang=lang)
 
     cells = "".join(cell(k, zhi_cell) for k in order)
     rows.append(
         f"<tr><td style='background:#fafafa;padding:8px;border:1px solid #ddd;font-weight:600;'>"
-        f"{'地支' if lang == 'zh' else 'Branch'}</td>{cells}</tr>"
+        f"{chart_label('地支', lang)}</td>{cells}</tr>"
     )
 
     def cangan_cell(p, _):
@@ -167,23 +187,25 @@ def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
         for item in p.get("cangan") or []:
             g = item.get("gan", "")
             god = item.get("god", "")
+            god_s = ten_god_display(god, lang) if god else ""
             parts.append(
-                f"{_char_html(g, '1.05rem')}"
-                f"<span style='color:#777;font-size:0.75rem;'> ({god})</span>"
+                f"{_char_html(g, '1.05rem', lang=lang)}"
+                f"<span style='color:#777;font-size:0.75rem;'> ({god_s})</span>"
             )
         return "<br>".join(parts) if parts else "—"
 
     cells = "".join(cell(k, cangan_cell) for k in order)
     rows.append(
         f"<tr><td style='background:#fafafa;padding:8px;border:1px solid #ddd;font-weight:600;'>"
-        f"{'藏干' if lang == 'zh' else 'Hidden'}</td>{cells}</tr>"
+        f"{chart_label('藏干', lang)}</td>{cells}</tr>"
     )
 
     legend = " · ".join(
-        f"<span style='color:{c};font-weight:700;'>{w}</span>"
+        f"<span style='color:{c};font-weight:700;'>{wuxing_display(w, lang)}</span>"
         for w, c in WUXING_COLORS.items()
     )
-    caption = f"<div style='margin-top:8px;font-size:0.85rem;'>五行配色：{legend}</div>"
+    cap = chart_label("五行配色", lang)
+    caption = f"<div style='margin-top:8px;font-size:0.85rem;'>{cap}: {legend}</div>"
     return (
         "<table style='width:100%;border-collapse:collapse;background:#fff;'>"
         + "".join(rows)
@@ -205,25 +227,25 @@ def render_flow_pillar_table(bazi_data, lang: str = "zh") -> str:
     }
     cols = []
     for name in order_birth:
-        lab = labels[name][0] if lang == "zh" else labels[name][1]
+        lab = labels[name][0] if lang != "en" else labels[name][1]
         cols.append((lab, pillars.get(name) or {}, False, "*"))
     for zh, en, data in [
-        ("大运", "DaYun", flow.get("da_yun")),
-        ("流年", "LiuNian", flow.get("liu_nian")),
-        ("流月", "LiuYue", flow.get("liu_yue")),
-        ("流日", "LiuRi", flow.get("liu_ri")),
+        ("大运", "Da Yun", flow.get("da_yun")),
+        ("流年", "Liu Nian", flow.get("liu_nian")),
+        ("流月", "Liu Yue", flow.get("liu_yue")),
+        ("流日", "Liu Ri", flow.get("liu_ri")),
     ]:
         data = data or {}
         age = ""
         if data.get("start_age") is not None:
-            age = f"{data['start_age']}岁"
+            age = f"{data['start_age']}岁" if lang != "en" else f"age {data['start_age']}"
         elif data.get("year") is not None:
             age = str(data["year"])
         elif data.get("month") is not None:
-            age = f"{data['month']}月"
+            age = f"{data['month']}月" if lang != "en" else f"m{data['month']}"
         elif data.get("day") is not None:
-            age = f"{data['day']}日"
-        cols.append((zh if lang == "zh" else en, data, True, age))
+            age = f"{data['day']}日" if lang != "en" else f"d{data['day']}"
+        cols.append((chart_label(zh, lang) if lang != "en" else en, data, True, age))
 
     th = "".join(
         f"<th style='padding:6px;border:1px solid #ddd;background:#f5f5f5;font-size:0.85rem;'>{c[0]}</th>"
@@ -237,14 +259,15 @@ def render_flow_pillar_table(bazi_data, lang: str = "zh") -> str:
     gan_row = "".join(
         f"<td style='padding:8px;border:1px solid #ddd;text-align:center;"
         f"background:{'#eee' if hl else '#fff'};'>"
-        f"<div style='font-size:0.7rem;color:#888;'>{(d or {}).get('gan_god', '')}</div>"
-        f"{_char_html((d or {}).get('gan', ''), '1.55rem')}</td>"
+        f"<div style='font-size:0.7rem;color:#888;'>"
+        f"{ten_god_display((d or {}).get('gan_god', ''), lang)}</div>"
+        f"{_char_html((d or {}).get('gan', ''), '1.55rem', lang=lang)}</td>"
         for _, d, hl, _ in cols
     )
     zhi_row = "".join(
         f"<td style='padding:8px;border:1px solid #ddd;text-align:center;"
         f"background:{'#eee' if hl else '#fff'};'>"
-        f"{_char_html((d or {}).get('zhi', ''), '1.55rem')}</td>"
+        f"{_char_html((d or {}).get('zhi', ''), '1.55rem', lang=lang)}</td>"
         for _, d, hl, _ in cols
     )
     return (
@@ -255,7 +278,7 @@ def render_flow_pillar_table(bazi_data, lang: str = "zh") -> str:
     )
 
 
-def render_dayun_timeline(bazi_data) -> str:
+def render_dayun_timeline(bazi_data, lang: str = "zh") -> str:
     cells = []
     for dy in bazi_data.get("da_yun") or []:
         bg = "#dddddd" if dy.get("is_current") else "#fff"
@@ -263,7 +286,8 @@ def render_dayun_timeline(bazi_data) -> str:
             f"<td style='padding:6px 4px;border:1px solid #ccc;text-align:center;background:{bg};"
             f"min-width:52px;'>"
             f"<div style='font-size:0.7rem;'>{dy.get('age_label') or dy.get('start_age')}</div>"
-            f"{_char_html(dy.get('gan', ''), '1.1rem')}{_char_html(dy.get('zhi', ''), '1.1rem')}"
+            f"{_char_html(dy.get('gan', ''), '1.1rem', lang=lang)}"
+            f"{_char_html(dy.get('zhi', ''), '1.1rem', lang=lang)}"
             f"</td>"
         )
     return (
@@ -272,7 +296,7 @@ def render_dayun_timeline(bazi_data) -> str:
     )
 
 
-def render_liunian_timeline(bazi_data) -> str:
+def render_liunian_timeline(bazi_data, lang: str = "zh") -> str:
     cells = []
     for ln in bazi_data.get("liu_nian") or []:
         bg = "#dddddd" if ln.get("is_current") else "#fff"
@@ -280,7 +304,8 @@ def render_liunian_timeline(bazi_data) -> str:
             f"<td style='padding:6px 4px;border:1px solid #ccc;text-align:center;background:{bg};"
             f"min-width:48px;'>"
             f"<div style='font-size:0.7rem;'>{ln.get('year', '')}</div>"
-            f"{_char_html(ln.get('gan', ''), '1.05rem')}{_char_html(ln.get('zhi', ''), '1.05rem')}"
+            f"{_char_html(ln.get('gan', ''), '1.05rem', lang=lang)}"
+            f"{_char_html(ln.get('zhi', ''), '1.05rem', lang=lang)}"
             f"</td>"
         )
     return (
@@ -301,14 +326,14 @@ def render_dayun_liunian_matrix(bazi_data, lang: str = "zh") -> str:
         rows = [
             f"<div style='font-size:0.75rem;color:#555;'>{dy.get('age_label', '')}</div>",
             f"<div style='font-size:0.7rem;color:#888;'>"
-            f"{'始于' if lang == 'zh' else 'from'} {dy.get('start_year', '')}</div>",
+            f"{'始于' if lang != 'en' else 'from'} {dy.get('start_year', '')}</div>",
             f"<div style='font-size:0.7rem;color:#888;'>{dy.get('gan_god', '')}</div>",
             f"<div style='margin:4px 0;'>{_char_html(dy.get('gan', ''), '1.35rem')}"
             f"{_char_html(dy.get('zhi', ''), '1.35rem')}</div>",
             f"<div style='font-size:0.65rem;color:#777;line-height:1.3;'>{gods}</div>",
             f"<div style='font-size:0.7rem;color:#888;'>{dy.get('chang_sheng', '')}</div>",
             f"<div style='font-size:0.7rem;color:#888;'>"
-            f"{'止于' if lang == 'zh' else 'to'} {dy.get('end_year', '')}</div>",
+            f"{'止于' if lang != 'en' else 'to'} {dy.get('end_year', '')}</div>",
             "<hr style='border:none;border-top:1px solid #ddd;margin:6px 0;'>",
         ]
         for ln in dy.get("liu_nian") or []:
@@ -343,14 +368,16 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
     dm_wx = WUXING_MAP.get(dm, "")
     dm_color = get_wuxing_color(dm_wx)
 
+    dm_show = gan_display(dm, lang) if dm else ""
+    dm_wx_show = wuxing_display(dm_wx, lang) if dm_wx else ""
     header = (
         f"<div style='margin-bottom:12px;line-height:1.7;'>"
-        f"<div><b>{'八字排盘结果' if lang == 'zh' else 'BaZi Chart'}</b>"
+        f"<div><b>{chart_label('八字排盘结果', lang)}</b>"
         f"{('：' + name) if name else ''}</div>"
-        f"<div>{'性别' if lang == 'zh' else 'Gender'}：{gender}　"
-        f"{'日主' if lang == 'zh' else 'Day Master'}："
-        f"<span style='color:{dm_color};font-weight:700;font-size:1.2rem;'>{dm}</span>"
-        f"<span style='color:{dm_color};'>（{dm_wx}）</span></div>"
+        f"<div>{chart_label('性别', lang)}：{gender}　"
+        f"{chart_label('日主', lang)}："
+        f"<span style='color:{dm_color};font-weight:700;font-size:1.2rem;'>{dm_show or dm}</span>"
+        f"<span style='color:{dm_color};'>（{dm_wx_show or dm_wx}）</span></div>"
         f"</div>"
     )
     st.markdown(header, unsafe_allow_html=True)
@@ -362,63 +389,64 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
     cols = st.columns(5)
     for i, bar in enumerate(bars):
         with cols[i]:
+            wx_lab = wuxing_display(bar["wuxing"], lang)
             st.markdown(
                 f"<div style='text-align:center;color:{bar['color']};font-weight:700;'>"
-                f"{bar['wuxing']}<br>{bar['count']}</div>",
+                f"{wx_lab}<br>{bar['count']}</div>",
                 unsafe_allow_html=True,
             )
             st.progress(min(max(bar["pct"] / 100.0, 0.0), 1.0))
 
     st.markdown("---")
     st.markdown(
-        "### " + ("🧭 当前运势柱（大运 · 流年 · 流月 · 流日）" if lang == "zh"
-                  else "🧭 Current luck pillars")
+        "### " + ("🧭 当前运势柱（大运 · 流年 · 流月 · 流日）" if lang != "en"
+                  else "🧭 Current luck pillars (Da Yun · Liu Nian · Liu Yue · Liu Ri)")
     )
     st.caption(
         "此区块对应附图一；干支与留意在免费盘展示，会员报告详述吉凶建议。"
-        if lang == "zh"
+        if lang != "en"
         else "Matches reference chart 1; membership report expands commentary."
     )
     st.markdown(render_flow_pillar_table(bazi_data, lang), unsafe_allow_html=True)
 
     if bazi_data.get("da_yun"):
-        st.markdown("**大运时间轴**" if lang == "zh" else "**Decade timeline**")
-        st.markdown(render_dayun_timeline(bazi_data), unsafe_allow_html=True)
+        st.markdown("**大运时间轴**" if lang != "en" else "**Decade luck (Da Yun) timeline**")
+        st.markdown(render_dayun_timeline(bazi_data, lang), unsafe_allow_html=True)
     if bazi_data.get("liu_nian"):
         st.markdown(
-            "**流年时间轴（当前大运十年）**" if lang == "zh" else "**Annual timeline**"
+            "**流年时间轴（当前大运十年）**" if lang != "en" else "**Annual luck (Liu Nian) timeline**"
         )
-        st.markdown(render_liunian_timeline(bazi_data), unsafe_allow_html=True)
+        st.markdown(render_liunian_timeline(bazi_data, lang), unsafe_allow_html=True)
 
     notes_s = bazi_data.get("stem_notes") or []
     notes_b = bazi_data.get("branch_notes") or []
     if notes_s or notes_b:
         st.markdown(
             f"<div style='margin-top:10px;font-size:0.9rem;line-height:1.7;'>"
-            f"<div><b>{'天干留意' if lang == 'zh' else 'Stem notes'}：</b>"
+            f"<div><b>{'天干留意' if lang != 'en' else 'Stem notes'}：</b>"
             f"{'、'.join(notes_s) if notes_s else '—'}</div>"
-            f"<div><b>{'地支留意' if lang == 'zh' else 'Branch notes'}：</b>"
+            f"<div><b>{'地支留意' if lang != 'en' else 'Branch notes'}：</b>"
             f"{'、'.join(notes_b) if notes_b else '—'}</div>"
             f"<div style='color:#888;font-size:0.8rem;'>"
-            f"{'神煞与深度解读见会员报告' if lang == 'zh' else 'Detailed reading in membership report'}"
+            f"{'神煞与深度解读见会员报告' if lang != 'en' else 'Detailed reading in membership report'}"
             f"</div></div>",
             unsafe_allow_html=True,
         )
 
     st.markdown("---")
     st.markdown(
-        "### " + ("📅 大运 · 流年表" if lang == "zh" else "📅 Decade × Annual table")
+        "### " + ("📅 大运 · 流年表" if lang != "en" else "📅 Decade × Annual table")
     )
     st.caption(
         "对应附图二：每步大运下嵌套十年流年（亦属流年体系）；详批在报告中展开。"
-        if lang == "zh"
+        if lang != "en"
         else "Matches reference chart 2: Liu Nian nested under each Da Yun."
     )
     st.markdown(render_dayun_liunian_matrix(bazi_data, lang), unsafe_allow_html=True)
 
     xiao = bazi_data.get("xiao_yun") or []
     if xiao:
-        st.markdown("**起运前小运**" if lang == "zh" else "**Small luck (pre–Da Yun)**")
+        st.markdown("**起运前小运**" if lang != "en" else "**Small luck (pre–Da Yun)**")
         cells = "".join(
             f"<td style='padding:4px 8px;border:1px solid #eee;text-align:center;'>"
             f"{x['age']}岁<br>{_char_html(x['gan'], '1rem')}{_char_html(x['zhi'], '1rem')}"

@@ -15,14 +15,26 @@ class ReportGenerator:
 
     PAGE_SPECS = [
         ("page1", "八字命盘与基本信息", "四柱、十神、五行旺衰、大运走势、知进退建议"),
-        ("page2", "事业流年详批 (Part 1)", "当年事业运势、大事、注意事项、关键月份"),
-        ("page3", "事业流年详批 (Part 2)", "事业特质、五行行业方向、职业与发展策略"),
-        ("page4", "财运流年详批 (Part 1)", "财运趋势、投资适否、旺财破财月份与方向"),
-        ("page5", "财运流年详批 (Part 2)", "资产五行方向、理财方式、风险与积累策略"),
-        ("page6", "感情流年详批 (Part 1)", "感情事件预测、桃花、注意事项"),
-        ("page7", "感情流年详批 (Part 2)", "风水布局、另一半特质、感情时机"),
-        ("page8", "健康流年详批", "健康风险、易病月份、五脏对应、就医建议"),
-        ("page9", "流年预测专章", "流年总论 + 四季（春夏秋冬）预测与建议，每季点出1～2个关键流月"),
+        ("page2", "事业详批 (Part 1)", "当年事业运势、大事、注意事项、关键月份"),
+        ("page3", "事业详批 (Part 2)", "事业特质、五行行业方向、职业与发展策略"),
+        ("page4", "财运详批 (Part 1)", "财运趋势、投资适否、旺财破财月份与方向"),
+        ("page5", "财运详批 (Part 2)", "资产五行方向、理财方式、风险与积累策略"),
+        ("page6", "感情详批 (Part 1)", "感情事件预测、桃花、注意事项"),
+        ("page7", "感情详批 (Part 2)", "风水布局、另一半特质、感情时机"),
+        ("page8", "健康详批", "健康风险、易病月份、五脏对应、就医建议"),
+        ("page9", "流年报告", "流年总论 + 四季（春夏秋冬）预测与建议，每季点出1～2个关键流月"),
+    ]
+
+    PAGE_SPECS_EN = [
+        ("page1", "BaZi Chart & Basics", "Four pillars, ten gods, five elements, decade luck, timing advice"),
+        ("page2", "Career (Part 1)", "Career outlook, key events, cautions, important months"),
+        ("page3", "Career (Part 2)", "Career traits, industry direction by elements, strategy"),
+        ("page4", "Wealth (Part 1)", "Wealth trend, investing, strong/weak months and directions"),
+        ("page5", "Wealth (Part 2)", "Asset direction by elements, money habits, risk & savings"),
+        ("page6", "Relationship (Part 1)", "Relationship events, romance, cautions"),
+        ("page7", "Relationship (Part 2)", "Environment tips, partner traits, timing"),
+        ("page8", "Health", "Health risks, sensitive months, organ correspondence, care tips"),
+        ("page9", "Annual Luck Report", "Year overview + four seasons with 1–2 key months each"),
     ]
 
     # 四时与地支（命理惯例：季内三支合局气）
@@ -31,6 +43,13 @@ class ReportGenerator:
         ("夏", "巳午未", "约公历5–7月", "火旺 · 发扬"),
         ("秋", "申酉戌", "约公历8–10月", "金旺 · 收敛"),
         ("冬", "亥子丑", "约公历11–次年1月", "水旺 · 蓄养"),
+    ]
+
+    SEASON_SPECS_EN = [
+        ("Spring", "Yin Mao Chen", "approx. Feb–Apr", "Wood · growth"),
+        ("Summer", "Si Wu Wei", "approx. May–Jul", "Fire · expansion"),
+        ("Autumn", "Shen You Xu", "approx. Aug–Oct", "Metal · harvest"),
+        ("Winter", "Hai Zi Chou", "approx. Nov–Jan", "Water · storage"),
     ]
 
     FORBIDDEN_PLAIN = (
@@ -42,14 +61,32 @@ class ReportGenerator:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.lang = "zh"
 
-    def generate(self, bazi_data, birth_info, payment_tier="silver"):
+    def _page_specs(self):
+        return self.PAGE_SPECS_EN if self.lang == "en" else self.PAGE_SPECS
+
+    def _season_specs(self):
+        return self.SEASON_SPECS_EN if self.lang == "en" else self.SEASON_SPECS
+
+    def _lang_rule(self) -> str:
+        if self.lang == "en":
+            return (
+                "LANGUAGE: Write EVERYTHING in English only. "
+                "Do not use Chinese characters anywhere in titles or body text."
+            )
+        if self.lang == "zh_hant":
+            return "語言：全篇必須使用繁體中文，禁止簡體字。"
+        return "语言：全篇必须使用简体中文。"
+
+    def generate(self, bazi_data, birth_info, payment_tier="silver", lang: str = "zh"):
+        self.lang = lang if lang in ("zh", "zh_hant", "en") else "zh"
         include_liunian = payment_tier in ("gold", "diamond")
-        pages = self.PAGE_SPECS if include_liunian else self.PAGE_SPECS[:8]
+        pages = self._page_specs() if include_liunian else self._page_specs()[:8]
         context = self._bazi_context(bazi_data, birth_info)
 
         report: Dict = {}
-        # 每次 1 页，内容更深、分段更稳；流年专章用四季结构
+        # 每次 1 页；page9 为独立《流年报告》篇章（金/钻）
         for spec in pages:
             if spec[0] == "page9":
                 chunk = self._generate_liunian_chapter(context, spec)
@@ -57,19 +94,45 @@ class ReportGenerator:
                 chunk = self._generate_batch(context, [spec])
             report.update(chunk)
 
+        fail_pro = (
+            "(This page did not generate fully — please regenerate.)"
+            if self.lang == "en"
+            else ("（本頁生成不完整，請重試）" if self.lang == "zh_hant" else "（本页生成不完整，请重试生成报告）")
+        )
+        fail_sum = (
+            "Generation failed. Please regenerate the report."
+            if self.lang == "en"
+            else ("本頁生成失敗，請重新生成報告。" if self.lang == "zh_hant" else "本页生成失败，请重新生成报告。")
+        )
         for key, title, _ in pages:
             if key not in report or not self._page_has_text(report[key]):
                 report[key] = {
                     "title": title,
-                    "professional": [f"（{title}生成不完整，请重试生成报告）"],
-                    "plain": {
-                        "summary": "本页生成失败，请重新生成报告。",
-                        "points": [],
-                        "detail": "",
-                    },
-                    "content": f"（{title}生成不完整，请重试生成报告）",
+                    "professional": [f"{fail_pro}"],
+                    "plain": {"summary": fail_sum, "points": [], "detail": ""},
+                    "content": fail_pro,
                 }
+            elif self.lang == "zh_hant":
+                report[key] = self._to_traditional_page(report[key])
         return report
+
+    @staticmethod
+    def _to_traditional_page(page: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            from zh_convert import to_traditional
+        except Exception:
+            return page
+
+        def conv(x: Any) -> Any:
+            if isinstance(x, str):
+                return to_traditional(x)
+            if isinstance(x, list):
+                return [conv(i) for i in x]
+            if isinstance(x, dict):
+                return {k: conv(v) for k, v in x.items()}
+            return x
+
+        return conv(page) if isinstance(page, dict) else page
 
     @staticmethod
     def _page_has_text(page: Any) -> bool:
@@ -100,6 +163,32 @@ class ReportGenerator:
             (n for n in liu_nian if n.get("is_current")),
             liu_nian[-1] if liu_nian else None,
         )
+        if self.lang == "en":
+            dy = (
+                f"Step {current_da_yun.get('step')} {current_da_yun.get('gan')}{current_da_yun.get('zhi')} "
+                f"{current_da_yun.get('years', '')}"
+                if current_da_yun
+                else "unknown"
+            )
+            ln = (
+                f"{current_liu_nian['year']} {current_liu_nian['gan']}{current_liu_nian['zhi']}"
+                if current_liu_nian
+                else "unknown"
+            )
+            return (
+                f"Name: {birth_info.get('name', 'User')}; Gender: {bazi_data.get('gender')}; "
+                f"Birth: {birth_info.get('birth_date', '')}; "
+                f"BaZi: Year {bazi['年柱'][0]}{bazi['年柱'][1]} "
+                f"Month {bazi['月柱'][0]}{bazi['月柱'][1]} "
+                f"Day {bazi['日柱'][0]}{bazi['日柱'][1]} "
+                f"Hour {bazi['时柱'][0]}{bazi['时柱'][1]}; "
+                f"Day Master: {bazi_data.get('day_master')}; "
+                f"Five elements: {json.dumps(bazi_data.get('wuxing_stats', {}), ensure_ascii=False)}; "
+                f"Current decade luck: {dy}; Current year luck: {ln}. "
+                "Analyze chart with year luck; for Annual Luck Report use four seasons "
+                "(Spring Yin-Mao-Chen, Summer Si-Wu-Wei, Autumn Shen-You-Xu, Winter Hai-Zi-Chou); "
+                "name 1–2 key months per season, not a 12-month laundry list."
+            )
         dy = (
             f"第{current_da_yun.get('step')}步 {current_da_yun.get('gan')}{current_da_yun.get('zhi')} "
             f"{current_da_yun.get('years', '')}"
@@ -121,24 +210,69 @@ class ReportGenerator:
             f"日主：{bazi_data.get('day_master')}；"
             f"五行：{json.dumps(bazi_data.get('wuxing_stats', {}), ensure_ascii=False)}；"
             f"当前大运：{dy}；当前流年：{ln}。"
-            "分析结合流年与命局；流年专章按四时分述（春寅卯辰、夏巳午未、秋申酉戌、冬亥子丑），"
+            "分析结合流年与命局；《流年报告》按四时分述（春寅卯辰、夏巳午未、秋申酉戌、冬亥子丑），"
             "每季点出一至两个关键流月，勿写成十二个月流水账。"
         )
 
     def _generate_liunian_chapter(self, context: str, spec: tuple) -> Dict:
-        """流年专章：年度总论 + 四季预测（命理取四时，兼顾可读性）。"""
+        """独立篇章《流年报告》：年度总论 + 四季预测。"""
         key, title, focus = spec
+        seasons = self._season_specs()
         seasons_hint = "\n".join(
-            f"- {name}季（{zhi}月，{cal}，{wx}）"
-            for name, zhi, cal, wx in self.SEASON_SPECS
+            f"- {name}（{zhi}，{cal}，{wx}）" for name, zhi, cal, wx in seasons
         )
-        prompt = f"""根据命盘写《{title}》。只输出合法 JSON，不要 markdown 代码块。
+        lang_rule = self._lang_rule()
+        if self.lang == "en":
+            prompt = f"""Write the independent chapter 《{title}》 from the BaZi chart. Output valid JSON only, no markdown fences.
+
+{lang_rule}
+
+Chart: {context}
+Focus: {focus}
+
+Seasons:
+{seasons_hint}
+
+Output:
+"{key}": {{
+  "title": "{title}",
+  "professional": [
+    "Year overview vs chart (60-90 words)",
+    "Career/wealth rhythm this year (60-90 words)",
+    "Relationship & health highlights (60-90 words)",
+    "Strongest vs caution periods (60-90 words)"
+  ],
+  "quarters": [
+    {{"name":"Spring","branch":"Yin Mao Chen","months":"approx. Feb–Apr","outlook":"60-90 words","focus_months":"1–2 key months","advice":"40-60 words"}},
+    {{"name":"Summer","branch":"Si Wu Wei","months":"approx. May–Jul","outlook":"...","focus_months":"...","advice":"..."}},
+    {{"name":"Autumn","branch":"Shen You Xu","months":"approx. Aug–Oct","outlook":"...","focus_months":"...","advice":"..."}},
+    {{"name":"Winter","branch":"Hai Zi Chou","months":"approx. Nov–Jan","outlook":"...","focus_months":"...","advice":"..."}}
+  ],
+  "plain": {{
+    "summary":"one plain-English line (≤40 words, zero jargon)",
+    "points":["tip1","tip2","tip3"],
+    "detail":"80-120 words plain English",
+    "quarters_plain":[
+      {{"name":"Spring","summary":"≤30 words","tips":["A","B"]}},
+      {{"name":"Summer","summary":"...","tips":["...","..."]}},
+      {{"name":"Autumn","summary":"...","tips":["...","..."]}},
+      {{"name":"Winter","summary":"...","tips":["...","..."]}}
+    ]
+  }}
+}}
+
+Hard rules: exactly 4 seasons; plain text forbids BaZi jargon ({self.FORBIDDEN_PLAIN}).
+"""
+        else:
+            prompt = f"""根据命盘写独立篇章《{title}》。只输出合法 JSON，不要 markdown 代码块。
+
+{lang_rule}
 
 命盘：{context}
 主题：{focus}
 
-【命理写法】传统「流月」更细，本专章以「四时/四季」为主：春寅卯辰、夏巳午未、秋申酉戌、冬亥子丑，
-对应生发→发扬→收敛→蓄养；每季只点 1～2 个关键流月或节气，避免十二个月堆砌。
+【命理写法】本篇章以「四时/四季」为主：春寅卯辰、夏巳午未、秋申酉戌、冬亥子丑，
+每季只点 1～2 个关键流月或节气，避免十二个月堆砌。
 
 四季对照：
 {seasons_hint}
@@ -188,25 +322,40 @@ class ReportGenerator:
 
     def _normalize_quarters(self, page: Dict[str, Any]) -> Dict[str, Any]:
         raw = page.get("quarters")
+        seasons = self._season_specs()
         if not isinstance(raw, list) or not raw:
-            page["quarters"] = [
-                {
-                    "name": f"{name}季",
-                    "branch": zhi,
-                    "months": cal,
-                    "outlook": f"{name}季运势需结合流年再看（可重试生成以补全）。",
-                    "focus_months": "关注季中节气前后",
-                    "advice": "稳妥行事，重大决定留有余地。",
-                }
-                for name, zhi, cal, _wx in self.SEASON_SPECS
-            ]
+            if self.lang == "en":
+                page["quarters"] = [
+                    {
+                        "name": name,
+                        "branch": zhi,
+                        "months": cal,
+                        "outlook": f"{name} outlook needs regeneration to complete.",
+                        "focus_months": "Watch mid-season solar terms",
+                        "advice": "Move steadily; leave room for important decisions.",
+                    }
+                    for name, zhi, cal, _wx in seasons
+                ]
+            else:
+                page["quarters"] = [
+                    {
+                        "name": f"{name}季",
+                        "branch": zhi,
+                        "months": cal,
+                        "outlook": f"{name}季运势需结合流年再看（可重试生成以补全）。",
+                        "focus_months": "关注季中节气前后",
+                        "advice": "稳妥行事，重大决定留有余地。",
+                    }
+                    for name, zhi, cal, _wx in seasons
+                ]
             return page
         fixed = []
-        for i, (name, zhi, cal, _wx) in enumerate(self.SEASON_SPECS):
+        for i, (name, zhi, cal, _wx) in enumerate(seasons):
             src = raw[i] if i < len(raw) and isinstance(raw[i], dict) else {}
+            default_name = name if self.lang == "en" else f"{name}季"
             fixed.append(
                 {
-                    "name": str(src.get("name") or f"{name}季"),
+                    "name": str(src.get("name") or default_name),
                     "branch": str(src.get("branch") or zhi),
                     "months": str(src.get("months") or cal),
                     "outlook": str(src.get("outlook") or "").strip(),
@@ -231,13 +380,30 @@ class ReportGenerator:
             f"{q.get('name')}/{q.get('months')}：{q.get('outlook')}；关键：{q.get('focus_months')}；建议：{q.get('advice')}"
             for q in quarters
         )
-        prompt = f"""把下面四季专业流年改成普通人能懂的四季白话。只输出 JSON：
+        lang_rule = self._lang_rule()
+        if self.lang == "en":
+            prompt = f"""Rewrite the seasonal outlook below into plain English for lay readers. JSON only:
+{{"quarters_plain":[
+  {{"name":"Spring","summary":"≤30 words","tips":["tip1","tip2"]}},
+  {{"name":"Summer","summary":"...","tips":["...","..."]}},
+  {{"name":"Autumn","summary":"...","tips":["...","..."]}},
+  {{"name":"Winter","summary":"...","tips":["...","..."]}}
+]}}
+{lang_rule}
+Forbid jargon: {self.FORBIDDEN_PLAIN}
+
+Professional seasons:
+{blob[:2000]}
+"""
+        else:
+            prompt = f"""把下面四季专业流年改成普通人能懂的四季白话。只输出 JSON：
 {{"quarters_plain":[
   {{"name":"春季","summary":"≤30字","tips":["建议1","建议2"]}},
   {{"name":"夏季","summary":"...","tips":["...","..."]}},
   {{"name":"秋季","summary":"...","tips":["...","..."]}},
   {{"name":"冬季","summary":"...","tips":["...","..."]}}
 ]}}
+{lang_rule}
 严禁：{self.FORBIDDEN_PLAIN}
 
 专业四季：
@@ -257,23 +423,38 @@ class ReportGenerator:
                     tips = q.get("tips") or []
                     if isinstance(tips, str):
                         tips = [t.strip() for t in re.split(r"[；;\n]+", tips) if t.strip()]
+                    default_name = (
+                        self.SEASON_SPECS_EN[i][0]
+                        if self.lang == "en"
+                        else self.SEASON_SPECS[i][0] + "季"
+                    )
                     plain["quarters_plain"].append(
                         {
-                            "name": str(q.get("name") or self.SEASON_SPECS[i][0] + "季"),
+                            "name": str(q.get("name") or default_name),
                             "summary": str(q.get("summary") or "").strip(),
                             "tips": [str(t).strip() for t in tips if str(t).strip()][:3],
                         }
                     )
         except Exception as e:
             print(f"ensure_quarters_plain error: {e}")
-            plain["quarters_plain"] = [
-                {
-                    "name": f"{n}季",
-                    "summary": f"{n}季宜顺势调整节奏。",
-                    "tips": ["大事不赶在季初硬推", "季中做检视，季末再定下一步"],
-                }
-                for n, *_ in self.SEASON_SPECS
-            ]
+            if self.lang == "en":
+                plain["quarters_plain"] = [
+                    {
+                        "name": n,
+                        "summary": f"Adjust pacing through {n.lower()}.",
+                        "tips": ["Don't rush big moves early in the season", "Review mid-season, decide at the end"],
+                    }
+                    for n, *_ in self.SEASON_SPECS_EN
+                ]
+            else:
+                plain["quarters_plain"] = [
+                    {
+                        "name": f"{n}季",
+                        "summary": f"{n}季宜顺势调整节奏。",
+                        "tips": ["大事不赶在季初硬推", "季中做检视，季末再定下一步"],
+                    }
+                    for n, *_ in self.SEASON_SPECS
+                ]
         page["plain"] = plain
         return page
 
@@ -281,7 +462,44 @@ class ReportGenerator:
         keys = [b[0] for b in batch]
         specs = "\n".join(f"- {k}: 《{title}》主题：{focus}" for k, title, focus in batch)
         key0 = keys[0]
-        prompt = f"""根据命盘写命理报告。只输出合法 JSON，不要 markdown 代码块。
+        lang_rule = self._lang_rule()
+        if self.lang == "en":
+            prompt = f"""Write a BaZi report page from the chart. Output valid JSON only, no markdown fences.
+
+{lang_rule}
+
+Chart: {context}
+
+Pages to generate:
+{specs}
+
+Structure for each page:
+"{key0}": {{
+  "title": "page title in English",
+  "professional": [
+    "paragraph 1 (60-90 words)",
+    "paragraph 2 (60-90 words)",
+    "paragraph 3 (60-90 words)",
+    "paragraph 4 (60-90 words)"
+  ],
+  "plain": {{
+    "summary": "one plain line (≤40 words, zero jargon)",
+    "points": ["tip1", "tip2", "tip3"],
+    "detail": "80-120 words like talking to a friend, zero jargon"
+  }}
+}}
+
+Hard rules:
+1) professional must be an array of exactly 4 strings.
+2) plain.points must be 3 short tips.
+3) plain must never use: {self.FORBIDDEN_PLAIN}
+4) Professional may use BaZi terms; plain must not.
+5) Entire output in English.
+"""
+        else:
+            prompt = f"""根据命盘写命理报告。只输出合法 JSON，不要 markdown 代码块。
+
+{lang_rule}
 
 命盘：{context}
 
@@ -360,6 +578,7 @@ class ReportGenerator:
             return page
 
         prompt = f"""你是翻译成大白话的助手。阅读下面「{title}」的专业命理解读，改写成普通人能懂的话。
+{self._lang_rule()}
 只输出 JSON 对象（不要代码块），格式严格为：
 {{"summary":"一句人话总结，不超过40字","points":["建议1","建议2","建议3"],"detail":"80到120字的白话解释，像朋友聊天"}}
 
@@ -367,6 +586,18 @@ class ReportGenerator:
 不要提八字术语，只说工作/钱/感情/健康/人际/时机/注意什么。
 
 专业原文：
+{pro_text[:1800]}
+"""
+        if self.lang == "en":
+            prompt = f"""Rewrite the professional BaZi reading for 「{title}」 into plain everyday English.
+{self._lang_rule()}
+JSON only:
+{{"summary":"one plain line ≤40 words","points":["tip1","tip2","tip3"],"detail":"80-120 words like talking to a friend"}}
+
+Never use: {self.FORBIDDEN_PLAIN}
+No BaZi jargon — only work/money/relationships/health/timing.
+
+Professional text:
 {pro_text[:1800]}
 """
         try:
@@ -646,13 +877,25 @@ class ReportGenerator:
     @staticmethod
     def render_page_html(page: Dict[str, Any], lang: str = "zh") -> str:
         """页面展示用：视觉分段卡片，避免挤成一团。"""
-        pro_title = "专业解读" if lang == "zh" else "Professional"
-        plain_title = "白话说明" if lang == "zh" else "In plain words"
-        season_title = "四季流年预测" if lang == "zh" else "Seasonal outlook"
-        summary_l = "一句话" if lang == "zh" else "In one line"
-        how_l = "怎么做" if lang == "zh" else "What to do"
-        focus_l = "关键月" if lang == "zh" else "Key months"
-        advice_l = "建议" if lang == "zh" else "Advice"
+        if lang == "zh_hant":
+            try:
+                page = ReportGenerator._to_traditional_page(page) if isinstance(page, dict) else page
+            except Exception:
+                pass
+            pro_title, plain_title = "專業解讀", "白話說明"
+            season_title, summary_l = "四季流年預測", "一句話"
+            how_l, focus_l, advice_l = "怎麼做", "關鍵月", "建議"
+            season_tips = "四季白話"
+        elif lang == "en":
+            pro_title, plain_title = "Professional", "In plain words"
+            season_title, summary_l = "Seasonal outlook", "In one line"
+            how_l, focus_l, advice_l = "What to do", "Key months", "Advice"
+            season_tips = "Season tips"
+        else:
+            pro_title, plain_title = "专业解读", "白话说明"
+            season_title, summary_l = "四季流年预测", "一句话"
+            how_l, focus_l, advice_l = "怎么做", "关键月", "建议"
+            season_tips = "四季白话"
 
         pro_blocks = []
         for p in page.get("professional") or []:
@@ -746,7 +989,7 @@ class ReportGenerator:
                 )
             qp_html = (
                 f"<div style='font-weight:700;margin:14px 0 8px 0;'>"
-                f"{'四季白话' if lang == 'zh' else 'Season tips'}</div>{''.join(bits)}"
+                f"{season_tips}</div>{''.join(bits)}"
             )
 
         pro_section = ""

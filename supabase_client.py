@@ -147,6 +147,114 @@ class SupabaseClient:
 
         return user
 
+    def register_with_password(
+        self,
+        email: str,
+        password_hash: str,
+        *,
+        subscription_tier: str = "free",
+        metadata: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """
+        本 App 独立注册：只写 sf_users，不碰 auth.users。
+        - 邮箱已在本 App 且已设密码 → raise ValueError('exists')
+        - 邮箱已在本 App 但无密码（旧 Auth 残留）→ 绑定本 App 密码并返回
+        - 否则新建 user_id（与其他 App 无关）
+        """
+        import uuid as _uuid
+
+        self.last_error = None
+        email = (email or "").strip().lower()
+        if not email or not password_hash:
+            raise ValueError("email and password required")
+
+        existing = self.get_user_by_email(email)
+        if existing:
+            if existing.get("password_hash"):
+                raise ValueError("exists")
+            # 旧记录无本地密码：绑定为本 App 独立账号
+            try:
+                self._table(self.USER_TABLE).update(
+                    {
+                        "password_hash": password_hash,
+                        "auth_user_id": None,
+                        "email_confirmed": True,
+                        "last_login_at": self._now(),
+                        "updated_at": self._now(),
+                        "metadata": {
+                            **(existing.get("metadata") or {}),
+                            **(metadata or {}),
+                            "auth_mode": "local_password",
+                        },
+                    }
+                ).eq("user_id", existing["user_id"]).eq("app_id", self.app_id).execute()
+            except Exception as e:
+                self._set_error("register_with_password.claim", e)
+                raise
+            return self.get_user(existing["user_id"]) or existing
+
+        user_id = str(_uuid.uuid4())
+        data = self._with_app_id(
+            {
+                "user_id": user_id,
+                "auth_user_id": None,
+                "email": email,
+                "password_hash": password_hash,
+                "subscription_tier": subscription_tier
+                if subscription_tier
+                in ("free", "silver", "gold", "diamond", "monthly", "quarterly", "annual")
+                else "free",
+                "free_trials_remaining": 30,
+                "email_confirmed": True,
+                "metadata": {**(metadata or {}), "auth_mode": "local_password", "source": "bazi_local"},
+                "created_at": self._now(),
+                "updated_at": self._now(),
+                "last_login_at": self._now(),
+            }
+        )
+        try:
+            self._table(self.USER_TABLE).insert(data).execute()
+        except Exception as e:
+            self._set_error("register_with_password.insert", e)
+            raise
+        verified = self.get_user_by_email(email) or self.get_user(user_id)
+        if not verified:
+            raise RuntimeError(
+                "用户写入后读回失败。请确认已执行 sql/007（password_hash 列）且 Secrets 正确。"
+            )
+        return verified
+
+    def login_with_password(self, email: str, password: str) -> Optional[Dict[str, Any]]:
+        """本 App 独立登录：校验 sf_users.password_hash。"""
+        from auth_local import verify_password
+
+        self.last_error = None
+        email = (email or "").strip().lower()
+        if not email or not password:
+            self.last_error = "email_password_required"
+            return None
+        profile = self.get_user_by_email(email)
+        if not profile:
+            self.last_error = "account_not_found"
+            return None
+        if not profile.get("password_hash"):
+            self.last_error = "need_register_password"
+            return None
+        if not verify_password(password, profile.get("password_hash")):
+            self.last_error = "bad_password"
+            return None
+        try:
+            self._table(self.USER_TABLE).update(
+                {
+                    "last_login_at": self._now(),
+                    "updated_at": self._now(),
+                    "email_confirmed": True,
+                }
+            ).eq("user_id", profile["user_id"]).eq("app_id", self.app_id).execute()
+        except Exception as e:
+            self._set_error("login_with_password.update", e)
+        return self.get_user(profile["user_id"]) or profile
+
     def register_by_email(
         self,
         email: str,

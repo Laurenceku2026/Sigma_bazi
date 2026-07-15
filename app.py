@@ -16,13 +16,13 @@ from dotenv import load_dotenv
 
 from admin_page import render_admin_login, render_admin_page
 from bazi_engine import BaziEngine
-from ui_texts import region_label, region_longitude, region_options, t
+from auth_local import hash_password
+from ui_texts import is_chinese, region_label, region_longitude, region_options, t
 from membership import PAID_TIERS, TIERS, can_generate_report, tier_outline
 from report_generator import ReportGenerator
 from stripe_payment import StripeClient
 from supabase_client import AppAccessDenied, SupabaseClient
 from utils import format_bazi_display, generate_pdf_report, pdf_filename, render_bazi_chart
-from auth_supabase import SupabaseAuth
 
 st.set_page_config(page_title="六西格玛命理 - 八字", page_icon="🔮", layout="wide")
 
@@ -86,7 +86,13 @@ ADMIN_USERNAME = _cfg("ADMIN_USERNAME", "Laurence_ku")
 ADMIN_PASSWORD = _cfg("ADMIN_PASSWORD", "Ku_product$2026")
 
 lang = st.session_state.lang
-supabase_client = stripe_client = report_gen = auth_client = None
+
+
+def _is_zh() -> bool:
+    return is_chinese(lang)
+
+
+supabase_client = stripe_client = report_gen = None
 _init_errors: list[str] = []
 
 if SUPABASE_URL and SUPABASE_KEY:
@@ -98,14 +104,6 @@ if SUPABASE_URL and SUPABASE_KEY:
         )
     except Exception as e:
         _init_errors.append(f"Supabase: {e}")
-
-if SUPABASE_URL and SUPABASE_ANON_KEY:
-    try:
-        auth_client = SupabaseAuth(SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY)
-    except Exception as e:
-        _init_errors.append(f"Auth: {e}")
-elif SUPABASE_URL:
-    _init_errors.append("缺少 SUPABASE_STOCK_ANON_KEY，无法邮箱密码登录（请对照赛马 App 配置 Anon Key）")
 
 if STRIPE_SECRET_KEY:
     try:
@@ -297,23 +295,8 @@ def logout_user() -> None:
             del st.session_state[k]
 
 
-def _ensure_sf_profile(email: str, auth_user_id: str):
-    """Auth 成功后写入/对齐本 App 的 sf_users。"""
-    if not supabase_client:
-        return None
-    return supabase_client.register_by_email(
-        email,
-        auth_user_id,
-        subscription_tier=st.session_state.subscription_tier or "free",
-        metadata={"source": "supabase_auth", "app": APP_ID},
-    )
-
-
 def do_login(email: str, password: str) -> bool:
-    """邮箱+密码登录（Supabase Auth，同赛马 App）。"""
-    if not auth_client or not auth_client.configured:
-        st.error("认证未配置：请在 Secrets 设置 SUPABASE_STOCK_ANON_KEY")
-        return False
+    """本 App 独立登录（只查 sf_users，与其他 App 无关）。"""
     if not supabase_client:
         st.error("数据库未连接，无法登录。请检查 Secrets。")
         return False
@@ -321,30 +304,26 @@ def do_login(email: str, password: str) -> bool:
         st.error(t("need_register", lang))
         return False
     if not password or len(password) < 6:
-        st.error("请输入至少 6 位密码" if lang == "zh" else "Password must be at least 6 characters")
+        st.error("请输入至少 6 位密码" if _is_zh() else "Password must be at least 6 characters")
         return False
 
-    ok, msg, payload = auth_client.sign_in(email.strip(), password)
-    if not ok or not payload:
-        st.error(msg)
-        return False
-
-    auth_uid = payload["user_id"]
-    uemail = payload["email"]
-    st.session_state.access_token = payload.get("access_token") or ""
-    st.session_state.user_id = auth_uid
-    st.session_state.user_email = uemail
-    st.session_state.auth_ok = True
-
-    try:
-        profile = _ensure_sf_profile(uemail, auth_uid)
-    except Exception as e:
-        st.error(f"同步本 App 用户失败：{e}")
-        return False
+    profile = supabase_client.login_with_password(email.strip(), password)
     if not profile:
-        st.error("无法写入本 App 用户表，请检查 sf_users / SQL 005")
+        err = supabase_client.last_error or ""
+        if err == "account_not_found":
+            st.error(t("login_not_found", lang))
+        elif err == "need_register_password":
+            st.warning(t("need_set_local_password", lang))
+            st.session_state.show_register = True
+            st.session_state.show_login = False
+        else:
+            st.error(t("login_bad_password", lang))
         return False
 
+    st.session_state.access_token = ""
+    st.session_state.user_id = profile["user_id"]
+    st.session_state.user_email = (profile.get("email") or email).strip().lower()
+    st.session_state.auth_ok = True
     restore_session_from_profile(profile)
     st.session_state.auth_ok = True
     st.success(t("login_ok", lang))
@@ -352,10 +331,7 @@ def do_login(email: str, password: str) -> bool:
 
 
 def do_register(email: str, password: str, password2: str) -> bool:
-    """邮箱+密码注册。"""
-    if not auth_client or not auth_client.configured:
-        st.error("认证未配置：请在 Secrets 设置 SUPABASE_STOCK_ANON_KEY")
-        return False
+    """本 App 独立注册：全新账号，不与其他 App 共用登录。"""
     if not supabase_client:
         st.error("数据库未连接。")
         return False
@@ -363,52 +339,48 @@ def do_register(email: str, password: str, password2: str) -> bool:
         st.error(t("need_register", lang))
         return False
     if not password or len(password) < 6:
-        st.error("密码至少 6 位" if lang == "zh" else "Password min 6 chars")
+        st.error("密码至少 6 位" if _is_zh() else "Password min 6 chars")
         return False
     if password != password2:
-        st.error("两次密码不一致" if lang == "zh" else "Passwords do not match")
+        st.error("两次密码不一致" if _is_zh() else "Passwords do not match")
         return False
 
-    ok, msg, auth_uid = auth_client.sign_up(email.strip(), password)
-    if msg == "exists":
-        st.warning(
-            "该邮箱已注册（可能在赛马或其他同项目 App）。请直接用原密码登录。"
-            if lang == "zh"
-            else "Email already registered. Please sign in with your password."
-        )
-        st.session_state.show_login = True
-        st.session_state.show_register = False
-        return False
-    if not ok:
-        st.error(msg)
-        return False
-
-    # 若 signup 未立即返回 uid（需邮件确认），仍尝试密码登录拿 session
-    if not auth_uid:
-        ok2, msg2, payload = auth_client.sign_in(email.strip(), password)
-        if ok2 and payload:
-            auth_uid = payload["user_id"]
-            st.session_state.access_token = payload.get("access_token") or ""
-        else:
-            st.info(msg)
-            return False
-    else:
-        # 再登录一次拿到 access_token
-        ok2, _, payload = auth_client.sign_in(email.strip(), password)
-        if ok2 and payload:
-            st.session_state.access_token = payload.get("access_token") or ""
-            auth_uid = payload["user_id"]
-
-    st.session_state.user_id = auth_uid
-    st.session_state.user_email = email.strip().lower()
-    st.session_state.auth_ok = True
     try:
-        profile = _ensure_sf_profile(st.session_state.user_email, auth_uid)
-    except Exception as e:
-        st.error(f"写入本 App 用户失败：{e}")
+        profile = supabase_client.register_with_password(
+            email.strip().lower(),
+            hash_password(password),
+            subscription_tier="free",
+            metadata={"app": APP_ID},
+        )
+    except ValueError as e:
+        if str(e) == "exists":
+            st.warning(t("register_exists_local", lang))
+            st.session_state.show_login = True
+            st.session_state.show_register = False
+            return False
+        st.error(str(e))
         return False
-    if profile:
-        restore_session_from_profile(profile)
+    except Exception as e:
+        msg = str(e)
+        if "password_hash" in msg.lower() or "42703" in msg:
+            st.error(
+                "数据库缺少 password_hash 列，请在 Supabase 执行 sql/007_sf_users_local_password.sql"
+                if _is_zh()
+                else "Missing password_hash column — run sql/007_sf_users_local_password.sql"
+            )
+        else:
+            st.error(f"{t('register_fail', lang)}{e}")
+        return False
+
+    if not profile:
+        st.error(t("register_fail", lang))
+        return False
+
+    st.session_state.access_token = ""
+    st.session_state.user_id = profile["user_id"]
+    st.session_state.user_email = (profile.get("email") or email).strip().lower()
+    st.session_state.auth_ok = True
+    restore_session_from_profile(profile)
     st.session_state.auth_ok = True
     st.success(t("register_ok", lang))
     return True
@@ -438,7 +410,7 @@ def render_login_panel(key_prefix: str = "main") -> None:
             st.session_state.show_login = False
             st.rerun()
     with c3:
-        if st.button("取消" if lang == "zh" else "Cancel", use_container_width=True, key=f"{key_prefix}_login_cancel"):
+        if st.button("取消" if _is_zh() else "Cancel", use_container_width=True, key=f"{key_prefix}_login_cancel"):
             st.session_state.show_login = False
             st.rerun()
 
@@ -583,7 +555,7 @@ def generate_full_report(*, consume_quota: bool = True) -> bool:
     """生成报告写入 session；成功返回 True。"""
     tier = st.session_state.subscription_tier
     if not report_gen:
-        st.error("报告引擎未配置" if lang == "zh" else "Report engine not configured")
+        st.error("报告引擎未配置" if _is_zh() else "Report engine not configured")
         return False
     if not st.session_state.bazi_data or not st.session_state.birth_info:
         st.error(t("need_input", lang))
@@ -591,17 +563,19 @@ def generate_full_report(*, consume_quota: bool = True) -> bool:
     try:
         if consume_quota and tier in PAID_TIERS and supabase_client:
             if not supabase_client.consume_report_quota(st.session_state.user_id):
-                st.error("次数已用完" if lang == "zh" else "No quota left")
+                st.error("次数已用完" if _is_zh() else "No quota left")
                 return False
         report = report_gen.generate(
             st.session_state.bazi_data,
             st.session_state.birth_info,
             tier if tier in PAID_TIERS else "silver",  # 免费预览用银卡页数结构
+            lang=lang,
         )
-        # 免费用户流年专章不开放：截到 8 页
+        # 免费/银卡：无独立流年报告篇章
         if tier == "free" or tier not in ("gold", "diamond"):
             report = {k: v for k, v in report.items() if k != "page9"}
         st.session_state.report_content = report
+        st.session_state.report_language = lang
         st.session_state.report_generated = True
         if supabase_client and st.session_state.get("auth_ok"):
             try:
@@ -662,7 +636,7 @@ div[data-testid="stButton"] > button[kind="primary"] {
             # 小号重新生成
             if can_generate_report(tier, trials, expires) and report_gen:
                 if st.button(
-                    "🔄 " + ("重新生成报告" if lang == "zh" else "Regenerate report"),
+                    "🔄 " + ("重新生成报告" if _is_zh() else "Regenerate report"),
                     key=f"{key_prefix}_regen_report",
                     use_container_width=True,
                 ):
@@ -673,7 +647,7 @@ div[data-testid="stButton"] > button[kind="primary"] {
                             st.rerun()
         elif can_generate_report(tier, trials, expires) and report_gen:
             if st.button(
-                "📄 " + ("生成完整报告" if lang == "zh" else "Generate full report"),
+                "📄 " + ("生成完整报告" if _is_zh() else "Generate full report"),
                 key=f"{key_prefix}_gen_full_report",
                 type="primary",
                 use_container_width=True,
@@ -684,17 +658,17 @@ div[data-testid="stButton"] > button[kind="primary"] {
                         go_report_tab()
                         st.rerun()
         else:
-            st.warning("会员次数不足或已到期，请续费后再生成。" if lang == "zh" else "No quota or expired.")
+            st.warning("会员次数不足或已到期，请续费后再生成。" if _is_zh() else "No quota or expired.")
     else:
         # 免费：可预览
         st.caption(
             "免费可预览完整报告（遮挡预览 · 不可复制/下载）。升级会员可无遮挡阅读并下载。"
-            if lang == "zh"
+            if _is_zh()
             else "Free preview with watermark — no copy/download. Upgrade to unlock."
         )
         btn_label = (
             ("📄 完整报告（免费预览）" if has_report else "📄 生成并预览完整报告")
-            if lang == "zh"
+            if _is_zh()
             else ("📄 Full report (free preview)" if has_report else "📄 Generate free preview")
         )
         if st.button(btn_label, key=f"{key_prefix}_free_preview_report", type="primary", use_container_width=True):
@@ -761,28 +735,35 @@ def _wrap_protected_html(inner_html: str, mark: str) -> str:
 """.strip()
 
 
-def render_report_pages(report: dict, *, protected: bool = False):
-    """渲染各页报告；protected=True 时加水印条码且禁选复制。"""
+def render_report_pages(report: dict, *, protected: bool = False, pages=None):
+    """渲染报告页；默认 1–8。流年报告（page9）另用独立入口。"""
     tier = st.session_state.subscription_tier
-    max_page = 9 if tier in ("gold", "diamond") else 8
+    page_range = pages or range(1, 9)
     labels_zh = [
-        "页一：八字命盘与基本信息", "页二：事业流年详批 (Part 1)", "页三：事业流年详批 (Part 2)",
-        "页四：财运流年详批 (Part 1)", "页五：财运流年详批 (Part 2)", "页六：感情流年详批 (Part 1)",
-        "页七：感情流年详批 (Part 2)", "页八：健康流年详批", "页九：流年预测专章",
+        "页一：八字命盘与基本信息", "页二：事业详批 (Part 1)", "页三：事业详批 (Part 2)",
+        "页四：财运详批 (Part 1)", "页五：财运详批 (Part 2)", "页六：感情详批 (Part 1)",
+        "页七：感情详批 (Part 2)", "页八：健康详批", "流年报告",
     ]
     labels_en = [
         "Page 1: Chart", "Page 2: Career (1)", "Page 3: Career (2)",
         "Page 4: Wealth (1)", "Page 5: Wealth (2)", "Page 6: Relationship (1)",
-        "Page 7: Relationship (2)", "Page 8: Health", "Page 9: Annual luck",
+        "Page 7: Relationship (2)", "Page 8: Health", "Annual Luck Report",
     ]
-    labels = labels_zh if lang == "zh" else labels_en
-    available = [i for i in range(1, 10) if f"page{i}" in report]
-    show_n = min(available[-1] if available else max_page, max_page)
+    labels = labels_en if lang == "en" else labels_zh
+    if lang == "zh_hant":
+        try:
+            from zh_convert import to_traditional
+
+            labels = [to_traditional(x) for x in labels_zh]
+        except Exception:
+            pass
     mark = st.session_state.get("user_email") or (st.session_state.birth_info or {}).get("name") or "SIGMA-FATE"
 
-    for i in range(1, show_n + 1):
+    for i in page_range:
+        if i == 9 and tier not in ("gold", "diamond"):
+            continue
         pk = f"page{i}"
-        with st.expander(labels[i - 1] if i <= len(labels) else pk, expanded=(i == 1)):
+        with st.expander(labels[i - 1] if i <= len(labels) else pk, expanded=(i == page_range.start)):
             if pk not in report:
                 continue
             page = report[pk]
@@ -795,6 +776,7 @@ def render_report_pages(report: dict, *, protected: bool = False):
                 )
             if report_gen and report_gen._plain_missing(page.get("plain")):
                 try:
+                    report_gen.lang = lang
                     page = report_gen._ensure_plain_section(
                         page, page.get("title") or labels[i - 1]
                     )
@@ -807,19 +789,40 @@ def render_report_pages(report: dict, *, protected: bool = False):
             st.markdown(html, unsafe_allow_html=True)
 
 
+def render_liunian_report(report: dict, *, protected: bool = False):
+    """独立篇章：流年报告（金卡/钻石）。"""
+    st.markdown(f"### {t('liunian_heading', lang)}")
+    st.caption(t("liunian_chapter_badge", lang))
+    if "page9" not in (report or {}):
+        st.info(
+            "尚未生成流年报告。请重新生成完整报告（金卡/钻石会包含本篇）。"
+            if _is_zh()
+            else "No Annual Luck Report yet. Regenerate (Gold/Diamond includes this chapter)."
+        )
+        return
+    render_report_pages(report, protected=protected, pages=range(9, 10))
+
+
 def render_generate_report_button(key_prefix: str = "main"):
     """兼容旧调用名 → 大号报告入口。"""
     render_report_cta(key_prefix)
 
 
-# --- 顶栏 ---
-col_spacer, col_zh, col_en, col_gear = st.columns([8.2, 1.1, 1.1, 0.8])
+# --- 顶栏：中文简体 | 中文繁體 | English ---
+col_spacer, col_zh, col_hant, col_en, col_gear = st.columns([5.2, 1.6, 1.6, 1.5, 0.7])
 with col_zh:
-    if st.button(t("chinese", lang), key="btn_lang_zh", use_container_width=True):
+    if st.button("中文简体", key="btn_lang_zh", use_container_width=True,
+                 type="primary" if lang == "zh" else "secondary"):
         st.session_state.lang = "zh"
         st.rerun()
+with col_hant:
+    if st.button("中文繁體", key="btn_lang_zh_hant", use_container_width=True,
+                 type="primary" if lang == "zh_hant" else "secondary"):
+        st.session_state.lang = "zh_hant"
+        st.rerun()
 with col_en:
-    if st.button(t("english", lang), key="btn_lang_en", use_container_width=True):
+    if st.button("English", key="btn_lang_en", use_container_width=True,
+                 type="primary" if lang == "en" else "secondary"):
         st.session_state.lang = "en"
         st.rerun()
 with col_gear:
@@ -844,7 +847,7 @@ with st.sidebar:
         )
         st.markdown(
             f"<div style='padding:8px 10px;background:#f0f7ff;border-radius:8px;margin-bottom:8px;'>"
-            f"<div style='font-size:0.8rem;color:#666;'>{'已登录' if lang == 'zh' else 'Signed in'}</div>"
+            f"<div style='font-size:0.8rem;color:#666;'>{'已登录' if _is_zh() else 'Signed in'}</div>"
             f"<div style='font-weight:700;color:#1565C0;'>👤 {display_name}</div>"
             f"<div style='font-size:0.75rem;color:#888;'>{st.session_state.user_email}</div>"
             f"</div>",
@@ -854,7 +857,7 @@ with st.sidebar:
             logout_user()
             st.rerun()
     else:
-        st.caption("尚未登录" if lang == "zh" else "Not signed in")
+        st.caption("尚未登录" if _is_zh() else "Not signed in")
         if st.button(t("login_btn", lang), key="sidebar_login_btn", use_container_width=True, type="primary"):
             st.session_state.show_login = True
             st.session_state.show_register = False
@@ -876,7 +879,7 @@ with st.sidebar:
         st.warning(t("free_warning", lang))
 
     # 加入会员
-    join_label = "💎 加入会员" if lang == "zh" else "💎 Join Membership"
+    join_label = "💎 加入会员" if _is_zh() else "💎 Join Membership"
     if st.button(join_label, key="sidebar_join_membership", use_container_width=True):
         st.session_state.show_join_membership = True
         if not is_registered():
@@ -888,8 +891,8 @@ with st.sidebar:
             for err in st.session_state["_init_errors"]:
                 st.caption(err)
     st.markdown("---")
-    st.markdown("📧 **聯絡我們**" if lang == "zh" else "📧 **Contact us**")
-    st.caption("✉️ 電郵: Techlife2027@gmail.com" if lang == "zh" else "✉️ Email: Techlife2027@gmail.com")
+    st.markdown("📧 **聯絡我們**" if _is_zh() else "📧 **Contact us**")
+    st.caption("✉️ 電郵: Techlife2027@gmail.com" if _is_zh() else "✉️ Email: Techlife2027@gmail.com")
     st.markdown("---")
     st.caption(f"App：`{APP_ID}`")
 
@@ -952,7 +955,7 @@ if st.session_state.get("show_join_membership"):
         else:
             st.caption(f"{t('registered_as', lang)}: {st.session_state.user_email}")
             render_membership_plans("sidebar_join")
-            if st.button("关闭" if lang == "zh" else "Close", key="close_join_panel"):
+            if st.button("关闭" if _is_zh() else "Close", key="close_join_panel"):
                 st.session_state.show_join_membership = False
                 st.rerun()
 
@@ -961,8 +964,9 @@ _nav = [
     t("tab_input", lang),
     t("tab_chart", lang),
     t("tab_report", lang),
+    t("tab_liunian", lang),
 ]
-nav_cols = st.columns(3)
+nav_cols = st.columns(4)
 for i, lab in enumerate(_nav):
     with nav_cols[i]:
         is_on = int(st.session_state.get("ui_tab", 0)) == i
@@ -1063,7 +1067,7 @@ elif _tab == 1:
         st.markdown("---")
         render_report_cta("tab_chart")
 
-# ========== Tab 3：完整报告 ==========
+# ========== Tab 3：完整报告（八页） ==========
 elif _tab == 2:
     tier = st.session_state.subscription_tier
     paid = tier in PAID_TIERS
@@ -1075,7 +1079,7 @@ elif _tab == 2:
         else:
             st.info(
                 "尚未生成报告。请点击下方按钮。"
-                if lang == "zh"
+                if _is_zh()
                 else "No report yet — use the button below."
             )
             render_report_cta("tab_report_empty")
@@ -1085,9 +1089,23 @@ elif _tab == 2:
     else:
         report = st.session_state.report_content
         st.markdown(f"### {t('your_report', lang)}")
+        report_lang = st.session_state.get("report_language") or "zh"
+        if report_lang != lang:
+            st.warning(t("report_lang_mismatch", lang))
+            if st.button(t("report_regen_lang", lang), key="regen_report_for_lang", type="primary"):
+                with st.spinner(t("generating", lang)):
+                    if generate_full_report(consume_quota=st.session_state.subscription_tier in PAID_TIERS):
+                        st.success(t("report_ok", lang))
+                        st.rerun()
         if paid:
             st.caption(f"{t('generated_at', lang)}：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
-            render_report_pages(report, protected=False)
+            render_report_pages(report, protected=False, pages=range(1, 9))
+            if tier in ("gold", "diamond"):
+                st.info(
+                    "金卡/钻石另有独立篇章「流年报告」，请切换顶部「流年报告」标签查看。"
+                    if _is_zh()
+                    else "Gold/Diamond also includes the independent Annual Luck Report tab."
+                )
             st.markdown("---")
             col_dl1, col_dl2 = st.columns(2)
             with col_dl1:
@@ -1117,14 +1135,45 @@ elif _tab == 2:
         else:
             st.warning(
                 "免费预览模式：含水印条码，不可复制、不可下载。升级会员可清晰阅读并下载 PDF。"
-                if lang == "zh"
+                if _is_zh()
                 else "Free preview with watermark — no copy/download. Upgrade to unlock."
             )
-            render_report_pages(report, protected=True)
+            render_report_pages(report, protected=True, pages=range(1, 9))
             st.markdown("---")
             st.markdown(f"### {t('unlock_heading', lang)}")
             st.markdown(t("unlock_body", lang))
             render_membership_plans("tab_report_free")
+
+# ========== Tab 4：流年报告（金/钻独立篇章） ==========
+elif _tab == 3:
+    tier = st.session_state.subscription_tier
+    paid = tier in PAID_TIERS
+    has_report = bool(st.session_state.report_content)
+
+    if tier not in ("gold", "diamond"):
+        st.warning(t("liunian_locked", lang))
+        st.markdown("---")
+        render_membership_plans("tab_liunian_upsell")
+    elif not has_report:
+        if st.session_state.bazi_data is None:
+            st.info(t("need_input", lang))
+        else:
+            st.info(
+                "请先生成完整报告；金卡/钻石会同时生成「流年报告」篇章。"
+                if _is_zh()
+                else "Generate the full report first — Gold/Diamond also creates the Annual Luck chapter."
+            )
+            render_report_cta("tab_liunian_empty")
+    else:
+        report = st.session_state.report_content
+        if paid:
+            render_liunian_report(report, protected=False)
+            st.markdown("---")
+            render_report_cta("tab_liunian_paid")
+        else:
+            render_liunian_report(report, protected=True)
+            st.markdown("---")
+            render_membership_plans("tab_liunian_free")
 
 st.markdown("---")
 st.caption(t("footer", lang))

@@ -39,49 +39,58 @@ def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
         outlines = {
             "silver": [
                 "Page 1: BaZi chart & basics",
-                "Pages 2–3: Career annual forecast",
-                "Pages 4–5: Wealth annual forecast",
-                "Pages 6–7: Relationship annual forecast",
-                "Page 8: Health annual forecast",
-                "10 full reports included",
+                "Pages 2–3: Career",
+                "Pages 4–5: Wealth",
+                "Pages 6–7: Relationship",
+                "Page 8: Health",
+                "10 full 8-page reports (no Annual Luck Report)",
             ],
             "gold": [
-                "All Silver benefits",
-                "Dedicated annual luck chapter (predictions & advice)",
-                "Four seasons + key months (classical four-season timing)",
-                "10 full reports + annual luck reports",
+                "All Silver benefits (8-page report)",
+                "Independent chapter: Annual Luck Report",
+                "Four seasons + key months + action tips",
+                "10 uses of 8-page report + Annual Luck Report",
             ],
             "diamond": [
                 "All Gold benefits",
                 "Unlimited reports for 12 months",
-                "Seasonal annual luck updates anytime",
+                "Annual Luck Report updated anytime",
                 "Best value for frequent users",
             ],
         }
-    else:
-        outlines = {
-            "silver": [
-                "页一：八字命盘与基本信息",
-                "页二～三：事业流年详批",
-                "页四～五：财运流年详批",
-                "页六～七：感情流年详批",
-                "页八：健康流年详批",
-                "含 10 次完整八页报告",
-            ],
-            "gold": [
-                "银卡全部内容",
-                "专属流年预测专章（四季预测 + 每季关键月 + 行动建议）",
-                "春夏秋冬分述，兼顾命理四时与可读性",
-                "含 10 次八页报告 + 流年专章",
-            ],
-            "diamond": [
-                "金卡全部内容",
-                "一年内无限次生成报告",
-                "流年四季预测随用随更",
-                "适合高频使用者",
-            ],
-        }
-    return outlines.get(tier_id, [])
+        return outlines.get(tier_id, [])
+
+    outlines = {
+        "silver": [
+            "页一：八字命盘与基本信息",
+            "页二～三：事业详批",
+            "页四～五：财运详批",
+            "页六～七：感情详批",
+            "页八：健康详批",
+            "含 10 次完整八页报告（不含流年报告）",
+        ],
+        "gold": [
+            "银卡全部内容（完整八页报告）",
+            "独立篇章：《流年报告》",
+            "四季预测 + 每季关键月 + 行动建议",
+            "含 10 次八页报告 + 流年报告",
+        ],
+        "diamond": [
+            "金卡全部内容",
+            "一年内无限次生成报告",
+            "流年报告随用随更",
+            "适合高频使用者",
+        ],
+    }
+    lines = outlines.get(tier_id, [])
+    if lang == "zh_hant":
+        try:
+            from zh_convert import to_traditional
+
+            return [to_traditional(x) for x in lines]
+        except Exception:
+            pass
+    return lines
 
 
 def can_generate_report(tier: str, trials_remaining: int, expires_at: str | None = None) -> bool:

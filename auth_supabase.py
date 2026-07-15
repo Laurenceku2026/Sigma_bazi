@@ -1,6 +1,6 @@
 """
-Supabase Auth（与 Horse racing 同款）：邮箱 + 密码 → auth.users，再同步本 App sf_users。
-密码只存 Supabase Auth，不写入 sf_users。
+[已弃用] 共享 Supabase Auth。本八字 App 已改用 auth_local + sf_users.password_hash。
+请勿再从此模块接入登录；保留仅供参考。
 """
 from __future__ import annotations
 

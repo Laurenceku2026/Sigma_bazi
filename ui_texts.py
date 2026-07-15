@@ -19,8 +19,9 @@ REGIONS: List[Tuple[str, str, str, float]] = [
 
 TEXTS: Dict[str, Dict[str, str]] = {
     "zh": {
-        "chinese": "中文",
-        "english": "EN",
+        "chinese": "中文简体",
+        "chinese_hant": "中文繁體",
+        "english": "English",
         "app_title": "🔮 六西格玛命理 · 八字排盘",
         "app_subtitle": "基于DFSS方法论与AI大模型的现代命理分析",
         "sidebar_brand": "🔮 六西格玛命理",
@@ -41,6 +42,10 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "tab_input": "📝 输入信息",
         "tab_chart": "📊 八字命盘",
         "tab_report": "📄 完整报告",
+        "tab_liunian": "📅 流年报告",
+        "liunian_chapter_badge": "金卡 / 钻石专属独立篇章",
+        "liunian_locked": "流年报告为金卡、钻石会员专属。银卡含完整八页报告，升级后解锁本篇。",
+        "liunian_heading": "📅 流年报告",
         "input_heading": "请输入您的出生信息",
         "input_caption": "所有信息将严格保密，仅用于生成您的专属命理报告",
         "name": "👤 您的姓名",
@@ -62,28 +67,34 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "email": "📧 电子邮箱",
         "email_ph": "用于注册与接收报告",
         "register_heading": "📧 注册账号",
-        "register_caption": "请使用邮箱 + 密码注册（与赛马 App 同一套 Supabase 登录；密码至少 6 位）",
+        "register_caption": "本八字 App 独立账号（邮箱+密码，至少 6 位）。与其他 App 完全隔离，即使用同一邮箱也可在此重新注册。",
         "register_btn": "确认注册并继续",
         "register_btn_short": "去注册",
         "register_submit": "注册",
-        "register_ok": "注册成功！",
+        "register_ok": "注册成功！本 App 账号已创建。",
+        "register_fail": "注册失败：",
+        "register_exists_local": "该邮箱已在本八字 App 注册，请直接登录（与其他 App 无关）。",
+        "need_set_local_password": "本 App 需独立密码。请通过「注册」为本 App 设置密码（不影响其他 App）。",
+        "login_bad_password": "邮箱或密码错误（本 App 独立密码，并非其他 App 的密码）。",
         "need_register": "请先注册或登录后再排盘",
         "registered_as": "当前账号",
         "login_btn": "🔐 登录",
         "logout_btn": "退出登录",
-        "login_heading": "🔐 邮箱密码登录",
-        "login_caption": "输入注册邮箱与密码；将自动恢复您的命盘资料与报告",
+        "login_heading": "🔐 登录本八字 App",
+        "login_caption": "使用本 App 注册的邮箱与密码（与其他 App 账号互不影响）",
         "login_submit": "登录",
         "login_ok": "登录成功！已恢复您的资料与历史记录",
-        "login_not_found": "登录失败，请检查邮箱密码，或先注册",
+        "login_not_found": "本 App 无此账号，请先注册",
+        "report_lang_mismatch": "当前报告不是界面语言。英文/繁体报告需按当前语言重新生成。",
+        "report_regen_lang": "按当前语言重新生成报告",
         "login_prompt": "已有账号？请先登录，保护个人隐私，无需重复填写",
         "returning_hint": "已从账号恢复上次排盘资料，可直接查看命盘与报告",
         "password": "🔑 密码",
         "password_confirm": "🔑 确认密码",
         "membership_heading": "💎 升级会员 · 解锁完整报告",
         "btn_silver": "🥈 银卡会员\n\nHK$10 · 10次\n完整八页报告",
-        "btn_gold": "🥇 金卡会员\n\nHK$100 · 10次\n八页报告 + 流年报告",
-        "btn_diamond": "💎 钻石会员\n\nHK$999 · 一年无限\n八页报告 + 流年报告",
+        "btn_gold": "🥇 金卡会员\n\nHK$100 · 10次\n八页报告 + 独立流年报告",
+        "btn_diamond": "💎 钻石会员\n\nHK$999 · 一年无限\n八页报告 + 独立流年报告",
         "outline_title": "📋 报告大纲预览",
         "pay_now": "💳 前往支付",
         "remaining_reports": "剩余报告次数",
@@ -170,8 +181,9 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "init_hint": "排盘功能仍可本地使用；请检查 Secrets / .env 中的 API Key。",
     },
     "en": {
-        "chinese": "中文",
-        "english": "EN",
+        "chinese": "中文简体",
+        "chinese_hant": "中文繁體",
+        "english": "English",
         "app_title": "🔮 Sigma Fate · BaZi Chart",
         "app_subtitle": "Modern BaZi analysis powered by DFSS + AI",
         "sidebar_brand": "🔮 Sigma Fate",
@@ -192,6 +204,10 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "tab_input": "📝 Input",
         "tab_chart": "📊 Chart",
         "tab_report": "📄 Full Report",
+        "tab_liunian": "📅 Annual Luck Report",
+        "liunian_chapter_badge": "Gold / Diamond exclusive chapter",
+        "liunian_locked": "Annual Luck Report is for Gold and Diamond only. Silver includes the full 8-page report; upgrade to unlock this chapter.",
+        "liunian_heading": "📅 Annual Luck Report",
         "input_heading": "Enter birth information",
         "input_caption": "Your data is private and used only to generate your report",
         "name": "👤 Name",
@@ -213,28 +229,34 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "email": "📧 Email",
         "email_ph": "For registration and reports",
         "register_heading": "📧 Create account",
-        "register_caption": "Register with email + password (same Supabase Auth as Horse racing; min 6 chars)",
+        "register_caption": "Independent BaZi account (email + password, min 6). Fully isolated from other apps — you can register here even with the same email.",
         "register_btn": "Register & continue",
         "register_btn_short": "Register",
         "register_submit": "Sign up",
-        "register_ok": "Registered!",
+        "register_ok": "Registered! Your BaZi-only account is ready.",
+        "register_fail": "Registration failed: ",
+        "register_exists_local": "This email is already registered in this BaZi app. Please sign in (unrelated to other apps).",
+        "need_set_local_password": "This app needs its own password. Use Register to set one for BaZi only (does not affect other apps).",
+        "login_bad_password": "Wrong email or password (BaZi-only password — not your other-app password).",
         "need_register": "Please register or sign in first",
         "registered_as": "Signed in as",
         "login_btn": "🔐 Sign in",
         "logout_btn": "Sign out",
-        "login_heading": "🔐 Sign in with email & password",
-        "login_caption": "Use your email and password. Chart and reports will be restored.",
+        "login_heading": "🔐 Sign in to BaZi",
+        "login_caption": "Use the email and password registered in this BaZi app (independent of other apps)",
         "login_submit": "Sign in",
         "login_ok": "Signed in! Your profile and history were restored",
-        "login_not_found": "Sign-in failed. Check credentials or register first",
+        "login_not_found": "No BaZi account for this email — please register first",
+        "report_lang_mismatch": "This report is not in the current UI language. Regenerate for English / Traditional Chinese.",
+        "report_regen_lang": "Regenerate report in current language",
         "login_prompt": "Returning user? Sign in first to protect your privacy",
         "returning_hint": "Restored your last chart data. View chart and reports anytime",
         "password": "🔑 Password",
         "password_confirm": "🔑 Confirm password",
         "membership_heading": "💎 Upgrade · Unlock full reports",
         "btn_silver": "🥈 Silver\n\nHK$10 · 10 uses\nFull 8-page report",
-        "btn_gold": "🥇 Gold\n\nHK$100 · 10 uses\n8 pages + annual luck",
-        "btn_diamond": "💎 Diamond\n\nHK$999 · 1 year unlimited\n8 pages + annual luck",
+        "btn_gold": "🥇 Gold\n\nHK$100 · 10 uses\n8 pages + Annual Luck Report",
+        "btn_diamond": "💎 Diamond\n\nHK$999 · 1 year unlimited\n8 pages + Annual Luck Report",
         "outline_title": "📋 Report outline",
         "pay_now": "💳 Pay now",
         "remaining_reports": "Reports remaining",
@@ -324,20 +346,46 @@ TEXTS: Dict[str, Dict[str, str]] = {
 
 
 def t(key: str, lang: str = "zh", **kwargs) -> str:
-    text = TEXTS.get(lang, TEXTS["zh"]).get(key) or TEXTS["zh"].get(key, key)
+    # zh_hant 复用简体词条再转繁体
+    base = "zh" if lang in ("zh", "zh_hant") else lang
+    text = TEXTS.get(base, TEXTS["zh"]).get(key) or TEXTS["zh"].get(key, key)
     if kwargs:
         try:
-            return text.format(**kwargs)
+            text = text.format(**kwargs)
         except Exception:
-            return text
+            pass
+    if lang == "zh_hant":
+        from zh_convert import to_traditional
+
+        text = to_traditional(text)
     return text
+
+
+def is_chinese(lang: str) -> bool:
+    return lang in ("zh", "zh_hant")
+
+
+def report_output_language(lang: str) -> str:
+    """给 DeepSeek 的输出语言指令。"""
+    if lang == "en":
+        return "English (write the entire report in English; do not use Chinese)"
+    if lang == "zh_hant":
+        return "繁體中文（全篇必須使用繁體，不要用簡體）"
+    return "简体中文（全篇必须使用简体）"
 
 
 def region_options(lang: str = "zh"):
     labels, ids, longitudes = [], [], []
     for rid, zh, en, lon in REGIONS:
         ids.append(rid)
-        labels.append(zh if lang == "zh" else en)
+        if lang == "en":
+            labels.append(en)
+        elif lang == "zh_hant":
+            from zh_convert import to_traditional
+
+            labels.append(to_traditional(zh))
+        else:
+            labels.append(zh)
         longitudes.append(lon)
     return labels, ids, longitudes
 
