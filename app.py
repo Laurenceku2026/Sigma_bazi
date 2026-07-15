@@ -3,17 +3,23 @@
 Sigma Fate - BaZi
 基于Streamlit + DeepSeek + Supabase + Stripe
 """
-import streamlit as st
-from datetime import datetime
-import uuid
+from __future__ import annotations
+
 import json
+import os
+import uuid
+from datetime import date, datetime
+from typing import Optional
+
+import streamlit as st
+from dotenv import load_dotenv
 
 # 导入自定义模块
 from bazi_engine import BaziEngine
 from report_generator import ReportGenerator
-from supabase_client import AppAccessDenied, SupabaseClient
 from stripe_payment import StripeClient
-from utils import render_wuxing_bars, format_bazi_display, generate_pdf_report
+from supabase_client import AppAccessDenied, SupabaseClient
+from utils import format_bazi_display, generate_pdf_report, render_wuxing_bars
 
 # --- 配置 ---
 st.set_page_config(
@@ -38,40 +44,72 @@ if 'birth_info' not in st.session_state:
 if 'app_user_synced' not in st.session_state:
     st.session_state.app_user_synced = False
 
-# --- 从环境变量读取配置 ---
-import os
-from dotenv import load_dotenv
+# --- 配置：本地 .env + Streamlit Cloud Secrets ---
 load_dotenv()
 
-SUPABASE_URL = os.getenv('SUPABASE_STOCK_URL', '')
-# Streamlit 服务端写库优先用 service_role；读/受限操作用 anon
-SUPABASE_SERVICE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')
-SUPABASE_ANON_KEY = os.getenv('SUPABASE_STOCK_ANON_KEY', '')
+
+def _cfg(name: str, default: str = '') -> str:
+    """优先读环境变量，其次 st.secrets（Streamlit Cloud）。"""
+    val = os.getenv(name)
+    if val:
+        return val
+    try:
+        if name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:
+        pass
+    return default
+
+
+SUPABASE_URL = _cfg('SUPABASE_STOCK_URL')
+SUPABASE_SERVICE_KEY = _cfg('SUPABASE_SERVICE_ROLE_KEY')
+SUPABASE_ANON_KEY = _cfg('SUPABASE_STOCK_ANON_KEY')
 SUPABASE_KEY = SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY
-APP_ID = os.getenv('APP_ID', 'sigma_fate_v1')
-SUPABASE_APP_SCHEMA = os.getenv('SUPABASE_APP_SCHEMA', 'app_sigma_fate')
-DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', '')
-DEEPSEEK_BASE_URL = os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')
-DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-v4-flash')
-STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
-STRIPE_PRICE_MONTHLY = os.getenv('STRIPE_PRICE_MONTHLY', '')
-STRIPE_PRICE_QUARTERLY = os.getenv('STRIPE_PRICE_QUARTERLY', '')
+APP_ID = _cfg('APP_ID', 'sigma_fate_v1')
+SUPABASE_APP_SCHEMA = _cfg('SUPABASE_APP_SCHEMA', 'app_sigma_fate')
+DEEPSEEK_API_KEY = _cfg('DEEPSEEK_API_KEY')
+DEEPSEEK_BASE_URL = _cfg('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')
+DEEPSEEK_MODEL = _cfg('DEEPSEEK_MODEL', 'deepseek-v4-flash')
+STRIPE_SECRET_KEY = _cfg('STRIPE_SECRET_KEY')
+STRIPE_PRICE_MONTHLY = _cfg('STRIPE_PRICE_MONTHLY')
+STRIPE_PRICE_QUARTERLY = _cfg('STRIPE_PRICE_QUARTERLY')
 
-# 初始化客户端（schema + app_id 双重隔离，不触碰同项目其他 App）
+# 初始化客户端（失败时不影响排盘 UI 启动）
 supabase_client = None
+stripe_client = None
+report_gen = None
+_init_errors = []
+
 if SUPABASE_URL and SUPABASE_KEY:
-    supabase_client = SupabaseClient(
-        SUPABASE_URL,
-        SUPABASE_KEY,
-        app_id=APP_ID,
-        schema=SUPABASE_APP_SCHEMA,
-        use_service_role=bool(SUPABASE_SERVICE_KEY),
-    )
-stripe_client = StripeClient(STRIPE_SECRET_KEY, STRIPE_PRICE_MONTHLY, STRIPE_PRICE_QUARTERLY) if STRIPE_SECRET_KEY else None
-report_gen = ReportGenerator(DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL) if DEEPSEEK_API_KEY else None
+    try:
+        supabase_client = SupabaseClient(
+            SUPABASE_URL,
+            SUPABASE_KEY,
+            app_id=APP_ID,
+            schema=SUPABASE_APP_SCHEMA,
+            use_service_role=bool(SUPABASE_SERVICE_KEY),
+        )
+    except Exception as e:
+        _init_errors.append(f'Supabase: {e}')
+
+if STRIPE_SECRET_KEY:
+    try:
+        stripe_client = StripeClient(
+            STRIPE_SECRET_KEY, STRIPE_PRICE_MONTHLY, STRIPE_PRICE_QUARTERLY
+        )
+    except Exception as e:
+        _init_errors.append(f'Stripe: {e}')
+
+if DEEPSEEK_API_KEY:
+    try:
+        report_gen = ReportGenerator(
+            DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+        )
+    except Exception as e:
+        _init_errors.append(f'DeepSeek: {e}')
 
 
-def sync_app_user(email: str | None = None) -> dict | None:
+def sync_app_user(email: Optional[str] = None):
     """在本 App schema 内登记/校验用户，与同项目其他 App 用户互不干扰。"""
     if not supabase_client:
         return None
@@ -82,7 +120,6 @@ def sync_app_user(email: str | None = None) -> dict | None:
             subscription_tier=st.session_state.subscription_tier,
             metadata={'source': 'streamlit', 'app': APP_ID},
         )
-        # 以本 App 数据库中的订阅档为准（避免串用其他 App 的会员状态）
         db_tier = profile.get('subscription_tier')
         if db_tier in ('free', 'monthly', 'quarterly', 'annual'):
             st.session_state.subscription_tier = db_tier
@@ -96,9 +133,9 @@ def sync_app_user(email: str | None = None) -> dict | None:
         return None
 
 
-# 会话启动时确保本 App 用户档案存在
-if supabase_client and not st.session_state.get('app_user_synced'):
-    sync_app_user()
+# 侧边栏启动提示用：不在首屏强行打 DB，避免密钥错误导致整页挂掉
+if _init_errors:
+    st.session_state['_init_errors'] = _init_errors
 
 # --- 侧边栏 - 品牌与导航 ---
 with st.sidebar:
@@ -131,6 +168,12 @@ with st.sidebar:
     
     if st.session_state.subscription_tier == 'free':
         st.warning("⚠️ 免费版仅可查看基本命盘，完整报告需订阅")
+
+    if st.session_state.get('_init_errors'):
+        with st.expander("⚠️ 外部服务初始化提示", expanded=False):
+            for err in st.session_state['_init_errors']:
+                st.caption(err)
+            st.caption("排盘功能仍可本地使用；请检查 Secrets / .env 中的 API Key。")
     
     st.markdown("---")
     
@@ -162,8 +205,8 @@ with tab1:
         
         birth_date = st.date_input(
             "📅 出生日期",
-            value=datetime(1990, 1, 1),
-            max_value=datetime.now()
+            value=date(1990, 1, 1),
+            max_value=date.today()
         )
     
     with col2:
@@ -374,7 +417,8 @@ with tab2:
             
             for bar in bars:
                 st.markdown(f"{bar['wuxing']}：{'■' * int(bar['pct']/10)} ({bar['count']})")
-                st.progress(bar['pct']/100, text=f"{bar['pct']:.0f}%")
+                st.progress(min(max(bar['pct'] / 100.0, 0.0), 1.0))
+                st.caption(f"{bar['pct']:.0f}%")
         
         # 大运
         st.markdown("---")
