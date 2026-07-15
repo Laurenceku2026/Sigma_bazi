@@ -67,7 +67,17 @@ def render_admin_page(lang: str, supabase_client) -> None:
         st.warning(t("no_users", lang))
         return
 
+    st.caption(f"schema=`{supabase_client.schema}` · app_id=`{supabase_client.app_id}`")
     users: List[Dict] = supabase_client.list_users()
+    if getattr(supabase_client, "last_error", None):
+        st.error(f"读取用户失败：{supabase_client.last_error}")
+        st.info(
+            "请确认：1) 已执行 sql/001 与 002；2) API Exposed schemas 含 app_sigma_fate；"
+            "3) Secrets 中 SUPABASE_STOCK_URL 与 SERVICE_ROLE 属于同一项目。"
+            if lang == "zh"
+            else "Check SQL migration, exposed schema app_sigma_fate, and matching Supabase URL/key."
+        )
+
     paid = [
         u
         for u in users

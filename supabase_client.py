@@ -45,6 +45,7 @@ class SupabaseClient:
 
         options = ClientOptions(schema=self.schema)
         self.client: Client = create_client(url, key, options=options)
+        self.last_error: Optional[str] = None
 
     # ---------- 内部工具 ----------
 
@@ -60,13 +61,9 @@ class SupabaseClient:
         payload["app_id"] = self.app_id
         return payload
 
-    def _parse_json_field(self, value: Any) -> Any:
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except json.JSONDecodeError:
-                return value
-        return value
+    def _set_error(self, where: str, err: Exception) -> None:
+        self.last_error = f"{where}: {err}"
+        print(self.last_error)
 
     # ---------- 登录 / 权限校验 ----------
 
@@ -104,6 +101,76 @@ class SupabaseClient:
 
         return user
 
+    def register_by_email(
+        self,
+        email: str,
+        session_user_id: str,
+        *,
+        subscription_tier: str = "free",
+        metadata: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """
+        邮箱注册/登录（无需密码）。
+        - 若邮箱已存在：返回该用户并刷新 last_login
+        - 若不存在：创建新用户并读回校验
+        """
+        self.last_error = None
+        email = (email or "").strip().lower()
+        if not email:
+            raise ValueError("email required")
+
+        existing = self.get_user_by_email(email)
+        if existing:
+            try:
+                self._table("users").update(
+                    {
+                        "last_login_at": self._now(),
+                        "updated_at": self._now(),
+                        "email_confirmed": True,
+                    }
+                ).eq("user_id", existing["user_id"]).eq("app_id", self.app_id).execute()
+            except Exception as e:
+                self._set_error("register_by_email.update", e)
+            return existing
+
+        data = self._with_app_id(
+            {
+                "user_id": session_user_id,
+                "auth_user_id": session_user_id,
+                "email": email,
+                "subscription_tier": subscription_tier if subscription_tier in (
+                    "free", "silver", "gold", "diamond", "monthly", "quarterly", "annual"
+                ) else "free",
+                "free_trials_remaining": 30,
+                "email_confirmed": True,
+                "metadata": metadata or {"source": "email_register"},
+                "created_at": self._now(),
+                "updated_at": self._now(),
+                "last_login_at": self._now(),
+            }
+        )
+        try:
+            result = (
+                self._table("users")
+                .upsert(data, on_conflict="user_id,app_id")
+                .execute()
+            )
+            saved = result.data[0] if result.data else None
+        except Exception as e:
+            self._set_error("register_by_email.insert", e)
+            raise
+
+        # 读回校验：管理员列表依赖库中真实记录
+        verified = self.get_user_by_email(email) or self.get_user(session_user_id)
+        if not verified:
+            err = (
+                "用户写入后读回失败。请确认已执行 sql/001 且 "
+                "Exposed schemas 含 app_sigma_fate，Secrets 中 URL/Key 为同一项目。"
+            )
+            self.last_error = err
+            raise RuntimeError(err + (f" | {self.last_error}" if saved is None else ""))
+        return verified
+
     def ensure_app_user(
         self,
         user_id: str,
@@ -115,29 +182,33 @@ class SupabaseClient:
     ) -> Dict[str, Any]:
         """
         登录入口：在本 App 内创建或同步用户。
-
-        - 不会读取/写入其他 schema
-        - 始终强制 app_id = 当前 App
-        - 若已存在则更新 email / metadata，并返回本 App 档案
         """
+        self.last_error = None
+        if email:
+            try:
+                return self.register_by_email(
+                    email,
+                    user_id,
+                    subscription_tier=subscription_tier,
+                    metadata=metadata,
+                )
+            except Exception:
+                # 已设置 last_error；继续尝试 user_id 路径
+                pass
+
         existing = self.get_user(user_id)
         if existing and existing.get("app_id") == self.app_id:
-            # 轻量同步：刷新 email / updated_at，不改订阅档（除非显式传入且不同）
-            updates: Dict[str, Any] = {"updated_at": self._now()}
+            updates: Dict[str, Any] = {"updated_at": self._now(), "last_login_at": self._now()}
             if email:
                 updates["email"] = email
             if metadata is not None:
                 updates["metadata"] = metadata
-            if subscription_tier and subscription_tier != existing.get("subscription_tier"):
-                # 仅当本地 session 明确要求同步时由调用方走 update_subscription
-                pass
-            if len(updates) > 1:
-                try:
-                    self._table("users").update(updates).eq(
-                        "user_id", user_id
-                    ).eq("app_id", self.app_id).execute()
-                except Exception as e:
-                    print(f"ensure_app_user sync error: {e}")
+            try:
+                self._table("users").update(updates).eq(
+                    "user_id", user_id
+                ).eq("app_id", self.app_id).execute()
+            except Exception as e:
+                self._set_error("ensure_app_user sync", e)
             return {**existing, **updates}
 
         return self.create_or_update_user(
@@ -159,15 +230,21 @@ class SupabaseClient:
         auth_user_id: Optional[str] = None,
     ) -> Dict:
         """创建或更新本 App 用户（upsert on user_id + app_id）。"""
+        self.last_error = None
+        tier = subscription_tier if subscription_tier in (
+            "free", "silver", "gold", "diamond", "monthly", "quarterly", "annual"
+        ) else "free"
         data = self._with_app_id(
             {
                 "user_id": user_id,
                 "auth_user_id": auth_user_id or user_id,
                 "email": email,
-                "subscription_tier": subscription_tier,
+                "subscription_tier": tier,
                 "free_trials_remaining": 30,
                 "metadata": metadata or {},
+                "created_at": self._now(),
                 "updated_at": self._now(),
+                "last_login_at": self._now(),
             }
         )
 
@@ -177,10 +254,17 @@ class SupabaseClient:
                 .upsert(data, on_conflict="user_id,app_id")
                 .execute()
             )
-            return result.data[0] if result.data else data
-        except Exception as e:
-            print(f"User upsert error: {e}")
+            if result.data:
+                return result.data[0]
+            # upsert 无返回时再查一次
+            verified = self.get_user(user_id) or self.get_user_by_email(email)
+            if verified:
+                return verified
+            self.last_error = "upsert 无返回数据且读回为空"
             return data
+        except Exception as e:
+            self._set_error("User upsert", e)
+            raise
 
     def get_user(self, user_id: str) -> Optional[Dict]:
         try:
@@ -194,7 +278,7 @@ class SupabaseClient:
             )
             return result.data[0] if result.data else None
         except Exception as e:
-            print(f"Get user error: {e}")
+            self._set_error("Get user", e)
             return None
 
     def get_user_by_auth_id(self, auth_user_id: str) -> Optional[Dict]:
@@ -209,7 +293,7 @@ class SupabaseClient:
             )
             return result.data[0] if result.data else None
         except Exception as e:
-            print(f"Get user by auth_id error: {e}")
+            self._set_error("Get user by auth_id", e)
             return None
 
     def get_user_by_email(self, email: str) -> Optional[Dict]:
@@ -217,14 +301,24 @@ class SupabaseClient:
             result = (
                 self._table("users")
                 .select("*")
-                .eq("email", email)
+                .eq("email", email.strip().lower() if email else email)
                 .eq("app_id", self.app_id)
                 .limit(1)
                 .execute()
             )
+            # 兼容大小写存错：再试原样
+            if not result.data and email:
+                result = (
+                    self._table("users")
+                    .select("*")
+                    .ilike("email", email.strip())
+                    .eq("app_id", self.app_id)
+                    .limit(1)
+                    .execute()
+                )
             return result.data[0] if result.data else None
         except Exception as e:
-            print(f"Get user by email error: {e}")
+            self._set_error("Get user by email", e)
             return None
 
     def update_subscription(
@@ -295,6 +389,7 @@ class SupabaseClient:
     # ---------- 管理员：用户列表 / 订阅 / 次数 ----------
 
     def list_users(self, limit: int = 500) -> List[Dict]:
+        self.last_error = None
         try:
             result = (
                 self._table("users")
@@ -306,8 +401,20 @@ class SupabaseClient:
             )
             return result.data or []
         except Exception as e:
-            print(f"List users error: {e}")
-            return []
+            self._set_error("List users", e)
+            # created_at 排序失败时降级
+            try:
+                result = (
+                    self._table("users")
+                    .select("*")
+                    .eq("app_id", self.app_id)
+                    .limit(limit)
+                    .execute()
+                )
+                return result.data or []
+            except Exception as e2:
+                self._set_error("List users fallback", e2)
+                return []
 
     def admin_reset_free_trials(self, default_trials: int = 30) -> int:
         """重置所有 free 用户次数，返回更新条数。"""

@@ -129,23 +129,37 @@ def is_registered() -> bool:
 
 def sync_app_user(email: Optional[str] = None):
     if not supabase_client:
+        st.warning("数据库未连接，用户不会出现在管理员列表。请检查 Secrets。")
         return None
     try:
-        profile = supabase_client.ensure_app_user(
-            user_id=st.session_state.user_id,
-            email=email or st.session_state.user_email,
-            subscription_tier=st.session_state.subscription_tier,
-            metadata={"source": "streamlit", "app": APP_ID},
-        )
-        if email:
-            supabase_client.admin_update_user(st.session_state.user_id, email_confirmed=True)
+        use_email = (email or st.session_state.user_email or "").strip()
+        if use_email:
+            profile = supabase_client.register_by_email(
+                use_email,
+                st.session_state.user_id,
+                subscription_tier=st.session_state.subscription_tier or "free",
+                metadata={"source": "streamlit", "app": APP_ID},
+            )
+        else:
+            profile = supabase_client.ensure_app_user(
+                user_id=st.session_state.user_id,
+                email=None,
+                subscription_tier=st.session_state.subscription_tier,
+                metadata={"source": "streamlit", "app": APP_ID},
+            )
+        # 与数据库用户 id 对齐
+        if profile.get("user_id"):
+            st.session_state.user_id = profile["user_id"]
+        if profile.get("email"):
+            st.session_state.user_email = profile["email"]
         db_tier = profile.get("subscription_tier")
         if db_tier in ("free", "silver", "gold", "diamond", "monthly", "quarterly", "annual"):
             st.session_state.subscription_tier = db_tier
         st.session_state.app_user_synced = True
         return profile
     except Exception as e:
-        st.warning(str(e))
+        detail = getattr(supabase_client, "last_error", None) or str(e)
+        st.error(f"用户同步失败（管理员将看不到此人）：{detail}")
         return None
 
 
