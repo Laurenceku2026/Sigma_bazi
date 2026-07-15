@@ -182,14 +182,18 @@ def run_bazi(form: Dict[str, Any]):
             pass
 
 
-def render_membership_plans():
+def render_membership_plans(key_prefix: str = "main"):
     st.markdown("---")
     st.markdown(f"### {t('membership_heading', lang)}")
     c1, c2, c3 = st.columns(3)
     plans = [("silver", "btn_silver"), ("gold", "btn_gold"), ("diamond", "btn_diamond")]
     for col, (plan_id, label_key) in zip((c1, c2, c3), plans):
         with col:
-            if st.button(t(label_key, lang), key=f"plan_{plan_id}", use_container_width=True):
+            if st.button(
+                t(label_key, lang),
+                key=f"{key_prefix}_plan_{plan_id}",
+                use_container_width=True,
+            ):
                 st.session_state.selected_plan = plan_id
                 st.rerun()
 
@@ -204,14 +208,19 @@ def render_membership_plans():
                 session = stripe_client.create_checkout_session(
                     st.session_state.user_id, email, plan
                 )
-                st.link_button(t("pay_now", lang), session.url, use_container_width=True)
+                st.link_button(
+                    t("pay_now", lang),
+                    session.url,
+                    use_container_width=True,
+                    key=f"{key_prefix}_pay_{plan}",
+                )
             except Exception as e:
                 st.error(f"{t('pay_error', lang)}{e}")
         else:
             st.warning(t("pay_unconfigured", lang))
 
 
-def render_generate_report_button():
+def render_generate_report_button(key_prefix: str = "main"):
     tier = st.session_state.subscription_tier
     profile = supabase_client.get_user(st.session_state.user_id) if supabase_client else None
     trials = int((profile or {}).get("free_trials_remaining") or 0)
@@ -221,7 +230,10 @@ def render_generate_report_button():
         st.caption(f"{t('remaining_reports', lang)}：{trials if tier != 'diamond' else '∞'}")
 
     if tier in PAID_TIERS and can_generate_report(tier, trials, expires) and report_gen:
-        if st.button("📄 " + ("生成完整报告" if lang == "zh" else "Generate full report"), key="gen_full_report"):
+        if st.button(
+            "📄 " + ("生成完整报告" if lang == "zh" else "Generate full report"),
+            key=f"{key_prefix}_gen_full_report",
+        ):
             with st.spinner(t("generating", lang)):
                 try:
                     if supabase_client and not supabase_client.consume_report_quota(st.session_state.user_id):
@@ -388,8 +400,8 @@ with tab1:
         st.markdown("---")
         st.markdown(f"## {t('chart_section', lang)}")
         render_bazi_chart(st.session_state.bazi_data, lang)
-        render_generate_report_button()
-        render_membership_plans()
+        render_generate_report_button("tab_input")
+        render_membership_plans("tab_input")
 
 # ========== Tab 2 ==========
 with tab2:
@@ -405,7 +417,7 @@ with tab3:
         st.warning(t("locked_report", lang))
         st.markdown(f"### {t('unlock_heading', lang)}")
         st.markdown(t("unlock_body", lang))
-        render_membership_plans()
+        render_membership_plans("tab_report")
     else:
         report = st.session_state.report_content
         st.markdown(f"### {t('your_report', lang)}")
