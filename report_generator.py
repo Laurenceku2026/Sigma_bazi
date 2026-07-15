@@ -26,12 +26,14 @@ class ReportGenerator:
     ]
 
     PLAIN_SECTION = (
-        "【必含结构】每一页 content 必须包含两段，用小标题分隔：\n"
-        "1)「专业解读」：可用命理术语，约 250～350 字；\n"
-        "2)「白话说明」：至少再写 150～220 字，用日常生活语言告诉用户「意味着什么、接下来怎么做」。\n"
-        "「白话说明」严禁出现这些词：十神、正官、七杀、食神、伤官、正印、偏印、比肩、劫财、正财、偏财、"
-        "刑冲合害、干支、天干、地支、藏干、大运、流年、流月、神煞、旺衰、通根、调候、格局、用神、忌神。"
-        "改用「事业/钱/感情/健康/人际关系/时机/要注意什么」等普通人听得懂的说法。"
+        "【必含结构·顺序不可颠倒】每一页 content 必须先写专业术语、最后写白话：\n"
+        "1)「专业解读」（开篇）：可用命理术语，约 250～350 字；\n"
+        "2) 专业解读结束后必须空两行（连续两个换行），再写「白话说明」；\n"
+        "3)「白话说明」（必须放在该页最后）：至少 180～250 字，用日常生活语言复述"
+        "「意味着什么、接下来怎么做」，先结论再 2～3 条可执行建议。\n"
+        "「白话说明」严禁出现：十神、正官、七杀、食神、伤官、正印、偏印、比肩、劫财、正财、偏财、"
+        "刑冲合害、干支、天干、地支、藏干、大运、流年、流月、神煞、旺衰、通根、调候、格局、用神、忌神。\n"
+        "切记：术语在前，白话在后，中间必须隔行分段，方便用户快速找到白话。"
     )
 
     def __init__(self, api_key, base_url, model):
@@ -103,11 +105,11 @@ class ReportGenerator:
 
 {self.PLAIN_SECTION}
 
-每页 content 写成纯文本（可用换行），总字数约 400～550 汉字，且必须同时有「专业解读」与「白话说明」两段；
-白话说明要像朋友聊天一样，先说结论，再给 2～3 条具体小建议（可执行）。
+每页 content 写成纯文本，总字数约 400～550 汉字；
+顺序必须是：先「专业解读」，空两行后，再「白话说明」（白话必须在该页最后）。
 
-输出格式示例：
-{{"{keys[0]}": {{"title": "...", "content": "专业解读\\n...\\n\\n白话说明\\n..."}}{''.join([f', "{k}": {{"title": "...", "content": "..."}}' for k in keys[1:]])}}}
+输出格式示例（注意白话前的空行）：
+{{"{keys[0]}": {{"title": "...", "content": "专业解读\\n（术语正文）\\n\\n\\n白话说明\\n（好懂的结论与建议）"}}{''.join([f', "{k}": {{"title": "...", "content": "..."}}' for k in keys[1:]])}}}
 """
         raw = self._call_deepseek(prompt)
         parsed = self._parse_json_loose(raw)
@@ -115,19 +117,42 @@ class ReportGenerator:
         for key, title, _ in batch:
             item = parsed.get(key) if isinstance(parsed, dict) else None
             if isinstance(item, dict):
-                content = str(item.get("content") or "").strip()
+                content = self._normalize_page_content(str(item.get("content") or "").strip())
                 out[key] = {
                     "title": item.get("title") or title,
                     "content": content or f"（{title}内容为空，请重试）",
                 }
             elif isinstance(item, str) and item.strip():
-                out[key] = {"title": title, "content": item.strip()}
+                out[key] = {"title": title, "content": self._normalize_page_content(item.strip())}
             else:
                 out[key] = {
                     "title": title,
                     "content": (raw[:1200] if key == keys[0] and raw else f"（{title}生成失败，请重试）"),
                 }
         return out
+
+    def _normalize_page_content(self, content: str) -> str:
+        """保证「白话说明」在页尾，且与专业段之间有空行分隔。"""
+        if not content:
+            return content
+        # 统一换行
+        text = content.replace("\r\n", "\n").replace("\r", "\n").strip()
+        # 在「白话说明」标题前强制空两行
+        text = re.sub(
+            r"\n*\s*(白话说明|【白话说明】|◆白话说明)",
+            r"\n\n\n白话说明",
+            text,
+            count=1,
+        )
+        # 若模型把白话写在前面：调换两段
+        plain_m = re.search(r"白话说明\s*\n([\s\S]+?)(?=\n+专业解读|$)", text)
+        pro_m = re.search(r"专业解读\s*\n([\s\S]+?)(?=\n+白话说明|$)", text)
+        if plain_m and pro_m and plain_m.start() < pro_m.start():
+            text = (
+                f"专业解读\n{pro_m.group(1).strip()}"
+                f"\n\n\n白话说明\n{plain_m.group(1).strip()}"
+            )
+        return text.strip()
 
     def _call_deepseek(self, prompt: str) -> str:
         headers = {
@@ -140,7 +165,8 @@ class ReportGenerator:
                 {
                     "role": "system",
                     "content": (
-                        "你是面向普通人的命理顾问：先写准专业分析，再用零术语白话把同一观点讲清楚。"
+                        "你是面向普通人的命理顾问：每页先写「专业解读」，"
+                        "空两行后再写页尾的「白话说明」（零术语）。"
                         "只输出合法 JSON 对象，不要代码块标记。"
                     ),
                 },
