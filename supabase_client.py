@@ -165,6 +165,7 @@ class SupabaseClient:
                 "auth_user_id": auth_user_id or user_id,
                 "email": email,
                 "subscription_tier": subscription_tier,
+                "free_trials_remaining": 30,
                 "metadata": metadata or {},
                 "updated_at": self._now(),
             }
@@ -257,6 +258,96 @@ class SupabaseClient:
         if not user or user.get("app_id") != self.app_id:
             return False
         return user.get("subscription_tier") in ("monthly", "quarterly", "annual")
+
+    # ---------- 管理员：用户列表 / 订阅 / 次数 ----------
+
+    def list_users(self, limit: int = 500) -> List[Dict]:
+        try:
+            result = (
+                self._table("users")
+                .select("*")
+                .eq("app_id", self.app_id)
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return result.data or []
+        except Exception as e:
+            print(f"List users error: {e}")
+            return []
+
+    def admin_update_user(
+        self,
+        user_id: str,
+        *,
+        subscription_tier: Optional[str] = None,
+        free_trials_remaining: Optional[int] = None,
+        subscription_expires_at: Optional[str] = None,
+        email_confirmed: Optional[bool] = None,
+    ) -> bool:
+        try:
+            data: Dict[str, Any] = {"updated_at": self._now()}
+            if subscription_tier is not None:
+                data["subscription_tier"] = subscription_tier
+            if free_trials_remaining is not None:
+                data["free_trials_remaining"] = int(free_trials_remaining)
+            if subscription_expires_at is not None:
+                data["subscription_expires_at"] = subscription_expires_at
+            if email_confirmed is not None:
+                data["email_confirmed"] = email_confirmed
+
+            result = (
+                self._table("users")
+                .update(data)
+                .eq("user_id", user_id)
+                .eq("app_id", self.app_id)
+                .execute()
+            )
+            return bool(result.data)
+        except Exception as e:
+            print(f"Admin update user error: {e}")
+            return False
+
+    def admin_delete_user(self, user_id: str) -> bool:
+        try:
+            # 先删关联报告与支付，再删用户
+            self._table("reports").delete().eq("user_id", user_id).eq(
+                "app_id", self.app_id
+            ).execute()
+            self._table("payments").delete().eq("user_id", user_id).eq(
+                "app_id", self.app_id
+            ).execute()
+            result = (
+                self._table("users")
+                .delete()
+                .eq("user_id", user_id)
+                .eq("app_id", self.app_id)
+                .execute()
+            )
+            return bool(result.data)
+        except Exception as e:
+            print(f"Admin delete user error: {e}")
+            return False
+
+    def admin_reset_free_trials(self, default_trials: int = 30) -> int:
+        """重置所有 free 用户次数，返回更新条数。"""
+        try:
+            result = (
+                self._table("users")
+                .update(
+                    {
+                        "free_trials_remaining": default_trials,
+                        "updated_at": self._now(),
+                    }
+                )
+                .eq("app_id", self.app_id)
+                .eq("subscription_tier", "free")
+                .execute()
+            )
+            return len(result.data or [])
+        except Exception as e:
+            print(f"Admin reset free trials error: {e}")
+            return 0
 
     # ---------- 报告 ----------
 

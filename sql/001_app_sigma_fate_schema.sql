@@ -12,7 +12,7 @@ CREATE SCHEMA IF NOT EXISTS app_sigma_fate;
 -- ---------- 建表（仅在不存在时创建；已存在的旧表靠下面 ALTER 补列） ----------
 CREATE TABLE IF NOT EXISTS app_sigma_fate.users (
     id                  BIGSERIAL PRIMARY KEY,
-    user_id             TEXT NOT NULL,
+    user_i d             TEXT NOT NULL,
     auth_user_id        TEXT,
     email               TEXT,
     app_id              TEXT NOT NULL DEFAULT 'sigma_fate_v1',
@@ -125,6 +125,17 @@ SET app_id = COALESCE(NULLIF(app_id, ''), 'sigma_fate_v1'),
     metadata = COALESCE(metadata, '{}'::jsonb),
     created_at = COALESCE(created_at, NOW()),
     action = COALESCE(NULLIF(action, ''), 'unknown');
+
+-- 管理员用户管理字段
+ALTER TABLE app_sigma_fate.users
+    ADD COLUMN IF NOT EXISTS free_trials_remaining INTEGER DEFAULT 30,
+    ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS email_confirmed BOOLEAN DEFAULT FALSE;
+
+UPDATE app_sigma_fate.users
+SET free_trials_remaining = COALESCE(free_trials_remaining, 30)
+WHERE free_trials_remaining IS NULL;
 
 ALTER TABLE app_sigma_fate.users
     ALTER COLUMN app_id SET DEFAULT 'sigma_fate_v1',
