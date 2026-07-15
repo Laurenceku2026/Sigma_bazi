@@ -771,21 +771,19 @@ with tab3:
             pk = f"page{i}"
             with st.expander(labels[i - 1] if i <= len(labels) else pk, expanded=(i == 1)):
                 if pk in report:
-                    body = report[pk].get("content", "") or ""
-                    # 白话与术语之间加可见分隔，避免挤在一起
-                    body = re.sub(
-                        r"\n*\s*(白话说明)",
-                        r"\n\n---\n\n**\1**",
-                        body,
-                        count=1,
+                    page = report[pk]
+                    if not isinstance(page, dict):
+                        page = {"content": str(page), "title": labels[i - 1]}
+                    # 旧报告只有 content 长文：拆成结构再渲染
+                    if not page.get("professional") and page.get("content"):
+                        page = ReportGenerator._split_legacy_content(
+                            str(page.get("content")),
+                            page.get("title") or labels[i - 1],
+                        )
+                    st.markdown(
+                        ReportGenerator.render_page_html(page, lang),
+                        unsafe_allow_html=True,
                     )
-                    body = re.sub(
-                        r"^\s*(专业解读)",
-                        r"**\1**",
-                        body,
-                        count=1,
-                    )
-                    st.markdown(body)
         st.markdown("---")
         col_dl1, col_dl2 = st.columns(2)
         with col_dl1:
