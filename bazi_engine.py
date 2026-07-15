@@ -331,13 +331,29 @@ class BaziEngine:
     
     def get_summary(self):
         """获取命盘摘要"""
+        pillars = {}
+        for name, (gan, zhi) in self.bazi.items():
+            cangan = self.CANGAN.get(zhi, [])
+            pillars[name] = {
+                "gan": gan,
+                "zhi": zhi,
+                "gan_wx": self.WUXING_MAP.get(gan, ""),
+                "zhi_wx": self.WUXING_MAP.get(zhi, ""),
+                "gan_god": self.ten_gods.get(gan, ""),
+                "zhi_god": self.ten_gods.get(zhi, ""),
+                "cangan": [
+                    {"gan": g, "wx": self.WUXING_MAP.get(g, ""), "god": self.ten_gods.get(g, "")}
+                    for g in cangan
+                ],
+            }
         return {
-            'bazi': self.bazi,
-            'day_master': self.day_master,
-            'day_branch': self.day_branch,
-            'ten_gods': self.ten_gods,
-            'wuxing_stats': self.wuxing_stats,
-            'da_yun': self.da_yun,
-            'liu_nian': self.liu_nian,
-            'gender': self.gender
+            "bazi": self.bazi,
+            "pillars": pillars,
+            "day_master": self.day_master,
+            "day_branch": self.day_branch,
+            "ten_gods": self.ten_gods,
+            "wuxing_stats": self.wuxing_stats,
+            "da_yun": self.da_yun,
+            "liu_nian": self.liu_nian,
+            "gender": self.gender,
         }

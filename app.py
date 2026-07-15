@@ -41,6 +41,7 @@ for key, default in [
     ("show_register", False),
     ("pending_form", None),
     ("selected_plan", None),
+    ("show_join_membership", False),
 ]:
     if key == "user_id":
         if "user_id" not in st.session_state:
@@ -284,6 +285,20 @@ if st.session_state.show_admin:
 
 # --- 侧边栏 ---
 with st.sidebar:
+    # 顶部：已登录邮箱
+    if is_registered():
+        display_name = st.session_state.user_email.split("@")[0]
+        st.markdown(
+            f"<div style='padding:8px 10px;background:#f0f7ff;border-radius:8px;margin-bottom:8px;'>"
+            f"<div style='font-size:0.8rem;color:#666;'>{'已登录' if lang == 'zh' else 'Signed in'}</div>"
+            f"<div style='font-weight:700;color:#1565C0;'>👤 {display_name}</div>"
+            f"<div style='font-size:0.75rem;color:#888;'>{st.session_state.user_email}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption("尚未注册" if lang == "zh" else "Not registered")
+
     st.markdown(f"# {t('sidebar_brand', lang)}\n## Sigma Fate · BaZi")
     st.markdown("---")
     st.markdown(f"### {t('sidebar_about', lang)}")
@@ -296,10 +311,17 @@ with st.sidebar:
         "diamond": t("tier_diamond", lang),
     }
     st.info(f"{t('current_status', lang)}：**{tier_labels.get(st.session_state.subscription_tier, t('tier_free', lang))}**")
-    if is_registered():
-        st.caption(f"{t('registered_as', lang)}: {st.session_state.user_email}")
     if st.session_state.subscription_tier == "free":
         st.warning(t("free_warning", lang))
+
+    # 加入会员
+    join_label = "💎 加入会员" if lang == "zh" else "💎 Join Membership"
+    if st.button(join_label, key="sidebar_join_membership", use_container_width=True, type="primary"):
+        st.session_state.show_join_membership = True
+        if not is_registered():
+            st.session_state.show_register = True
+        st.rerun()
+
     if st.session_state.get("_init_errors"):
         with st.expander(f"⚠️ {t('init_errors', lang)}", expanded=False):
             for err in st.session_state["_init_errors"]:
@@ -312,6 +334,33 @@ with st.sidebar:
 
 st.title(t("app_title", lang))
 st.markdown(f"*{t('app_subtitle', lang)}*")
+
+# --- 侧边栏「加入会员」：主区弹注册 + 三档支付 ---
+if st.session_state.get("show_join_membership"):
+    with st.container(border=True):
+        st.markdown(f"### {join_label}")
+        if not is_registered():
+            st.caption(t("register_caption", lang) + ("（无需密码）" if lang == "zh" else " (no password required)"))
+            join_email = st.text_input(
+                t("email", lang),
+                placeholder=t("email_ph", lang),
+                key="join_register_email",
+            )
+            if st.button(t("register_btn", lang), key="join_do_register", type="primary"):
+                if not valid_email(join_email):
+                    st.error(t("need_register", lang))
+                else:
+                    st.session_state.user_email = join_email.strip()
+                    sync_app_user(join_email.strip())
+                    st.session_state.show_register = False
+                    st.success(t("register_ok", lang))
+                    st.rerun()
+        else:
+            st.caption(f"{t('registered_as', lang)}: {st.session_state.user_email}")
+            render_membership_plans("sidebar_join")
+            if st.button("关闭" if lang == "zh" else "Close", key="close_join_panel"):
+                st.session_state.show_join_membership = False
+                st.rerun()
 
 tab1, tab2, tab3 = st.tabs([t("tab_input", lang), t("tab_chart", lang), t("tab_report", lang)])
 
@@ -379,7 +428,7 @@ with tab1:
     if st.session_state.show_register and not is_registered():
         st.markdown("---")
         st.markdown(f"### {t('register_heading', lang)}")
-        st.caption(t("register_caption", lang))
+        st.caption(t("register_caption", lang) + ("（无需密码，仅邮箱即可）" if lang == "zh" else " (email only, no password)"))
         reg_email = st.text_input(t("email", lang), placeholder=t("email_ph", lang), key="register_email")
         if st.button(t("register_btn", lang), type="primary", use_container_width=True, key="do_register"):
             if not valid_email(reg_email):
