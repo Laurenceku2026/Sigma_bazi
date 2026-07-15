@@ -780,6 +780,15 @@ with tab3:
                             str(page.get("content")),
                             page.get("title") or labels[i - 1],
                         )
+                    # 白话空壳/占位：在线补写（有 DeepSeek 时）
+                    if report_gen and report_gen._plain_missing(page.get("plain")):
+                        try:
+                            page = report_gen._ensure_plain_section(
+                                page, page.get("title") or labels[i - 1]
+                            )
+                            st.session_state.report_content[pk] = page
+                        except Exception:
+                            pass
                     st.markdown(
                         ReportGenerator.render_page_html(page, lang),
                         unsafe_allow_html=True,

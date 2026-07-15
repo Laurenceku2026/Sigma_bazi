@@ -152,24 +152,127 @@ class ReportGenerator:
 """
         raw = self._call_deepseek(prompt)
         parsed = self._parse_json_loose(raw)
+        # 模型有时不包 page key，整段就是一页
+        if isinstance(parsed, dict) and key0 not in parsed:
+            if "professional" in parsed or "plain" in parsed or "content" in parsed:
+                parsed = {key0: parsed}
         out: Dict[str, Any] = {}
         for key, title, _ in batch:
             item = parsed.get(key) if isinstance(parsed, dict) else None
             page = self._coerce_page(item, title, raw if key == keys[0] else "")
+            page = self._ensure_plain_section(page, title)
             out[key] = page
         return out
 
+    def _plain_missing(self, plain: Any) -> bool:
+        if not isinstance(plain, dict):
+            return True
+        summary = str(plain.get("summary") or "").strip()
+        detail = str(plain.get("detail") or "").strip()
+        points = plain.get("points") or []
+        if any(x in summary for x in ("请重试", "见上方专业解读", "不完整", "生成失败")):
+            return True
+        if len(summary) < 6 and len(detail) < 20 and not points:
+            return True
+        return False
+
+    def _ensure_plain_section(self, page: Dict[str, Any], title: str) -> Dict[str, Any]:
+        """白话缺失时单独再请求一次，保证绿框一定有内容。"""
+        plain = page.get("plain") if isinstance(page.get("plain"), dict) else {}
+        if not self._plain_missing(plain):
+            page["content"] = ReportGenerator.build_content_markdown(page)
+            return page
+
+        pro_list = [str(p).strip() for p in (page.get("professional") or []) if str(p).strip()]
+        pro_text = "\n".join(pro_list)
+        if not pro_text or pro_text.startswith("（"):
+            page["plain"] = {
+                "summary": "这页内容暂时不完整。",
+                "points": ["请点击重新生成完整报告。", "生成后再查看白话说明。", "也可先看上方专业解读作参考。"],
+                "detail": "系统未能写出白话段落，重试生成通常可以一次修好。",
+            }
+            page["content"] = ReportGenerator.build_content_markdown(page)
+            return page
+
+        prompt = f"""你是翻译成大白话的助手。阅读下面「{title}」的专业命理解读，改写成普通人能懂的话。
+只输出 JSON 对象（不要代码块），格式严格为：
+{{"summary":"一句人话总结，不超过40字","points":["建议1","建议2","建议3"],"detail":"80到120字的白话解释，像朋友聊天"}}
+
+严禁出现这些词：{self.FORBIDDEN_PLAIN}
+不要提八字术语，只说工作/钱/感情/健康/人际/时机/注意什么。
+
+专业原文：
+{pro_text[:1800]}
+"""
+        try:
+            raw = self._call_deepseek(prompt)
+            parsed = self._parse_json_loose(raw)
+            if not isinstance(parsed, dict):
+                parsed = {}
+            # 兼容包了一层
+            if "plain" in parsed and isinstance(parsed["plain"], dict):
+                parsed = parsed["plain"]
+            pts = parsed.get("points") or []
+            if isinstance(pts, str):
+                pts = [p.strip() for p in re.split(r"[；;\n]+", pts) if p.strip()]
+            filled = {
+                "summary": str(parsed.get("summary") or "").strip(),
+                "points": [str(p).strip() for p in pts if str(p).strip()][:5],
+                "detail": str(parsed.get("detail") or "").strip(),
+            }
+            if self._plain_missing(filled):
+                # 最后兜底：从专业段抽第一句做人话摘要壳
+                first = re.split(r"[。！？]", pro_text)[0].strip()
+                filled = {
+                    "summary": (first[:36] + "…") if len(first) > 36 else (first or "先看这几条建议"),
+                    "points": [
+                        "先做一件最要紧、且短期内能完成的事。",
+                        "少同时开太多新计划，把精力放在一两件上。",
+                        "有不确定的决定，先缓冲几天再拍板。",
+                    ],
+                    "detail": (
+                        "上面的术语可以先跳过。简单说：这段话提醒你留意节奏和选择，"
+                        "别急着硬推；把重要事务排清楚，并给自己留一点调整空间。"
+                    ),
+                }
+            page["plain"] = filled
+        except Exception as e:
+            print(f"ensure_plain_section error: {e}")
+            page["plain"] = {
+                "summary": "先抓住「稳一点、清楚一点」就够了",
+                "points": [
+                    "重要决定不要当天硬推。",
+                    "优先处理最影响收入或关系的一件事。",
+                    "身体与心情不对时，先减负再冲刺。",
+                ],
+                "detail": "白话段自动补写时遇到问题，但不影响上方专业内容。建议重新生成一次报告。",
+            }
+        page["content"] = ReportGenerator.build_content_markdown(page)
+        return page
+
     def _coerce_page(self, item: Any, title: str, fallback_raw: str = "") -> Dict[str, Any]:
         if isinstance(item, str) and item.strip():
-            return ReportGenerator._split_legacy_content(item.strip(), title)
+            page = ReportGenerator._split_legacy_content(item.strip(), title)
+            return page
         if not isinstance(item, dict):
             msg = fallback_raw[:800] if fallback_raw else f"（{title}生成失败，请重试）"
             return {
                 "title": title,
                 "professional": [msg],
-                "plain": {"summary": "本页生成失败，请重试。", "points": [], "detail": ""},
+                "plain": {"summary": "", "points": [], "detail": ""},
                 "content": msg,
             }
+
+        # 兼容中文字段名
+        if "professional" not in item and item.get("专业解读"):
+            item = dict(item)
+            item["professional"] = item.get("专业解读")
+        if "plain" not in item:
+            for alt in ("白话说明", "白话", "plain_text", "baihua"):
+                if alt in item:
+                    item = dict(item)
+                    item["plain"] = item.get(alt)
+                    break
 
         pro = item.get("professional")
         if isinstance(pro, str):
@@ -187,28 +290,40 @@ class ReportGenerator:
                 "detail": plain_raw.strip(),
             }
         elif isinstance(plain_raw, dict):
-            pts = plain_raw.get("points") or []
+            pts = plain_raw.get("points") or plain_raw.get("建议") or plain_raw.get("怎么做") or []
             if isinstance(pts, str):
                 pts = [p.strip() for p in re.split(r"[；;\n]+", pts) if p.strip()]
             plain = {
-                "summary": str(plain_raw.get("summary") or "").strip(),
+                "summary": str(
+                    plain_raw.get("summary")
+                    or plain_raw.get("一句话")
+                    or plain_raw.get("总结")
+                    or ""
+                ).strip(),
                 "points": [str(p).strip() for p in pts if str(p).strip()][:5],
-                "detail": str(plain_raw.get("detail") or "").strip(),
+                "detail": str(
+                    plain_raw.get("detail")
+                    or plain_raw.get("说明")
+                    or plain_raw.get("解释")
+                    or ""
+                ).strip(),
             }
         else:
             plain = {"summary": "", "points": [], "detail": ""}
 
         # 兼容旧模型只返回 content
-        if not paragraphs and item.get("content"):
-            return ReportGenerator._split_legacy_content(str(item.get("content")), title)
+        if (not paragraphs or self._plain_missing(plain)) and item.get("content"):
+            legacy = ReportGenerator._split_legacy_content(str(item.get("content")), title)
+            if not paragraphs:
+                paragraphs = legacy.get("professional") or []
+            if self._plain_missing(plain):
+                plain = legacy.get("plain") or plain
 
         if not paragraphs:
             paragraphs = [f"（{title}专业解读缺失）"]
-        if not plain.get("summary") and not plain.get("detail"):
-            plain["summary"] = "本页白话说明不完整，建议结合专业段并重试生成。"
 
         page = {
-            "title": item.get("title") or title,
+            "title": item.get("title") or item.get("标题") or title,
             "professional": paragraphs,
             "plain": plain,
         }
@@ -219,33 +334,53 @@ class ReportGenerator:
     def _split_legacy_content(text: str, title: str) -> Dict[str, Any]:
         text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
         pro_part, plain_part = text, ""
-        m = re.search(r"(白话说明|【白话说明】)", text)
+        m = re.search(r"(#{1,6}\s*)?(白话说明|【白话说明】|\*\*白话说明\*\*)", text)
         if m:
             pro_part = text[: m.start()].strip()
             plain_part = text[m.end() :].strip()
-        pro_part = re.sub(r"^(专业解读|【专业解读】|####\s*专业解读)\s*", "", pro_part).strip()
-        plain_part = re.sub(r"^[:：\s]+", "", plain_part).strip()
-        paragraphs = ReportGenerator._split_paragraphs(pro_part) or ([pro_part] if pro_part else [])
+        pro_part = re.sub(r"^(#{1,6}\s*)?(专业解读|【专业解读】|\*\*专业解读\*\*)\s*", "", pro_part).strip()
+        pro_part = re.sub(r"^---+\s*", "", pro_part).strip()
+        plain_part = re.sub(r"^[:：\s\*]+", "", plain_part).strip()
+        plain_part = re.sub(r"^---+\s*", "", plain_part).strip()
+
+        # 解析「一句话」「怎么做」markdown
+        summary = ""
+        detail_lines = []
         points = []
         for line in plain_part.split("\n"):
-            line = line.strip()
-            if re.match(r"^([一二三四五六七八九十\d]+[\.、．]|[-•●*]|\d+\))\s*", line):
+            raw_line = line.strip()
+            if not raw_line:
+                continue
+            sm = re.match(r"^\*\*一句话[：:]*\*\*\s*(.+)$", raw_line)
+            if not sm:
+                sm = re.match(r"^一句话[：:]\s*(.+)$", raw_line)
+            if sm:
+                summary = sm.group(1).strip()
+                continue
+            if re.match(r"^\*\*怎么做\*\*", raw_line) or raw_line in ("怎么做", "怎么做："):
+                continue
+            if re.match(r"^([一二三四五六七八九十\d]+[\.、．]|[-•●*]|\d+\))\s*", raw_line):
                 points.append(
-                    re.sub(r"^([一二三四五六七八九十\d]+[\.、．]|[-•●*]|\d+\))\s*", "", line)
+                    re.sub(r"^([一二三四五六七八九十\d]+[\.、．]|[-•●*]|\d+\))\s*", "", raw_line)
                 )
-        # 从「怎么做」列表拆
-        if not points:
-            for line in plain_part.split("\n"):
-                line = line.strip()
-                if len(line) >= 8 and len(line) <= 60 and ("建议" in line or "可以" in line or "宜" in line):
-                    points.append(line)
+                continue
+            detail_lines.append(raw_line)
+
+        paragraphs = ReportGenerator._split_paragraphs(pro_part) or ([pro_part] if pro_part else [])
+        detail = "\n".join(detail_lines).strip()
+        if not summary and detail:
+            summary = detail.split("\n")[0][:40]
+        if not summary and not detail and not points:
+            # 无白话标记：先留空，交由 _ensure_plain_section 补写
+            summary, detail, points = "", "", []
+
         page = {
             "title": title,
             "professional": paragraphs or [f"（{title}）"],
             "plain": {
-                "summary": (plain_part.split("\n")[0][:60] if plain_part else "见上方专业解读，请重试生成以获得白话分段。"),
+                "summary": summary,
                 "points": points[:5],
-                "detail": plain_part,
+                "detail": detail,
             },
         }
         page["content"] = ReportGenerator.build_content_markdown(page)
