@@ -1,0 +1,12 @@
+streamlit>=1.28.0,<1.33.0
+supabase>=1.0.0,<3.0.0
+stripe>=5.0.0,<8.0.0
+openai>=1.0.0,<2.0.0
+python-dotenv>=1.0.0
+pandas>=2.0.0
+plotly>=5.0.0
+pytz>=2023.0
+pillow>=10.0.0
+reportlab>=4.0.0
+lunardate>=0.2.0
+streamlit-pdf-viewer>=0.0.20

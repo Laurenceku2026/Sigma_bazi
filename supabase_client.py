@@ -1,0 +1,446 @@
+"""
+Supabase 客户端 — 同一项目下多 App 隔离
+
+隔离策略：
+1. 物理隔离：专属 schema（默认 app_sigma_fate），不读写其他 App 的表
+2. 逻辑隔离：所有行写入/查询都带 app_id
+3. 登录校验：ensure_app_user / verify_app_access 只认本 App 用户
+"""
+from __future__ import annotations
+
+import json
+import os
+import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from supabase import Client, ClientOptions, create_client
+
+
+class AppAccessDenied(PermissionError):
+    """用户不属于当前 App，或无权访问本 App 数据。"""
+
+
+class SupabaseClient:
+    """同一 Supabase 项目内、按 schema + app_id 隔离的客户端。"""
+
+    DEFAULT_APP_ID = "sigma_fate_v1"
+    DEFAULT_SCHEMA = "app_sigma_fate"
+
+    def __init__(
+        self,
+        url: str,
+        key: str,
+        *,
+        app_id: Optional[str] = None,
+        schema: Optional[str] = None,
+        use_service_role: bool = False,
+    ):
+        if not url or not key:
+            raise ValueError("Supabase URL and key are required")
+
+        self.app_id = app_id or os.getenv("APP_ID", self.DEFAULT_APP_ID)
+        self.schema = schema or os.getenv("SUPABASE_APP_SCHEMA", self.DEFAULT_SCHEMA)
+        self.use_service_role = use_service_role
+
+        options = ClientOptions(schema=self.schema)
+        self.client: Client = create_client(url, key, options=options)
+
+    # ---------- 内部工具 ----------
+
+    def _table(self, table_name: str):
+        """始终落在本 App schema，避免误打 public 或其他 App。"""
+        return self.client.schema(self.schema).table(table_name)
+
+    def _now(self) -> str:
+        return datetime.utcnow().isoformat() + "Z"
+
+    def _with_app_id(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(data)
+        payload["app_id"] = self.app_id
+        return payload
+
+    def _parse_json_field(self, value: Any) -> Any:
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        return value
+
+    # ---------- 登录 / 权限校验 ----------
+
+    def verify_app_access(
+        self,
+        user_id: str,
+        *,
+        auth_user_id: Optional[str] = None,
+        email: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        校验用户是否属于本 App。
+
+        规则：
+        - 只在本 schema.users 中查
+        - 必须匹配 app_id
+        - 若找到用户但 app_id 不符（理论上不应发生），拒绝访问
+        """
+        user = self.get_user(user_id)
+        if user is None and auth_user_id:
+            user = self.get_user_by_auth_id(auth_user_id)
+        if user is None and email:
+            user = self.get_user_by_email(email)
+
+        if user is None:
+            raise AppAccessDenied(
+                f"User not registered for app_id={self.app_id}"
+            )
+
+        if user.get("app_id") != self.app_id:
+            raise AppAccessDenied(
+                f"Cross-app access denied: user app_id={user.get('app_id')} "
+                f"!= current app_id={self.app_id}"
+            )
+
+        return user
+
+    def ensure_app_user(
+        self,
+        user_id: str,
+        email: Optional[str] = None,
+        *,
+        auth_user_id: Optional[str] = None,
+        subscription_tier: str = "free",
+        metadata: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """
+        登录入口：在本 App 内创建或同步用户。
+
+        - 不会读取/写入其他 schema
+        - 始终强制 app_id = 当前 App
+        - 若已存在则更新 email / metadata，并返回本 App 档案
+        """
+        existing = self.get_user(user_id)
+        if existing and existing.get("app_id") == self.app_id:
+            # 轻量同步：刷新 email / updated_at，不改订阅档（除非显式传入且不同）
+            updates: Dict[str, Any] = {"updated_at": self._now()}
+            if email:
+                updates["email"] = email
+            if metadata is not None:
+                updates["metadata"] = metadata
+            if subscription_tier and subscription_tier != existing.get("subscription_tier"):
+                # 仅当本地 session 明确要求同步时由调用方走 update_subscription
+                pass
+            if len(updates) > 1:
+                try:
+                    self._table("users").update(updates).eq(
+                        "user_id", user_id
+                    ).eq("app_id", self.app_id).execute()
+                except Exception as e:
+                    print(f"ensure_app_user sync error: {e}")
+            return {**existing, **updates}
+
+        return self.create_or_update_user(
+            user_id=user_id,
+            email=email or f"{user_id[:8]}@sigma-fate.local",
+            auth_user_id=auth_user_id or user_id,
+            subscription_tier=subscription_tier,
+            metadata=metadata,
+        )
+
+    # ---------- 用户操作 ----------
+
+    def create_or_update_user(
+        self,
+        user_id: str,
+        email: str,
+        subscription_tier: str = "free",
+        metadata: Optional[Dict] = None,
+        auth_user_id: Optional[str] = None,
+    ) -> Dict:
+        """创建或更新本 App 用户（upsert on user_id + app_id）。"""
+        data = self._with_app_id(
+            {
+                "user_id": user_id,
+                "auth_user_id": auth_user_id or user_id,
+                "email": email,
+                "subscription_tier": subscription_tier,
+                "metadata": metadata or {},
+                "updated_at": self._now(),
+            }
+        )
+
+        try:
+            result = (
+                self._table("users")
+                .upsert(data, on_conflict="user_id,app_id")
+                .execute()
+            )
+            return result.data[0] if result.data else data
+        except Exception as e:
+            print(f"User upsert error: {e}")
+            return data
+
+    def get_user(self, user_id: str) -> Optional[Dict]:
+        try:
+            result = (
+                self._table("users")
+                .select("*")
+                .eq("user_id", user_id)
+                .eq("app_id", self.app_id)
+                .limit(1)
+                .execute()
+            )
+            return result.data[0] if result.data else None
+        except Exception as e:
+            print(f"Get user error: {e}")
+            return None
+
+    def get_user_by_auth_id(self, auth_user_id: str) -> Optional[Dict]:
+        try:
+            result = (
+                self._table("users")
+                .select("*")
+                .eq("auth_user_id", auth_user_id)
+                .eq("app_id", self.app_id)
+                .limit(1)
+                .execute()
+            )
+            return result.data[0] if result.data else None
+        except Exception as e:
+            print(f"Get user by auth_id error: {e}")
+            return None
+
+    def get_user_by_email(self, email: str) -> Optional[Dict]:
+        try:
+            result = (
+                self._table("users")
+                .select("*")
+                .eq("email", email)
+                .eq("app_id", self.app_id)
+                .limit(1)
+                .execute()
+            )
+            return result.data[0] if result.data else None
+        except Exception as e:
+            print(f"Get user by email error: {e}")
+            return None
+
+    def update_subscription(
+        self,
+        user_id: str,
+        tier: str,
+        stripe_customer_id: Optional[str] = None,
+    ) -> bool:
+        try:
+            data: Dict[str, Any] = {
+                "subscription_tier": tier,
+                "updated_at": self._now(),
+            }
+            if stripe_customer_id:
+                data["stripe_customer_id"] = stripe_customer_id
+
+            result = (
+                self._table("users")
+                .update(data)
+                .eq("user_id", user_id)
+                .eq("app_id", self.app_id)
+                .execute()
+            )
+            return bool(result.data)
+        except Exception as e:
+            print(f"Update subscription error: {e}")
+            return False
+
+    def has_active_subscription(self, user_id: str) -> bool:
+        user = self.get_user(user_id)
+        if not user or user.get("app_id") != self.app_id:
+            return False
+        return user.get("subscription_tier") in ("monthly", "quarterly", "annual")
+
+    # ---------- 报告 ----------
+
+    def save_report(
+        self,
+        user_id: str,
+        birth_info: Dict,
+        bazi_data: Dict,
+        report_content: Dict,
+        report_id: Optional[str] = None,
+        payment_tier: str = "monthly",
+    ) -> Dict:
+        # 写入前校验：防止把报告写到非本 App 用户名下
+        self.verify_app_access(user_id)
+
+        data = self._with_app_id(
+            {
+                "report_id": report_id or self._generate_report_id(),
+                "user_id": user_id,
+                "birth_info": birth_info,
+                "bazi_data": bazi_data,
+                "report_content": report_content,
+                "payment_tier": payment_tier,
+                "created_at": self._now(),
+            }
+        )
+
+        try:
+            result = self._table("reports").insert(data).execute()
+            return result.data[0] if result.data else data
+        except Exception as e:
+            print(f"Save report error: {e}")
+            return data
+
+    def get_reports(self, user_id: str, limit: int = 10) -> List[Dict]:
+        try:
+            self.verify_app_access(user_id)
+            result = (
+                self._table("reports")
+                .select("*")
+                .eq("user_id", user_id)
+                .eq("app_id", self.app_id)
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return result.data or []
+        except AppAccessDenied:
+            raise
+        except Exception as e:
+            print(f"Get reports error: {e}")
+            return []
+
+    def get_report(self, report_id: str, user_id: Optional[str] = None) -> Optional[Dict]:
+        try:
+            query = (
+                self._table("reports")
+                .select("*")
+                .eq("report_id", report_id)
+                .eq("app_id", self.app_id)
+            )
+            if user_id:
+                query = query.eq("user_id", user_id)
+            result = query.limit(1).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            print(f"Get report error: {e}")
+            return None
+
+    def delete_report(self, report_id: str, user_id: str) -> bool:
+        try:
+            self.verify_app_access(user_id)
+            result = (
+                self._table("reports")
+                .delete()
+                .eq("report_id", report_id)
+                .eq("user_id", user_id)
+                .eq("app_id", self.app_id)
+                .execute()
+            )
+            return bool(result.data)
+        except AppAccessDenied:
+            raise
+        except Exception as e:
+            print(f"Delete report error: {e}")
+            return False
+
+    # ---------- 支付 ----------
+
+    def save_payment(
+        self,
+        user_id: str,
+        payment_id: str,
+        stripe_session_id: str,
+        amount: int,
+        tier: str,
+        status: str = "pending",
+    ) -> Dict:
+        self.verify_app_access(user_id)
+
+        data = self._with_app_id(
+            {
+                "user_id": user_id,
+                "payment_id": payment_id,
+                "stripe_session_id": stripe_session_id,
+                "amount": amount,
+                "currency": "CNY",
+                "tier": tier,
+                "status": status,
+                "created_at": self._now(),
+            }
+        )
+
+        try:
+            result = self._table("payments").insert(data).execute()
+            return result.data[0] if result.data else data
+        except Exception as e:
+            print(f"Save payment error: {e}")
+            return data
+
+    def update_payment_status(self, payment_id: str, status: str) -> bool:
+        try:
+            data: Dict[str, Any] = {"status": status}
+            if status == "success":
+                data["completed_at"] = self._now()
+
+            result = (
+                self._table("payments")
+                .update(data)
+                .eq("payment_id", payment_id)
+                .eq("app_id", self.app_id)
+                .execute()
+            )
+            return bool(result.data)
+        except Exception as e:
+            print(f"Update payment error: {e}")
+            return False
+
+    # ---------- 访问日志 ----------
+
+    def log_action(
+        self,
+        user_id: str,
+        action: str,
+        metadata: Optional[Dict] = None,
+    ) -> bool:
+        try:
+            data = self._with_app_id(
+                {
+                    "user_id": user_id,
+                    "action": action,
+                    "metadata": metadata or {},
+                    "created_at": self._now(),
+                }
+            )
+            result = self._table("access_logs").insert(data).execute()
+            return bool(result.data)
+        except Exception as e:
+            print(f"Log action error: {e}")
+            return False
+
+    # ---------- 工具 ----------
+
+    def _generate_report_id(self) -> str:
+        return f"sf_{uuid.uuid4().hex[:12]}"
+
+
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    client = SupabaseClient(
+        url=os.getenv("SUPABASE_STOCK_URL", ""),
+        key=os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or os.getenv("SUPABASE_STOCK_ANON_KEY", ""),
+        use_service_role=bool(os.getenv("SUPABASE_SERVICE_ROLE_KEY")),
+    )
+    print(f"schema={client.schema} app_id={client.app_id}")
+
+    result = client.ensure_app_user(
+        user_id="test_user_sigma_fate",
+        email="test@example.com",
+        subscription_tier="free",
+        metadata={"source": "cli_smoke_test"},
+    )
+    print("User:", result.get("user_id"), result.get("app_id"))
