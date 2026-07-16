@@ -33,6 +33,13 @@ TIERS: Dict[str, Dict[str, Any]] = {
 
 PAID_TIERS = ("silver", "gold", "diamond")
 
+# 免费用户：含水印预览次数上限（用尽后须升级会员）
+FREE_PREVIEW_LIMIT = 5
+
+
+def can_free_preview(trials_remaining: int) -> bool:
+    return int(trials_remaining or 0) > 0
+
 
 def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
     if lang == "en":

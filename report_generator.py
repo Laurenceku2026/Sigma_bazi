@@ -1463,7 +1463,7 @@ Hard rules:
             rows = []
             if cm.get("label"):
                 rows.append(
-                    f"<div style='font-weight:800;color:#e65100;margin-bottom:8px;'>"
+                    f"<div style='font-weight:800;color:#1565C0;margin-bottom:8px;'>"
                     f"{ReportGenerator._escape(str(cm['label']))}</div>"
                 )
             for key in ("overview", "career", "wealth", "relationship", "health", "action"):
@@ -1471,16 +1471,16 @@ Hard rules:
                     continue
                 rows.append(
                     f"<div style='margin:0 0 10px 0;padding:10px 12px;background:#fff;"
-                    f"border-radius:8px;border:1px solid #ffe0b2;'>"
-                    f"<div style='font-weight:700;color:#ef6c00;margin-bottom:4px;'>"
+                    f"border-radius:8px;border:1px solid #e0e0e0;'>"
+                    f"<div style='font-weight:700;color:#1565C0;margin-bottom:4px;'>"
                     f"{month_labs.get(key, key)}</div>"
                     f"<div style='line-height:1.75;color:#333;'>"
                     f"{ReportGenerator._escape(str(cm[key]))}</div></div>"
                 )
             month_html = (
-                f"<div style='padding:14px 16px;border:1px solid #ffcc80;border-radius:10px;"
-                f"background:#fff8e1;'>"
-                f"<div style='font-weight:800;font-size:1.05rem;margin-bottom:12px;color:#e65100;'>"
+                f"<div style='padding:14px 16px;border:1px solid #bbdefb;border-radius:10px;"
+                f"background:#e3f2fd;'>"
+                f"<div style='font-weight:800;font-size:1.05rem;margin-bottom:12px;color:#0d47a1;'>"
                 f"{month_title}</div>{''.join(rows)}</div>"
             )
 
@@ -1619,7 +1619,7 @@ Hard rules:
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.55,
-            "max_tokens": 5200,
+            "max_tokens": 4096,
         }
         url = f"{self.base_url}/v1/chat/completions"
         response = requests.post(url, headers=headers, json=payload, timeout=75)

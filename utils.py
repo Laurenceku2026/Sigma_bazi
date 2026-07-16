@@ -578,11 +578,13 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
                 return s
         return s
 
-    font_name = "STSong-Light"
+    font_body = "STSong-Light"
+    font_head = "STHeiti-Light"
     try:
-        pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+        pdfmetrics.registerFont(UnicodeCIDFont(font_body))
+        pdfmetrics.registerFont(UnicodeCIDFont(font_head))
     except Exception:
-        font_name = "Helvetica"
+        font_body = font_head = "Helvetica"
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -600,44 +602,48 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
     style_cover = ParagraphStyle(
         "Cover",
         parent=styles["Normal"],
-        fontName=font_name,
-        fontSize=22,
-        leading=30,
+        fontName=font_head,
+        fontSize=24,
+        leading=32,
         alignment=TA_CENTER,
-        spaceAfter=14,
+        spaceAfter=16,
+        textColor="#0B1F33",
     )
     style_cover_sub = ParagraphStyle(
         "CoverSub",
         parent=styles["Normal"],
-        fontName=font_name,
-        fontSize=12,
-        leading=18,
+        fontName=font_body,
+        fontSize=11,
+        leading=16,
         alignment=TA_CENTER,
-        spaceAfter=8,
+        spaceAfter=10,
+        textColor="#455A64",
     )
     style_h1 = ParagraphStyle(
         "H1CN",
         parent=styles["Normal"],
-        fontName=font_name,
-        fontSize=16,
-        leading=24,
-        spaceBefore=4,
-        spaceAfter=12,
+        fontName=font_head,
+        fontSize=18,
+        leading=26,
+        spaceBefore=6,
+        spaceAfter=10,
         alignment=TA_LEFT,
+        textColor="#0B1F33",
     )
     style_h2 = ParagraphStyle(
         "H2CN",
         parent=styles["Normal"],
-        fontName=font_name,
-        fontSize=12.5,
+        fontName=font_head,
+        fontSize=13,
         leading=20,
-        spaceBefore=10,
+        spaceBefore=12,
         spaceAfter=6,
+        textColor="#1565C0",
     )
     style_body = ParagraphStyle(
         "BodyCN",
         parent=styles["Normal"],
-        fontName=font_name,
+        fontName=font_body,
         fontSize=10.5,
         leading=17,
         alignment=TA_JUSTIFY,
@@ -646,7 +652,7 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
     style_meta = ParagraphStyle(
         "MetaCN",
         parent=styles["Normal"],
-        fontName=font_name,
+        fontName=font_body,
         fontSize=11,
         leading=18,
         alignment=TA_CENTER,
@@ -655,7 +661,7 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
     style_toc = ParagraphStyle(
         "TocCN",
         parent=styles["Normal"],
-        fontName=font_name,
+        fontName=font_body,
         fontSize=11,
         leading=18,
         alignment=TA_LEFT,
@@ -665,7 +671,7 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
     style_bullet = ParagraphStyle(
         "BulletCN",
         parent=styles["Normal"],
-        fontName=font_name,
+        fontName=font_body,
         fontSize=10.5,
         leading=17,
         leftIndent=14,
@@ -722,7 +728,7 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
             toc_items.append(str(page.get("title") or (T("流年报告") if is_ln else T(f"第{i}页"))))
     if toc_items:
         story.append(Spacer(1, 0.8 * cm))
-        story.append(P("目录", style_h2, bold=True))
+        story.append(P("目录", style_h2))
         for idx, tit in enumerate(toc_items, 1):
             story.append(P(f"{idx}. {tit}", style_toc))
 
@@ -731,20 +737,21 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
     def add_page_block(page: dict, fallback_title: str):
         page = ReportGenerator.sanitize_page_for_display(page, fallback_title)
         title = page.get("title") or fallback_title
-        story.append(P(str(title), style_h1, bold=True))
+        story.append(P(str(title), style_h1))
+        story.append(Spacer(1, 0.15 * cm))
 
         pro = page.get("professional")
         if isinstance(pro, list) and pro:
-            story.append(P("专业解读", style_h2, bold=True))
+            story.append(P("专业解读", style_h2))
             for para in pro:
                 p = P(para, style_body)
                 if p:
                     story.append(p)
         cm = page.get("current_month") if isinstance(page.get("current_month"), dict) else None
         if cm and any(cm.get(k) for k in ("overview", "career", "wealth", "relationship", "health", "action")):
-            story.append(P("当月注意（事业 · 财运 · 感情 · 健康）", style_h2, bold=True))
+            story.append(P("当月注意（事业 · 财运 · 感情 · 健康）", style_h2))
             if cm.get("label"):
-                p = P(str(cm["label"]), style_body, bold=True)
+                p = P(str(cm["label"]), style_body)
                 if p:
                     story.append(p)
             for lab, key in (
@@ -761,12 +768,12 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
                         story.append(pp)
         quarters = page.get("quarters") if isinstance(page.get("quarters"), list) else []
         if quarters:
-            story.append(P("四季流年预测", style_h2, bold=True))
+            story.append(P("四季流年预测", style_h2))
             for q in quarters:
                 if not isinstance(q, dict):
                     continue
                 head = f"{q.get('name', '')}（{q.get('branch', '')} · {q.get('months', '')}）"
-                p = P(head, style_h2, bold=True)
+                p = P(head, style_h2)
                 if p:
                     story.append(p)
                 for lab, key in (("局势", "outlook"), ("关键月", "focus_months"), ("建议", "advice")):
@@ -776,14 +783,14 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
                             story.append(pp)
         plain = page.get("plain") if isinstance(page.get("plain"), dict) else None
         if plain and (plain.get("summary") or plain.get("points") or plain.get("detail") or plain.get("quarters_plain")):
-            story.append(P("白话说明", style_h2, bold=True))
+            story.append(P("白话说明", style_h2))
             if plain.get("summary"):
-                p = P(f"一句话：{plain['summary']}", style_body, bold=True)
+                p = P(f"一句话：{plain['summary']}", style_body)
                 if p:
                     story.append(p)
             pts = plain.get("points") or []
             if pts:
-                story.append(P("怎么做：", style_body, bold=True))
+                story.append(P("怎么做：", style_body))
                 for i, pt in enumerate(pts, 1):
                     p = P(f"{i}. {pt}", style_bullet)
                     if p:

@@ -204,7 +204,7 @@ class SupabaseClient:
                 if subscription_tier
                 in ("free", "silver", "gold", "diamond", "monthly", "quarterly", "annual")
                 else "free",
-                "free_trials_remaining": 30,
+                "free_trials_remaining": 5,
                 "email_confirmed": True,
                 "metadata": {**(metadata or {}), "auth_mode": "local_password", "source": "bazi_local"},
                 "created_at": self._now(),
@@ -298,7 +298,7 @@ class SupabaseClient:
                 "subscription_tier": subscription_tier if subscription_tier in (
                     "free", "silver", "gold", "diamond", "monthly", "quarterly", "annual"
                 ) else "free",
-                "free_trials_remaining": 30,
+                "free_trials_remaining": 5,
                 "email_confirmed": True,
                 "metadata": metadata or {"source": "email_register"},
                 "created_at": self._now(),
@@ -397,7 +397,7 @@ class SupabaseClient:
                 "auth_user_id": auth_user_id or user_id,
                 "email": email,
                 "subscription_tier": tier,
-                "free_trials_remaining": 30,
+                "free_trials_remaining": 5,
                 "metadata": metadata or {},
                 "created_at": self._now(),
                 "updated_at": self._now(),
@@ -566,6 +566,18 @@ class SupabaseClient:
             return self.admin_update_user(user_id, free_trials_remaining=remaining - 1)
         return False
 
+    def consume_free_preview_quota(self, user_id: str) -> bool:
+        """免费用户生成含水印预览时扣减次数（默认 5 次）。"""
+        user = self.get_user(user_id)
+        if not user:
+            return False
+        if user.get("subscription_tier", "free") != "free":
+            return True
+        remaining = int(user.get("free_trials_remaining") or 0)
+        if remaining <= 0:
+            return False
+        return self.admin_update_user(user_id, free_trials_remaining=remaining - 1)
+
     # ---------- 管理员：用户列表 / 订阅 / 次数 ----------
 
     def list_users(self, limit: int = 500) -> List[Dict]:
@@ -611,7 +623,7 @@ class SupabaseClient:
             self._set_error("purge_foreign_users", e)
             return 0
 
-    def admin_reset_free_trials(self, default_trials: int = 30) -> int:
+    def admin_reset_free_trials(self, default_trials: int = 5) -> int:
         """重置所有 free 用户次数，返回更新条数。"""
         try:
             result = (

@@ -199,7 +199,7 @@ def render_admin_page(lang: str, supabase_client) -> None:
                 ("姓名" if lang == "zh" else "Name"): u.get("display_name") or "-",
                 ("生日" if lang == "zh" else "Birthday"): u.get("birth_date") or "-",
                 t("subscription_col", lang): u.get("subscription_tier", "free"),
-                t("trials_col", lang): u.get("free_trials_remaining", 30),
+                t("trials_col", lang): u.get("free_trials_remaining", 5),
                 t("expires_col", lang): _safe_date(u.get("subscription_expires_at")),
                 t("created_col", lang): _safe_date(u.get("created_at")),
                 t("last_login_col", lang): _safe_date(u.get("last_login_at")),
@@ -254,7 +254,7 @@ def render_admin_page(lang: str, supabase_client) -> None:
             if ok:
                 st.rerun()
     with col_b:
-        trials_val = int(selected_user.get("free_trials_remaining") or 30)
+        trials_val = int(selected_user.get("free_trials_remaining") or 5)
         new_trials = st.number_input(
             t("set_trials", lang),
             min_value=0,
@@ -292,7 +292,7 @@ def render_admin_page(lang: str, supabase_client) -> None:
     bb1, bb2 = st.columns(2)
     with bb1:
         if st.button(t("reset_all_free", lang), key="admin_reset_all", use_container_width=True):
-            n = supabase_client.admin_reset_free_trials(30)
+            n = supabase_client.admin_reset_free_trials(5)
             st.success(f"{t('reset_all_ok', lang)} ({n})")
             st.rerun()
     with bb2:

@@ -18,13 +18,18 @@ from admin_page import render_admin_login, render_admin_page
 from bazi_engine import BaziEngine
 from auth_local import hash_password
 from ui_texts import is_chinese, region_label, region_longitude, region_options, t
-from membership import PAID_TIERS, TIERS, can_generate_report, tier_outline
+from membership import FREE_PREVIEW_LIMIT, PAID_TIERS, TIERS, can_free_preview, can_generate_report, tier_outline
+from mobile_meta import app_icon_path, inject_mobile_app_meta
 from report_generator import ReportGenerator
 from stripe_payment import StripeClient
 from supabase_client import AppAccessDenied, SupabaseClient
 from utils import format_bazi_display, generate_pdf_report, pdf_filename, render_bazi_chart
 
-st.set_page_config(page_title="六西格玛命理 - 八字", page_icon="🔮", layout="wide")
+st.set_page_config(
+    page_title="六西格玛命理 - 八字",
+    page_icon=app_icon_path() or "🔮",
+    layout="wide",
+)
 
 # --- Session ---
 for key, default in [
@@ -84,8 +89,13 @@ STRIPE_PRICE_GOLD = _cfg("STRIPE_PRICE_GOLD")
 STRIPE_PRICE_DIAMOND = _cfg("STRIPE_PRICE_DIAMOND")
 ADMIN_USERNAME = _cfg("ADMIN_USERNAME", "Laurence_ku")
 ADMIN_PASSWORD = _cfg("ADMIN_PASSWORD", "Ku_product$2026")
+PWA_MANIFEST_URL = _cfg(
+    "PWA_MANIFEST_URL",
+    "https://raw.githubusercontent.com/Laurenceku2026/Sigma_bazi/main/static/manifest.webmanifest",
+)
 
 lang = st.session_state.lang
+inject_mobile_app_meta(manifest_url=PWA_MANIFEST_URL)
 
 
 def _is_zh() -> bool:
@@ -593,6 +603,10 @@ def generate_full_report(*, consume_quota: bool = True) -> bool:
             if not supabase_client.consume_report_quota(st.session_state.user_id):
                 st.error("次数已用完" if _is_zh() else "No quota left")
                 return False
+        elif tier == "free" and supabase_client and st.session_state.get("auth_ok"):
+            if not supabase_client.consume_free_preview_quota(st.session_state.user_id):
+                st.error(t("free_preview_exhausted", lang))
+                return False
 
         progress = st.progress(0.0)
         status = st.empty()
@@ -794,21 +808,34 @@ div[data-testid="stButton"] > button[kind="primary"] {
         else:
             st.warning("会员次数不足或已到期，请续费后再生成。" if _is_zh() else "No quota or expired.")
     else:
-        # 免费：可预览
+        # 免费：可预览（默认 5 次含水印；已生成报告可反复查看不扣次）
+        free_left = int((profile or {}).get("free_trials_remaining") or 0)
+        st.caption(
+            t("free_preview_quota", lang).format(left=free_left, total=FREE_PREVIEW_LIMIT)
+        )
         st.caption(
             "免费可预览完整报告（遮挡预览 · 不可复制/下载）。升级会员可无遮挡阅读并下载。"
             if _is_zh()
             else "Free preview with watermark — no copy/download. Upgrade to unlock."
         )
+        can_gen = can_free_preview(free_left) and bool(report_gen)
         btn_label = (
             ("📄 完整报告（免费预览）" if has_report else "📄 生成并预览完整报告")
             if _is_zh()
             else ("📄 Full report (free preview)" if has_report else "📄 Generate free preview")
         )
-        if st.button(btn_label, key=f"{key_prefix}_free_preview_report", type="primary", use_container_width=True):
+        if st.button(
+            btn_label,
+            key=f"{key_prefix}_free_preview_report",
+            type="primary",
+            use_container_width=True,
+            disabled=not has_report and not can_gen,
+        ):
             if not has_report:
                 if not report_gen:
                     st.error("报告引擎未配置")
+                elif not can_gen:
+                    st.warning(t("free_preview_exhausted", lang))
                 else:
                     with st.spinner(t("generating", lang)):
                         if generate_full_report(consume_quota=False):
@@ -817,6 +844,9 @@ div[data-testid="stButton"] > button[kind="primary"] {
             else:
                 go_report_tab()
                 st.rerun()
+        if not has_report and not can_gen:
+            st.warning(t("free_preview_exhausted", lang))
+            render_membership_plans(f"{key_prefix}_free_upgrade")
 
 
 def _wrap_protected_html(inner_html: str, mark: str) -> str:
