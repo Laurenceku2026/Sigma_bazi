@@ -5,7 +5,8 @@
 - 先依四柱五行/十神估日主身强身弱 → 定喜用与忌神方向
 - 再评大运、流年干支对日主的生克与十神
 - 叠加刑冲合害、天克地冲等互动
-- 「重要提示」按十神与互动，在事业/财运/感情/健康中择一条最关键
+- 「重要提示」按年龄阶段 + 十神/冲合，在事业/财运/感情/健康中择最相关一条；
+  若第二条也明显重要，可并列两条
 """
 from __future__ import annotations
 
@@ -590,6 +591,87 @@ def _age_stage_priors(age: int) -> Dict[str, float]:
     return {"career": 0.4, "wealth": 0.45, "love": 0.35, "health": 2.0}
 
 
+def _second_domain_warranted(
+    domain2: str,
+    w1: float,
+    w2: float,
+    age: int,
+    flags: dict,
+    score: int,
+    peach: bool,
+    ln_god: str,
+) -> bool:
+    """第二条提示仅在「真的重要」时启用：权重接近且有明确触发信号。"""
+    if age < 16 or domain2 not in ("career", "wealth", "love", "health"):
+        return False
+    if w2 < 1.15 or w2 < w1 * 0.68:
+        return False
+    harsh = bool(
+        flags.get("chong")
+        or flags.get("xing")
+        or flags.get("hai")
+        or flags.get("tianke_dichong")
+    )
+    if domain2 == "health" and (harsh or score <= 38):
+        return True
+    if domain2 == "love" and peach and age >= 18:
+        return True
+    if domain2 == "love" and harsh and 20 <= age <= 42:
+        return True
+    if domain2 == "career" and ln_god in ("正官", "七杀", "伤官") and 22 <= age <= 55:
+        if score >= 72 or score <= 38 or harsh:
+            return True
+    if domain2 == "wealth" and ln_god in ("正财", "偏财", "劫财") and age >= 25:
+        if score >= 75 or harsh:
+            return True
+    # 两维权重都很高且几乎并列
+    if w1 >= 2.0 and w2 >= 1.85 and (w1 - w2) <= 0.4:
+        return True
+    return False
+
+
+def _compact_secondary_tip(
+    domain: str,
+    *,
+    age: int,
+    organ: str,
+    peach: bool,
+    flags: dict,
+    score: int,
+    ln_god: str,
+    lang: str,
+) -> str:
+    """次要提示：短句，避免挤爆「重要提示」列。"""
+    harsh = bool(flags.get("chong") or flags.get("xing") or flags.get("tianke_dichong"))
+    if domain == "health":
+        if harsh or score <= 38:
+            text = f"健康：冲刑/弱运年，留意{organ}与作息。"
+        else:
+            text = f"健康：同步养护{organ}，勿过劳。"
+    elif domain == "love":
+        if peach:
+            text = "感情：桃花议题并行，宜识人与边界。"
+        elif harsh:
+            text = "感情：关系易有波动，沟通优于冷战。"
+        else:
+            text = "感情：关系经营亦需兼顾。"
+    elif domain == "career":
+        if age <= 22:
+            text = "学业/事业：升学或起步关键，稳住节奏。"
+        elif ln_god in ("七杀", "伤官"):
+            text = "事业：竞争或变动并行，宜策略推进。"
+        else:
+            text = "事业：职场/学业议题亦关键，宜主动规划。"
+    elif domain == "wealth":
+        if ln_god == "劫财" or harsh:
+            text = "财运：防破耗与担保，收支宜收紧。"
+        else:
+            text = "财运：进账/置产议题并行，忌冲动大额。"
+    else:
+        return ""
+    return _maybe_trad(text, lang)
+
+
 def _pick_important_tip(
     bazi_data: dict,
     strength: dict,
@@ -605,7 +687,7 @@ def _pick_important_tip(
     detailed: bool,
     lang: str = "zh",
 ) -> str:
-    """按年龄阶段 + 十神/冲合，在四维中择一条最贴合的提示。"""
+    """按年龄阶段 + 十神/冲合择最贴合提示；次重要时可并列第二条。"""
     dm = bazi_data.get("day_master") or ""
     gender = bazi_data.get("gender") or ""
     ln_god = shishen_of(dm, ln_gan)
@@ -652,7 +734,9 @@ def _pick_important_tip(
         weights["wealth"] = 0.0
         weights["health"] = max(weights["health"], weights["career"] * 0.8 + 1.0)
 
-    domain = max(weights, key=weights.get)
+    ranked = sorted(weights.items(), key=lambda kv: (-kv[1], kv[0]))
+    domain = ranked[0][0]
+    w1 = ranked[0][1]
 
     # —— 按年龄生成文案（幼年/童年直接返回，杜绝事业/财运/感情）——
     if age <= 5:
@@ -797,6 +881,29 @@ def _pick_important_tip(
         else:
             text = short.get(domain, "运势平稳，顺势而为。")
 
+    # 次要提示：仅当第二维也明显重要时并列（最多两条）
+    if age >= 16 and len(ranked) > 1:
+        domain2, w2 = ranked[1]
+        if domain2 != domain and _second_domain_warranted(
+            domain2, w1, w2, age, flags, score, peach, ln_god
+        ):
+            tip2 = _compact_secondary_tip(
+                domain2,
+                age=age,
+                organ=organ,
+                peach=peach,
+                flags=flags,
+                score=score,
+                ln_god=ln_god,
+                lang=lang,
+            )
+            if tip2:
+                primary = _maybe_trad(text, lang)
+                # 避免重复前缀域
+                if tip2.split("：", 1)[0] not in primary:
+                    return f"{primary}｜{tip2}"
+                return primary
+
     return _maybe_trad(text, lang)
 
 
@@ -919,8 +1026,9 @@ def render_lifetime_fortune_html(
         cols = ("Year", "Age", "Da Yun", "Liu Nian", "Interactions", "Fortune", "Key Note")
         hint = (
             f"{level_en}. Longer bar = better year. "
-            "Key notes emphasize Career / Wealth / Relationship / Health — "
-            "current year and next 10 years are more detailed."
+            "Key notes pick the most relevant Career / Wealth / Relationship / Health "
+            "by life stage (sometimes two if both are truly important). "
+            "Current year and next 10 years are more detailed."
         )
     else:
         title = "一生流年运势分析"
@@ -928,7 +1036,7 @@ def render_lifetime_fortune_html(
         hint = (
             f"{level_zh}。红线越长代表该年运势越佳；"
             "「重要提示」按年龄阶段（幼年健康、青年感情、壮年事业、中年后健康）"
-            "并结合十神冲合，在事业·财运·感情·健康中择最相关一条；"
+            "并结合十神冲合，优先择最相关一条；若另一维也明显重要，可并列两条；"
             "今年起未来十年提示更细。仅供参考，非医疗/投资建议。"
         )
         if lang == "zh_hant":

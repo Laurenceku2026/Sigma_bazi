@@ -812,7 +812,7 @@ def _pdf_lifetime_fortune_pages(bazi_data: dict, lang: str, font_path, page_widt
 
     title = trad("一生流年运势分析")
     headers = [trad(x) for x in ("西元", "实岁", "大运", "流年", "合化", "运势", "重要提示")]
-    hint = trad("红线越长代表该年运势越佳；重要提示按年龄阶段择事业/财运/感情/健康之一。")
+    hint = trad("红线越长代表该年运势越佳；重要提示按年龄阶段择要，必要时可并列两条。")
 
     scale = 2
     # 列宽比例（与网页接近，提示略窄）

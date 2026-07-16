@@ -591,11 +591,18 @@ def render_membership_plans(key_prefix: str = "main"):
                 session = stripe_client.create_checkout_session(
                     st.session_state.user_id, email, plan
                 )
-                st.link_button(
-                    t("pay_now", lang),
-                    session.url,
-                    use_container_width=True,
-                    key=f"{key_prefix}_pay_{plan}",
+                from html import escape as _html_esc
+
+                pay_url = _html_esc(session.url, quote=True)
+                pay_label = _html_esc(t("pay_now", lang))
+                st.markdown(
+                    f'<a href="{pay_url}" target="_blank" rel="noopener noreferrer" '
+                    f'style="display:block;width:100%;box-sizing:border-box;text-align:center;'
+                    f'background:#C62828;color:#fff!important;font-weight:800;font-size:1.15rem;'
+                    f'padding:0.85rem 1rem;border-radius:10px;text-decoration:none;'
+                    f'letter-spacing:0.03em;box-shadow:0 2px 8px rgba(198,40,40,0.35);">'
+                    f"{pay_label}</a>",
+                    unsafe_allow_html=True,
                 )
             except Exception as e:
                 st.error(f"{t('pay_error', lang)}{e}")
