@@ -747,11 +747,11 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
                 p = P(para, style_body)
                 if p:
                     story.append(p)
-        cm = page.get("current_month") if isinstance(page.get("current_month"), dict) else None
-        if cm and any(cm.get(k) for k in ("overview", "career", "wealth", "relationship", "health", "action")):
+        cm_block = page.get("current_month") if isinstance(page.get("current_month"), dict) else None
+        if cm_block and any(cm_block.get(k) for k in ("overview", "career", "wealth", "relationship", "health", "action")):
             story.append(P("当月注意（事业 · 财运 · 感情 · 健康）", style_h2))
-            if cm.get("label"):
-                p = P(str(cm["label"]), style_body)
+            if cm_block.get("label"):
+                p = P(str(cm_block["label"]), style_body)
                 if p:
                     story.append(p)
             for lab, key in (
@@ -762,8 +762,8 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
                 ("健康", "health"),
                 ("行动", "action"),
             ):
-                if cm.get(key):
-                    pp = P(f"{lab}：{cm[key]}", style_body)
+                if cm_block.get(key):
+                    pp = P(f"{lab}：{cm_block[key]}", style_body)
                     if pp:
                         story.append(pp)
         quarters = page.get("quarters") if isinstance(page.get("quarters"), list) else []

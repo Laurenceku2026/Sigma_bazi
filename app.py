@@ -715,41 +715,32 @@ def apply_scroll_top_if_needed():
 
 
 def render_report_download_row(report: dict, key_prefix: str = "dl"):
-    """付费用户：下载 PDF（金/钻含流年；银卡仅九页主报告）+ JSON。"""
+    """付费用户：下载 PDF（金/钻含流年；银卡仅九页主报告）。"""
     tier = st.session_state.subscription_tier
     include_liunian = tier in ("gold", "diamond")
-    col_dl1, col_dl2 = st.columns(2)
-    with col_dl1:
-        try:
-            pdf_buffer = generate_pdf_report(
-                report,
-                st.session_state.birth_info or {},
-                st.session_state.bazi_data or {},
-                include_liunian=include_liunian,
-                lang=lang,
-            )
-            label = t("download_pdf", lang)
-            if include_liunian:
-                st.caption(t("pdf_includes_liunian", lang))
-            else:
-                st.caption(t("pdf_silver_no_liunian", lang))
-            st.download_button(
-                label,
-                pdf_buffer,
-                pdf_filename(st.session_state.birth_info or {}),
-                "application/pdf",
-                key=f"{key_prefix}_pdf",
-            )
-        except Exception:
-            st.warning(t("pdf_warn", lang))
-    with col_dl2:
-        st.download_button(
-            t("export_json", lang),
-            json.dumps(report, ensure_ascii=False, indent=2),
-            f"bazi_{datetime.now():%Y%m%d}.json",
-            "application/json",
-            key=f"{key_prefix}_json",
+    try:
+        pdf_buffer = generate_pdf_report(
+            report,
+            st.session_state.birth_info or {},
+            st.session_state.bazi_data or {},
+            include_liunian=include_liunian,
+            lang=lang,
         )
+        label = t("download_pdf", lang)
+        if include_liunian:
+            st.caption(t("pdf_includes_liunian", lang))
+        else:
+            st.caption(t("pdf_silver_no_liunian", lang))
+        st.download_button(
+            label,
+            pdf_buffer,
+            pdf_filename(st.session_state.birth_info or {}),
+            "application/pdf",
+            key=f"{key_prefix}_pdf",
+            use_container_width=True,
+        )
+    except Exception:
+        st.warning(t("pdf_warn", lang))
 
 
 def render_report_cta(key_prefix: str = "main"):

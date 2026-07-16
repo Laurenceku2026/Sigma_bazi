@@ -50,6 +50,15 @@ def _avg(scores: Dict[str, int]) -> float:
 
 
 def render_trial_survey(lang: str, supabase_client, *, user_id: str, user_email: str) -> None:
+    flash = st.session_state.pop("_survey_flash", None)
+    if isinstance(flash, dict):
+        if flash.get("thanks"):
+            st.success(flash["thanks"])
+        if flash.get("gold"):
+            st.success(flash["gold"])
+        if flash.get("balloons"):
+            st.balloons()
+
     st.markdown(f"### {t('survey_heading', lang)}")
     st.caption(t("survey_intro", lang))
 
@@ -142,15 +151,21 @@ def render_trial_survey(lang: str, supabase_client, *, user_id: str, user_email:
         }
         first_survey = latest is None
         if supabase_client and supabase_client.save_survey_response(payload):
-            rewarded = False
+            upgraded = False
             if first_survey:
-                rewarded = supabase_client.grant_survey_gold_reward(user_id)
-                if rewarded:
-                    st.session_state.subscription_tier = "gold"
-            st.success(t("survey_thanks", lang))
-            if rewarded:
-                st.success(t("survey_gold_reward", lang))
-            st.balloons()
+                supabase_client.grant_survey_gold_reward(user_id)
+                profile = supabase_client.get_user(user_id) or {}
+                tier_now = profile.get("subscription_tier", "free")
+                meta = profile.get("metadata") if isinstance(profile.get("metadata"), dict) else {}
+                if tier_now in ("gold", "diamond"):
+                    st.session_state.subscription_tier = tier_now
+                if meta.get("survey_gold_rewarded") and tier_now == "gold":
+                    upgraded = True
+            st.session_state._survey_flash = {
+                "thanks": t("survey_thanks", lang),
+                "gold": t("survey_gold_reward", lang) if upgraded else "",
+                "balloons": bool(upgraded),
+            }
             st.rerun()
         else:
             st.error(t("survey_save_fail", lang))
