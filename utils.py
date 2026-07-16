@@ -492,13 +492,15 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
             )
             st.progress(min(max(bar["pct"] / 100.0, 0.0), 1.0))
 
-    from bazi_analysis import render_personality_html
+    # 性格分析：紧贴五行分布下方（附图位置）
+    try:
+        from bazi_analysis import render_personality_html
 
-    st.markdown("---")
-    st.markdown(
-        "### " + ("🧠 性格分析" if lang != "en" else "🧠 Personality")
-    )
-    st.markdown(render_personality_html(bazi_data, lang), unsafe_allow_html=True)
+        st.markdown(render_personality_html(bazi_data, lang), unsafe_allow_html=True)
+    except Exception as e:
+        st.warning(
+            ("性格分析暂不可用：" if lang != "en" else "Personality unavailable: ") + str(e)
+        )
 
     st.markdown("---")
     st.markdown(
@@ -742,11 +744,24 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
 
     story.append(PageBreak())
 
-    def add_page_block(page: dict, fallback_title: str):
+    def add_page_block(page: dict, fallback_title: str, *, page_index: int = 0):
         page = ReportGenerator.sanitize_page_for_display(page, fallback_title)
         title = page.get("title") or fallback_title
         story.append(P(str(title), style_h1))
         story.append(Spacer(1, 0.15 * cm))
+
+        if page_index == 1 and isinstance(bazi_data, dict) and bazi_data.get("day_master"):
+            try:
+                from bazi_analysis import analyze_personality
+
+                pers = analyze_personality(bazi_data, lang)
+                story.append(P(str(pers.get("title") or "性格分析"), style_h2))
+                p = P(pers.get("body") or "", style_body)
+                if p:
+                    story.append(p)
+                story.append(Spacer(1, 0.12 * cm))
+            except Exception:
+                pass
 
         pro = page.get("professional")
         if isinstance(pro, list) and pro:
@@ -840,7 +855,7 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
                 page = {"content": str(page), "title": T(f"第{i}页")}
             is_ln = (i == 10) or (i == 9 and legacy_ln9)
             fallback = T("流年报告") if is_ln else T(f"第{i}页")
-            add_page_block(page, fallback)
+            add_page_block(page, fallback, page_index=i)
     else:
         story.append(P("暂无报告内容。", style_body))
 

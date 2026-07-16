@@ -1013,6 +1013,15 @@ def render_report_pages(report: dict, *, protected: bool = False, pages=None):
                 except Exception:
                     pass
             html = ReportGenerator.render_page_html(page, lang)
+            # 页一：在报告正文前插入性格分析（与命盘五行下同款）
+            if i == 1 and st.session_state.get("bazi_data"):
+                try:
+                    from bazi_analysis import render_personality_html
+
+                    pers = render_personality_html(st.session_state.bazi_data, lang)
+                    html = pers + html
+                except Exception:
+                    pass
             if protected:
                 html = _wrap_protected_html(html, str(mark))
             st.markdown(html, unsafe_allow_html=True)
