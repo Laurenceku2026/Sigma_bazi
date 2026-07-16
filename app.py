@@ -964,18 +964,35 @@ def go_liunian_tab():
     st.session_state["_scroll_top"] = True
 
 
-def render_cross_report_nav(*, to: str, key: str) -> None:
-    """报告页底部互跳：完整报告 ↔ 流年报告（点击后滚到顶部）。"""
+def render_report_tab_bottom_nav(report: dict, *, key_prefix: str = "report_bottom") -> None:
+    """八字报告页底部：可重新生成；有流年篇章则跳转流年报告。"""
     st.markdown("---")
-    if to == "liunian":
-        label = t("goto_liunian_report_bottom", lang)
-        if st.button(label, key=key, type="primary", use_container_width=True):
+    tier = st.session_state.subscription_tier
+    profile = supabase_client.get_user(st.session_state.user_id) if supabase_client else None
+    trials = int((profile or {}).get("free_trials_remaining") or 0)
+    expires = (profile or {}).get("subscription_expires_at")
+
+    if tier in PAID_TIERS and can_generate_report(tier, trials, expires) and report_gen:
+        if st.button(
+            "🔄 " + ("重新生成报告" if _is_zh() else "Regenerate report"),
+            key=f"{key_prefix}_regen",
+            use_container_width=True,
+        ):
+            with st.spinner(t("generating", lang)):
+                if generate_full_report(consume_quota=True):
+                    st.success(t("report_ok", lang))
+                    st.rerun()
+                elif st.session_state.get("show_join_membership"):
+                    st.rerun()
+
+    if ReportGenerator.resolve_liunian_key(report):
+        if st.button(
+            t("goto_liunian_report", lang),
+            key=f"{key_prefix}_to_liunian",
+            type="primary",
+            use_container_width=True,
+        ):
             go_liunian_tab()
-            st.rerun()
-    else:
-        label = t("goto_full_report_bottom", lang)
-        if st.button(label, key=key, type="primary", use_container_width=True):
-            go_report_tab()
             st.rerun()
 
 
@@ -1670,10 +1687,7 @@ elif _tab == 2:
             render_report_pages(report, protected=False, pages=range(1, 10))
             st.markdown("---")
             render_report_download_row(report, "tab_report")
-            st.markdown("---")
-            render_report_cta("tab_report_paid")
-            if ReportGenerator.resolve_liunian_key(report):
-                render_cross_report_nav(to="liunian", key="goto_liunian_from_report_bottom")
+            render_report_tab_bottom_nav(report, key_prefix="tab_report_paid")
         else:
             st.warning(
                 "免费预览模式：含水印条码，不可复制、不可下载。升级会员可清晰阅读并下载 PDF。"
@@ -1681,13 +1695,7 @@ elif _tab == 2:
                 else "Free preview with watermark — no copy/download. Upgrade to unlock."
             )
             render_report_pages(report, protected=True, pages=range(1, 10))
-            if ReportGenerator.resolve_liunian_key(report):
-                st.caption(
-                    "已含流年报告预览，请点顶部「流年报告」查看（含水印）。"
-                    if _is_zh()
-                    else "Annual Luck preview included — open the Annual Luck tab (watermarked)."
-                )
-                render_cross_report_nav(to="liunian", key="goto_liunian_from_report_free_bottom")
+            render_report_tab_bottom_nav(report, key_prefix="tab_report_free")
             st.markdown("---")
             st.markdown(f"### {t('unlock_heading', lang)}")
             st.markdown(t("unlock_body", lang))
@@ -1755,7 +1763,15 @@ elif _tab == 3:
                 st.markdown(f"### {t('unlock_heading', lang)}")
                 st.markdown(t("unlock_body", lang))
                 render_membership_plans("tab_liunian_free")
-            render_cross_report_nav(to="report", key="goto_report_from_liunian_bottom")
+                st.markdown("---")
+                if st.button(
+                    t("goto_full_report", lang),
+                    key="goto_report_from_liunian_free_bottom",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    go_report_tab()
+                    st.rerun()
 
 # ========== Tab 5：试用问卷 ==========
 elif _tab == 4:
