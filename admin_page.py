@@ -21,28 +21,52 @@ def _safe_date(value: Any) -> str:
     return s[:10] if len(s) >= 10 else s
 
 
+def _to_beijing(dt: datetime) -> datetime:
+    """转为北京时间（Asia/Shanghai）。"""
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("Asia/Shanghai")
+    except Exception:
+        from datetime import timezone, timedelta
+
+        tz = timezone(timedelta(hours=8), name="CST")
+    if dt.tzinfo is None:
+        # 库内多为 UTC naive / 带 Z 解析后的 aware
+        from datetime import timezone as _tz
+
+        dt = dt.replace(tzinfo=_tz.utc)
+    return dt.astimezone(tz)
+
+
 def _safe_datetime(value: Any) -> str:
-    """显示日期+时间，如 2026-07-16 18:53。"""
+    """显示北京时间日期+时间，如 2026-07-16 18:53。"""
     if not value:
         return "-"
+    dt: datetime | None = None
     if isinstance(value, datetime):
-        return value.strftime("%Y-%m-%d %H:%M")
-    s = str(value).strip()
-    if not s:
-        return "-"
-    # ISO: 2026-07-16T18:53:01.123456+00:00 / 2026-07-16 18:53:01
+        dt = value
+    else:
+        s = str(value).strip()
+        if not s:
+            return "-"
+        try:
+            normalized = s.replace("Z", "+00:00")
+            if "T" in normalized or (len(normalized) >= 19 and " " in normalized[:20]):
+                dt = datetime.fromisoformat(normalized)
+        except Exception:
+            dt = None
+        if dt is None and len(s) >= 16:
+            try:
+                dt = datetime.fromisoformat(s[:19].replace(" ", "T"))
+            except Exception:
+                return s[:16].replace("T", " ")
+        if dt is None:
+            return s[:10] if len(s) >= 10 else s
     try:
-        normalized = s.replace("Z", "+00:00")
-        if "T" in normalized or " " in normalized[:20]:
-            dt = datetime.fromisoformat(normalized)
-            return dt.strftime("%Y-%m-%d %H:%M")
+        return _to_beijing(dt).strftime("%Y-%m-%d %H:%M")
     except Exception:
-        pass
-    if len(s) >= 16:
-        # 回退：截取到分钟
-        body = s[:16].replace("T", " ")
-        return body
-    return s[:10] if len(s) >= 10 else s
+        return dt.strftime("%Y-%m-%d %H:%M")
 
 
 def _birth_info_fallback(user: Dict[str, Any]) -> Dict[str, Any]:

@@ -788,6 +788,157 @@ def _pdf_text_image(
     return RLImage(bio, width=draw_w, height=draw_h)
 
 
+def _pdf_lifetime_fortune_pages(bazi_data: dict, lang: str, font_path, page_width_pt: float):
+    """将一生流年运势表绘成多页图片 Flowable，供 PDF 附录。"""
+    import io
+    from reportlab.platypus import Image as RLImage
+    from PIL import Image, ImageDraw, ImageFont
+
+    from bazi_analysis import build_lifetime_fortune
+
+    rows = build_lifetime_fortune(bazi_data, max_age=80, lang=lang)
+    if not rows or not font_path:
+        return []
+
+    def trad(s: str) -> str:
+        if lang != "zh_hant":
+            return s
+        try:
+            from zh_convert import to_traditional
+
+            return to_traditional(s)
+        except Exception:
+            return s
+
+    title = trad("一生流年运势分析")
+    headers = [trad(x) for x in ("西元", "实岁", "大运", "流年", "合化", "运势", "重要提示")]
+    hint = trad("红线越长代表该年运势越佳；重要提示按年龄阶段择事业/财运/感情/健康之一。")
+
+    scale = 2
+    # 列宽比例（与网页接近，提示略窄）
+    ratios = [0.09, 0.06, 0.08, 0.08, 0.12, 0.16, 0.41]
+    max_w = int(page_width_pt * scale)
+    col_w = [int(max_w * r) for r in ratios]
+    # 修正舍入
+    col_w[-1] += max_w - sum(col_w)
+
+    font_title = ImageFont.truetype(str(font_path), 15 * scale)
+    font_h = ImageFont.truetype(str(font_path), 9 * scale)
+    font_c = ImageFont.truetype(str(font_path), 8 * scale)
+    font_tip = ImageFont.truetype(str(font_path), 7 * scale)
+
+    row_h = int(22 * scale)
+    title_h = int(28 * scale)
+    head_h = int(24 * scale)
+    hint_h = int(20 * scale)
+    pad = int(6 * scale)
+
+    max_score = max(r["score"] for r in rows) or 100
+    min_score = min(r["score"] for r in rows) or 0
+    span = max(max_score - min_score, 1)
+
+    def wrap_tip(text: str, max_px: int) -> list:
+        t = (text or "—").replace("\n", " ")
+        lines, cur, cw = [], "", 0
+        for ch in t:
+            box = font_tip.getbbox(ch)
+            w = max(1, box[2] - box[0])
+            if cur and cw + w > max_px - 4:
+                lines.append(cur)
+                cur, cw = ch, w
+            else:
+                cur += ch
+                cw += w
+        if cur:
+            lines.append(cur)
+        return lines[:2] or ["—"]
+
+    # 按像素高度分页，避免单页过高
+    max_body_px = int(600 * scale)
+    chunks: list = []
+    cur_chunk: list = []
+    cur_h = 0
+    for r in rows:
+        tips = wrap_tip(r.get("tip") or "—", col_w[6])
+        rh = max(row_h, int(9 * scale * 1.35 * len(tips) + 8 * scale))
+        if cur_chunk and cur_h + rh > max_body_px:
+            chunks.append(cur_chunk)
+            cur_chunk, cur_h = [], 0
+        cur_chunk.append((r, tips, rh))
+        cur_h += rh
+    if cur_chunk:
+        chunks.append(cur_chunk)
+
+    pages = []
+    for pi, chunk in enumerate(chunks):
+        heights = [rh for _r, _t, rh in chunk]
+        body_h = sum(heights)
+        img_h = pad * 2 + (title_h if pi == 0 else int(18 * scale)) + head_h + body_h + (hint_h if pi == len(chunks) - 1 else 0)
+        img = Image.new("RGB", (max_w + pad * 2, img_h), "white")
+        draw = ImageDraw.Draw(img)
+        x0, y = pad, pad
+
+        if pi == 0:
+            draw.text((x0, y), title + "：", font=font_title, fill="#8B4513")
+            y += title_h
+        else:
+            draw.text((x0, y), f"{title}（续）", font=font_h, fill="#8B4513")
+            y += int(18 * scale)
+
+        draw.rectangle([x0, y, x0 + max_w, y + head_h], fill="#F5F5F5")
+        cx = x0
+        for hi, htxt in enumerate(headers):
+            draw.text((cx + 3, y + 4), htxt, font=font_h, fill="#333333")
+            cx += col_w[hi]
+        y += head_h
+
+        for i, (r, tip_lines, rh) in enumerate(chunk):
+            if i % 2 == 1:
+                draw.rectangle([x0, y, x0 + max_w, y + rh], fill="#FAFAFA")
+            draw.line([x0, y + rh, x0 + max_w, y + rh], fill="#EEEEEE", width=1)
+            cells = [
+                str(r["year"]),
+                str(r["age"]),
+                r.get("dayun") or "—",
+                r.get("liunian") or "—",
+                (r.get("interaction") or "—")[:18],
+            ]
+            cx = x0
+            for ci, val in enumerate(cells):
+                draw.text((cx + 3, y + 4), val, font=font_c, fill="#222222")
+                cx += col_w[ci]
+            norm = (r["score"] - min_score) / span
+            bar_max = col_w[5] - 8
+            bar_w = int(8 + norm * (bar_max - 8))
+            bar_color = (194, 24, 91) if r["score"] >= 55 else (171, 71, 188)
+            if r["score"] <= 35:
+                bar_color = (120, 144, 156)
+            by = y + rh // 2 - 4
+            draw.rectangle([cx + 4, by, cx + 4 + bar_w, by + 8], fill=bar_color)
+            cx += col_w[5]
+            ty = y + 3
+            for line in tip_lines:
+                draw.text((cx + 3, ty), line, font=font_tip, fill="#4E342E")
+                ty += int(9 * scale * 1.3)
+            y += rh
+
+        if pi == len(chunks) - 1:
+            draw.text((x0, y + 4), hint, font=font_tip, fill="#888888")
+
+        bio = io.BytesIO()
+        img.save(bio, format="PNG")
+        bio.seek(0)
+        draw_w = page_width_pt
+        draw_h = img.size[1] / scale
+        max_h = 700
+        if draw_h > max_h:
+            ratio = max_h / draw_h
+            draw_w = draw_w * ratio
+            draw_h = max_h
+        pages.append(RLImage(bio, width=draw_w, height=draw_h))
+    return pages
+
+
 def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunian: bool = False, lang: str = "zh"):
     """生成多页中文 PDF（嵌入 CJK 字体，避免黑方块）。金/钻可含流年报告；银卡不含。"""
     import io
@@ -1091,6 +1242,22 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
             add_page_block(page, fallback, page_index=i)
     else:
         story.append(P("暂无报告内容。", style_body))
+
+    # 附录：一生流年运势分析（有命盘即可；金/钻流年 PDF 尤为需要）
+    if isinstance(bazi_data, dict) and bazi_data.get("day_master") and cjk_path:
+        try:
+            fortune_pages = _pdf_lifetime_fortune_pages(
+                bazi_data, lang, cjk_path, float(content_width)
+            )
+            if fortune_pages:
+                if story and not isinstance(story[-1], PageBreak):
+                    story.append(PageBreak())
+                for i, img in enumerate(fortune_pages):
+                    story.append(img)
+                    if i < len(fortune_pages) - 1:
+                        story.append(PageBreak())
+        except Exception:
+            pass
 
     if story and isinstance(story[-1], PageBreak):
         story.pop()

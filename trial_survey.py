@@ -61,6 +61,7 @@ def render_trial_survey(lang: str, supabase_client, *, user_id: str, user_email:
 
     st.markdown(f"### {t('survey_heading', lang)}")
     st.caption(t("survey_intro", lang))
+    st.caption(t("survey_gold_hint", lang))
 
     latest = None
     if supabase_client and user_id:
