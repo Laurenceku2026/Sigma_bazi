@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
-from ui_texts import region_label, t
+from trial_survey import survey_rows_for_admin
 
 
 def _safe_date(value: Any) -> str:
@@ -343,30 +343,53 @@ def render_admin_page(lang: str, supabase_client) -> None:
             st.rerun()
 
     st.markdown("---")
-    st.markdown("### 📋 " + ("試用問卷（發給測試者）" if lang == "zh" else "Trial questionnaire"))
-    with st.expander("查看 10 題問卷摘要" if lang == "zh" else "View 10-question summary", expanded=False):
+    st.markdown("### 📋 " + ("试用问卷回复（App 内）" if lang == "zh" else "In-app survey responses"))
+    surveys = supabase_client.list_survey_responses(limit=200) if supabase_client else []
+    if not surveys:
+        st.caption(
+            "暂无问卷回复。请用户在 App「试用反馈」页填写；需先执行 sql/009_sf_survey_responses.sql。"
+            if lang == "zh"
+            else "No responses yet. Users fill in App → Feedback tab."
+        )
+    else:
+        srows = survey_rows_for_admin(surveys, lang)
+        st.dataframe(srows, use_container_width=True, hide_index=True, height=280)
+        with st.expander("查看完整开放建议" if lang == "zh" else "Full open feedback", expanded=False):
+            for r in surveys[:30]:
+                st.markdown(
+                    f"**{str(r.get('created_at') or '')[:10]}** · "
+                    f"{r.get('email') or '-'} · {r.get('background') or '-'}"
+                )
+                st.write(r.get("open_feedback") or "—")
+                st.markdown("---")
+
+    with st.expander("导出问卷模板（可选）" if lang == "zh" else "Export questionnaire template", expanded=False):
         st.markdown(
             """
-1. 首次註冊與排盤體驗  
-2. 命盤準確度與信任感（1–5）  
-3. DFSS × 八字概念是否清楚  
-4. 專業段 vs 白話段哪個更有用  
-5. 事業/財運/感情/健康哪類最有價值  
-6. 報告生成速度與穩定性  
-7. 介面語言與手機體驗  
-8. 免費預覽 vs 付費會員意願  
-9. 推薦意願 NPS（0–10）  
-10. 最重要的一項改進建議（開放題）
+用户可在 App **「试用反馈」** 页直接填写，无需微信。  
+15 题：5 专业 + 9 体验（1–10 分）+ 1 开放题。下方可下载离线模板备用。
             """.strip()
+            if lang == "zh"
+            else "Users can fill in App → Feedback tab. Download offline template below if needed."
         )
-        qpath = Path(__file__).resolve().parent / "docs" / "trial_questionnaire_zh_hant.md"
+        doc_dir = Path(__file__).resolve().parent / "docs"
+        qpath = doc_dir / "trial_questionnaire_zh_hant.md"
+        csvpath = doc_dir / "trial_questionnaire_table.csv"
         if qpath.is_file():
             st.download_button(
-                "📥 下載完整問卷（Markdown）" if lang == "zh" else "📥 Download questionnaire (MD)",
+                "📥 下载问卷（含微信填写版 + 表格）" if lang == "zh" else "📥 Download questionnaire (MD)",
                 data=qpath.read_text(encoding="utf-8"),
                 file_name="sigma_fate_trial_questionnaire.md",
                 mime="text/markdown",
                 key="admin_download_questionnaire",
+            )
+        if csvpath.is_file():
+            st.download_button(
+                "📥 下载表格 CSV（Excel/腾讯文档）" if lang == "zh" else "📥 Download table CSV",
+                data=csvpath.read_text(encoding="utf-8-sig"),
+                file_name="sigma_fate_trial_questionnaire.csv",
+                mime="text/csv",
+                key="admin_download_questionnaire_csv",
             )
 
     st.markdown("---")

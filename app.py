@@ -23,6 +23,7 @@ from mobile_meta import app_icon_path, inject_mobile_app_meta
 from report_generator import ReportGenerator
 from stripe_payment import StripeClient
 from supabase_client import AppAccessDenied, SupabaseClient
+from trial_survey import render_trial_survey
 from utils import format_bazi_display, generate_pdf_report, pdf_filename, render_bazi_chart
 
 st.set_page_config(
@@ -620,15 +621,20 @@ def generate_full_report(*, consume_quota: bool = True) -> bool:
                 else f"{t('generating', lang)} ({done}/{total}) {label}"
             )
 
+        gen_tier = (
+            tier
+            if tier in ("gold", "diamond")
+            else ("gold" if tier == "free" else "silver")
+        )
         report = report_gen.generate(
             st.session_state.bazi_data,
             st.session_state.birth_info,
-            tier if tier in PAID_TIERS else "silver",
+            gen_tier,
             lang=lang,
             progress_callback=on_progress,
         )
-        # 免费/银卡：无独立流年报告篇章（page10；兼容旧 page9 流年）
-        if tier == "free" or tier not in ("gold", "diamond"):
+        # 银卡：不含流年篇章（page10）
+        if tier == "silver":
             report = {
                 k: v
                 for k, v in report.items()
@@ -941,7 +947,7 @@ def render_report_pages(report: dict, *, protected: bool = False, pages=None):
     core_mode = pages is None or (1 in page_range and len(list(page_range)) > 1)
 
     for i in page_range:
-        if i == 10 and tier not in ("gold", "diamond"):
+        if i == 10 and tier == "silver":
             continue
         if i == 9 and legacy_ln9 and core_mode:
             continue
@@ -1160,8 +1166,9 @@ _nav = [
     t("tab_chart", lang),
     t("tab_report", lang),
     t("tab_liunian", lang),
+    t("tab_survey", lang),
 ]
-nav_cols = st.columns(4)
+nav_cols = st.columns(5)
 for i, lab in enumerate(_nav):
     with nav_cols[i]:
         is_on = int(st.session_state.get("ui_tab", 0)) == i
@@ -1306,7 +1313,7 @@ elif _tab == 2:
                     if _is_zh()
                     else "Health Part 2 is missing. Please regenerate the full report for pages 8–9."
                 )
-            if tier in ("gold", "diamond"):
+            if ReportGenerator.resolve_liunian_key(report):
                 if st.button(
                     t("goto_liunian_report", lang),
                     key="goto_liunian_from_report",
@@ -1326,34 +1333,43 @@ elif _tab == 2:
                 else "Free preview with watermark — no copy/download. Upgrade to unlock."
             )
             render_report_pages(report, protected=True, pages=range(1, 10))
+            if ReportGenerator.resolve_liunian_key(report):
+                st.caption(
+                    "已含流年报告预览，请点顶部「流年报告」查看（含水印）。"
+                    if _is_zh()
+                    else "Annual Luck preview included — open the Annual Luck tab (watermarked)."
+                )
             st.markdown("---")
             st.markdown(f"### {t('unlock_heading', lang)}")
             st.markdown(t("unlock_body", lang))
             render_membership_plans("tab_report_free")
 
-# ========== Tab 4：流年报告（金/钻独立篇章） ==========
+# ========== Tab 4：流年报告 ==========
 elif _tab == 3:
     tier = st.session_state.subscription_tier
     paid = tier in PAID_TIERS
     has_report = bool(st.session_state.report_content)
 
-    if tier not in ("gold", "diamond"):
-        st.warning(t("liunian_locked", lang))
-        st.markdown("---")
-        render_membership_plans("tab_liunian_upsell")
-    elif not has_report:
+    if not has_report:
         if st.session_state.bazi_data is None:
             st.info(t("need_input", lang))
         else:
             st.info(
-                "请先生成完整报告；金卡/钻石会同时生成「流年报告」篇章。"
+                "请先生成完整报告（免费预览亦含流年篇章，含水印）。"
                 if _is_zh()
-                else "Generate the full report first — Gold/Diamond also creates the Annual Luck chapter."
+                else "Generate the full report first — free preview includes Annual Luck (watermarked)."
             )
             render_report_cta("tab_liunian_empty")
     else:
         report = st.session_state.report_content
-        if paid:
+        if not ReportGenerator.resolve_liunian_key(report):
+            st.warning(
+                "当前报告尚无流年篇章。请点击重新生成完整报告（免费用户也会生成流年预览）。"
+                if _is_zh()
+                else "No Annual Luck chapter yet. Please regenerate the full report."
+            )
+            render_report_cta("tab_liunian_regen")
+        else:
             st.markdown(
                 f"<h2 style='font-weight:800;margin:0 0 0.4rem 0;'>{t('liunian_heading', lang)}</h2>",
                 unsafe_allow_html=True,
@@ -1365,15 +1381,39 @@ elif _tab == 3:
             ):
                 go_report_tab()
                 st.rerun()
-            render_liunian_report(report, protected=False)
+            if not paid:
+                st.warning(
+                    "免费预览模式：流年报告含水印条码，不可复制、不可下载。"
+                    if _is_zh()
+                    else "Free preview: Annual Luck is watermarked — no copy/download."
+                )
+            render_liunian_report(report, protected=not paid)
             st.markdown("---")
-            render_report_download_row(report, "tab_liunian")
-            st.markdown("---")
-            render_report_cta("tab_liunian_paid")
-        else:
-            render_liunian_report(report, protected=True)
-            st.markdown("---")
-            render_membership_plans("tab_liunian_free")
+            if paid:
+                render_report_download_row(report, "tab_liunian")
+                st.markdown("---")
+                render_report_cta("tab_liunian_paid")
+            else:
+                st.markdown(f"### {t('unlock_heading', lang)}")
+                st.markdown(t("unlock_body", lang))
+                render_membership_plans("tab_liunian_free")
+
+# ========== Tab 5：试用问卷 ==========
+elif _tab == 4:
+    if not is_registered():
+        st.info(t("survey_login_required", lang))
+        if st.button(t("login_btn", lang), key="survey_tab_login", type="primary"):
+            st.session_state.show_login = True
+            st.rerun()
+    else:
+        if st.session_state.bazi_data is None:
+            st.caption(t("survey_try_first", lang))
+        render_trial_survey(
+            lang,
+            supabase_client,
+            user_id=st.session_state.user_id,
+            user_email=st.session_state.user_email,
+        )
 
 st.markdown("---")
 st.caption(t("footer", lang))

@@ -948,6 +948,73 @@ class SupabaseClient:
             print(f"Log action error: {e}")
             return False
 
+    # ---------- 试用问卷 ----------
+
+    SURVEY_TABLE = "sf_survey_responses"
+
+    def save_survey_response(self, payload: Dict[str, Any]) -> bool:
+        try:
+            data = self._with_app_id(
+                {
+                    "survey_id": payload["survey_id"],
+                    "user_id": payload["user_id"],
+                    "email": payload.get("email"),
+                    "background": payload.get("background"),
+                    "scores": payload.get("scores") or {},
+                    "open_feedback": payload.get("open_feedback"),
+                    "recommend_score": payload.get("recommend_score"),
+                    "avg_pro": payload.get("avg_pro"),
+                    "avg_exp": payload.get("avg_exp"),
+                    "avg_all": payload.get("avg_all"),
+                    "ui_lang": payload.get("ui_lang"),
+                    "created_at": self._now(),
+                }
+            )
+            self._table(self.SURVEY_TABLE).insert(data).execute()
+            return True
+        except Exception as e:
+            self._set_error("save_survey_response", e)
+            # 表未建时写入 access_logs 兜底
+            try:
+                return self.log_action(
+                    payload.get("user_id", ""),
+                    "trial_survey",
+                    metadata=payload,
+                )
+            except Exception:
+                return False
+
+    def get_latest_survey(self, user_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            result = (
+                self._table(self.SURVEY_TABLE)
+                .select("*")
+                .eq("user_id", user_id)
+                .eq("app_id", self.app_id)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            rows = result.data or []
+            return rows[0] if rows else None
+        except Exception:
+            return None
+
+    def list_survey_responses(self, limit: int = 200) -> List[Dict]:
+        try:
+            result = (
+                self._table(self.SURVEY_TABLE)
+                .select("*")
+                .eq("app_id", self.app_id)
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return result.data or []
+        except Exception as e:
+            self._set_error("list_survey_responses", e)
+            return []
+
     # ---------- 工具 ----------
 
     def _generate_report_id(self) -> str:
