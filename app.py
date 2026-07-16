@@ -88,12 +88,34 @@ STRIPE_SECRET_KEY = _cfg("STRIPE_SECRET_KEY")
 STRIPE_PRICE_SILVER = _cfg("STRIPE_PRICE_SILVER")
 STRIPE_PRICE_GOLD = _cfg("STRIPE_PRICE_GOLD")
 STRIPE_PRICE_DIAMOND = _cfg("STRIPE_PRICE_DIAMOND")
+APP_BASE_URL = _cfg("APP_BASE_URL") or _cfg("STRIPE_SUCCESS_URL")
 ADMIN_USERNAME = _cfg("ADMIN_USERNAME", "Laurence_ku")
 ADMIN_PASSWORD = _cfg("ADMIN_PASSWORD", "Ku_product$2026")
 PWA_MANIFEST_URL = _cfg(
     "PWA_MANIFEST_URL",
     "https://raw.githubusercontent.com/Laurenceku2026/Sigma_bazi/main/static/manifest.webmanifest",
 )
+
+
+def _resolve_app_base_url() -> str:
+    """支付回跳用的 App 根地址。优先 Secrets，其次从请求 Host 推断。"""
+    configured = (APP_BASE_URL or "").strip().split("?")[0].rstrip("/")
+    if configured and "share.streamlit.io" not in configured:
+        return configured
+    try:
+        headers = st.context.headers
+        host = (headers.get("Host") or headers.get("host") or "").strip()
+        if host and "share.streamlit.io" not in host:
+            proto = (
+                headers.get("X-Forwarded-Proto")
+                or headers.get("x-forwarded-proto")
+                or "https"
+            )
+            return f"{proto}://{host}".rstrip("/")
+    except Exception:
+        pass
+    return configured if configured and "share.streamlit.io" not in configured else ""
+
 
 lang = st.session_state.lang
 inject_mobile_app_meta(manifest_url=PWA_MANIFEST_URL)
@@ -119,7 +141,11 @@ if SUPABASE_URL and SUPABASE_KEY:
 if STRIPE_SECRET_KEY:
     try:
         stripe_client = StripeClient(
-            STRIPE_SECRET_KEY, STRIPE_PRICE_SILVER, STRIPE_PRICE_GOLD, STRIPE_PRICE_DIAMOND
+            STRIPE_SECRET_KEY,
+            STRIPE_PRICE_SILVER,
+            STRIPE_PRICE_GOLD,
+            STRIPE_PRICE_DIAMOND,
+            app_base_url=_resolve_app_base_url(),
         )
     except Exception as e:
         _init_errors.append(f"Stripe: {e}")
@@ -132,6 +158,185 @@ if DEEPSEEK_API_KEY:
 
 if _init_errors:
     st.session_state["_init_errors"] = _init_errors
+
+
+def _clear_checkout_query_params() -> None:
+    try:
+        for key in ("checkout", "session_id", "success", "cancel"):
+            if key in st.query_params:
+                del st.query_params[key]
+    except Exception:
+        try:
+            st.query_params.clear()
+        except Exception:
+            pass
+
+
+def handle_stripe_checkout_return() -> None:
+    """支付完成回跳：核验 Stripe Session → 升级会员 → 清 URL 参数。"""
+    try:
+        checkout = st.query_params.get("checkout")
+    except Exception:
+        return
+    if not checkout:
+        # 兼容旧 success=1
+        try:
+            if st.query_params.get("success") in ("1", "true", "yes"):
+                st.info(
+                    "已从支付页返回。若会员未更新，请联系客服并附上支付凭证。"
+                    if _is_zh()
+                    else "Returned from payment. If membership did not update, contact support."
+                )
+                _clear_checkout_query_params()
+        except Exception:
+            pass
+        return
+
+    if checkout == "cancel":
+        st.warning(
+            "已取消支付，可随时重新选择方案。"
+            if _is_zh()
+            else "Payment cancelled. You can try again anytime."
+        )
+        st.session_state.show_join_membership = True
+        _clear_checkout_query_params()
+        return
+
+    if checkout != "success":
+        return
+
+    session_id = (st.query_params.get("session_id") or "").strip()
+    if not session_id:
+        st.error(
+            "支付回跳缺少 session_id，无法自动升级。请联系客服。"
+            if _is_zh()
+            else "Missing session_id on return — cannot auto-upgrade."
+        )
+        _clear_checkout_query_params()
+        return
+
+    if st.session_state.get("_stripe_fulfilled_session") == session_id:
+        _clear_checkout_query_params()
+        return
+
+    if not stripe_client or not supabase_client:
+        st.error(
+            "支付系统未就绪，无法完成升级。请稍后刷新或联系客服。"
+            if _is_zh()
+            else "Payment system not ready — please refresh or contact support."
+        )
+        return
+
+    try:
+        result = stripe_client.fulfill_checkout_session(session_id)
+    except Exception as e:
+        st.error(
+            (f"核验支付失败：{e}" if _is_zh() else f"Payment verification failed: {e}")
+        )
+        return
+
+    if not result.get("ok"):
+        st.error(
+            f"支付未完成或无法核验（{result.get('reason', '')}）。"
+            if _is_zh()
+            else f"Payment not verified ({result.get('reason', '')})."
+        )
+        _clear_checkout_query_params()
+        return
+
+    user_id = result["user_id"]
+    tier = result["tier"]
+    try:
+        ok = supabase_client.apply_membership_tier(user_id, tier)
+    except Exception as e:
+        st.error(
+            (f"升级会员失败：{e}" if _is_zh() else f"Failed to apply membership: {e}")
+        )
+        return
+
+    if not ok:
+        st.error(
+            "支付已确认，但写入会员失败。请联系客服并附上支付单号。"
+            if _is_zh()
+            else "Payment OK but membership update failed. Contact support."
+        )
+        return
+
+    try:
+        supabase_client.save_payment(
+            user_id,
+            payment_id=f"pay_{session_id[-18:]}",
+            stripe_session_id=session_id,
+            amount=int(result.get("amount_total") or 0),
+            tier=tier,
+            status="paid",
+        )
+    except Exception:
+        pass
+
+    st.session_state["_stripe_fulfilled_session"] = session_id
+    pay_email = (result.get("customer_email") or "").strip().lower()
+    cur_email = (st.session_state.get("user_email") or "").strip().lower()
+    same_user = st.session_state.get("user_id") == user_id or (
+        bool(pay_email) and bool(cur_email) and pay_email == cur_email
+    )
+    if same_user:
+        st.session_state.subscription_tier = tier
+        st.session_state.show_join_membership = False
+        st.session_state.selected_plan = None
+
+    try:
+        if st.session_state.get("auth_ok") and st.session_state.get("user_id"):
+            profile = supabase_client.get_user(st.session_state.user_id)
+            if profile and profile.get("subscription_tier") in PAID_TIERS:
+                st.session_state.subscription_tier = profile["subscription_tier"]
+            elif same_user:
+                st.session_state.subscription_tier = tier
+    except Exception:
+        if same_user:
+            st.session_state.subscription_tier = tier
+
+    tier_name = {
+        "silver": "银卡" if _is_zh() else "Silver",
+        "gold": "金卡" if _is_zh() else "Gold",
+        "diamond": "钻石" if _is_zh() else "Diamond",
+    }.get(tier, tier)
+    st.success(
+        f"支付成功！已升级为{tier_name}会员。"
+        if _is_zh()
+        else f"Payment successful! Upgraded to {tier_name}."
+    )
+    if not st.session_state.get("auth_ok"):
+        st.info(
+            "请登录支付时使用的账号，即可看到会员权益。"
+            if _is_zh()
+            else "Please sign in with the account used for payment."
+        )
+        st.session_state.show_login = True
+    st.balloons()
+    _clear_checkout_query_params()
+
+
+def refresh_membership_tier_from_db() -> None:
+    """已登录时从数据库刷新会员档（支付回跳后原标签页也能同步）。"""
+    if not supabase_client or not st.session_state.get("auth_ok"):
+        return
+    uid = st.session_state.get("user_id")
+    if not uid:
+        return
+    try:
+        profile = supabase_client.get_user(uid)
+        if not profile:
+            return
+        db_tier = profile.get("subscription_tier")
+        if db_tier in ("free", "silver", "gold", "diamond", "monthly", "quarterly", "annual"):
+            st.session_state.subscription_tier = db_tier
+    except Exception:
+        pass
+
+
+handle_stripe_checkout_return()
+refresh_membership_tier_from_db()
 
 
 def valid_email(email: str) -> bool:
@@ -588,6 +793,14 @@ def render_membership_plans(key_prefix: str = "main"):
         email = st.session_state.user_email or f"user_{st.session_state.user_id[:8]}@example.com"
         if stripe_client:
             try:
+                # 每次支付前刷新回跳地址（Secrets 或当前 Host）
+                base = _resolve_app_base_url()
+                if base:
+                    stripe_client.app_base_url = base
+                    stripe_client.success_url = (
+                        f"{base}/?checkout=success&session_id={{CHECKOUT_SESSION_ID}}"
+                    )
+                    stripe_client.cancel_url = f"{base}/?checkout=cancel"
                 session = stripe_client.create_checkout_session(
                     st.session_state.user_id, email, plan
                 )
@@ -596,12 +809,33 @@ def render_membership_plans(key_prefix: str = "main"):
                 pay_url = _html_esc(session.url, quote=True)
                 pay_label = _html_esc(t("pay_now", lang))
                 st.markdown(
-                    f'<a href="{pay_url}" target="_blank" rel="noopener noreferrer" '
-                    f'style="display:block;width:100%;box-sizing:border-box;text-align:center;'
-                    f'background:#C62828;color:#fff!important;font-weight:800;font-size:1.15rem;'
-                    f'padding:0.85rem 1rem;border-radius:10px;text-decoration:none;'
-                    f'letter-spacing:0.03em;box-shadow:0 2px 8px rgba(198,40,40,0.35);">'
-                    f"{pay_label}</a>",
+                    f"""
+<style>
+a.sf-pay-btn, a.sf-pay-btn:link, a.sf-pay-btn:visited, a.sf-pay-btn:hover,
+a.sf-pay-btn:active, a.sf-pay-btn span {{
+  color: #ffffff !important;
+  text-decoration: none !important;
+  -webkit-text-fill-color: #ffffff !important;
+}}
+a.sf-pay-btn {{
+  display: block !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  text-align: center !important;
+  background: #C62828 !important;
+  font-weight: 800 !important;
+  font-size: 1.15rem !important;
+  padding: 0.85rem 1rem !important;
+  border-radius: 10px !important;
+  letter-spacing: 0.03em !important;
+  box-shadow: 0 2px 8px rgba(198,40,40,0.35) !important;
+  border: none !important;
+}}
+</style>
+<a class="sf-pay-btn" href="{pay_url}" rel="noopener noreferrer">
+  <span style="color:#ffffff!important;-webkit-text-fill-color:#ffffff!important;">{pay_label}</span>
+</a>
+                    """,
                     unsafe_allow_html=True,
                 )
             except Exception as e:
