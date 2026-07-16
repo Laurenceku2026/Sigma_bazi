@@ -566,6 +566,30 @@ def _fortune_score_detailed(
     return int(max(18, min(96, round(score))))
 
 
+def _age_stage_priors(age: int) -> Dict[str, float]:
+    """
+    人生阶段先验（子平「人生大事」与现实节律）：
+    幼年重健康/长养，少年重学业，青年重感情与起步，壮年重事业财运，中年后事业+健康并重。
+    """
+    if age <= 5:
+        return {"career": 0.0, "wealth": 0.0, "love": 0.0, "health": 3.5}
+    if age <= 12:
+        return {"career": 0.15, "wealth": 0.0, "love": 0.0, "health": 2.2}  # career 映射为学业
+    if age <= 18:
+        return {"career": 1.6, "wealth": 0.1, "love": 0.35, "health": 1.2}
+    if age <= 22:
+        return {"career": 1.1, "wealth": 0.35, "love": 1.3, "health": 0.55}
+    if age <= 30:
+        return {"career": 0.9, "wealth": 0.55, "love": 1.65, "health": 0.45}
+    if age <= 40:
+        return {"career": 1.7, "wealth": 1.15, "love": 0.7, "health": 0.55}
+    if age <= 50:
+        return {"career": 1.35, "wealth": 1.0, "love": 0.55, "health": 1.0}
+    if age <= 60:
+        return {"career": 0.85, "wealth": 0.85, "love": 0.45, "health": 1.45}
+    return {"career": 0.4, "wealth": 0.45, "love": 0.35, "health": 2.0}
+
+
 def _pick_important_tip(
     bazi_data: dict,
     strength: dict,
@@ -581,130 +605,253 @@ def _pick_important_tip(
     detailed: bool,
     lang: str = "zh",
 ) -> str:
-    """四维中择一条最重要提示。"""
+    """按年龄阶段 + 十神/冲合，在四维中择一条最贴合的提示。"""
     dm = bazi_data.get("day_master") or ""
     gender = bazi_data.get("gender") or ""
     ln_god = shishen_of(dm, ln_gan)
     dy_god = shishen_of(dm, dy_gan)
     flags = inter.get("flags") or {}
     ln_wx = WUXING_MAP.get(ln_gan, "") or WUXING_MAP.get(ln_zhi, "")
+    organ = WX_ORGAN.get(ln_wx, "身心作息")
+    peach = _is_peach_blossom(bazi_data, ln_zhi)
 
     weights = {"career": 0.0, "wealth": 0.0, "love": 0.0, "health": 0.0}
-    for g, mul in ((ln_god, 1.0), (dy_god, 0.45)):
+    for g, mul in ((ln_god, 1.0), (dy_god, 0.4)):
         for k, v in _god_domain_weights(g).items():
             weights[k] += v * mul
 
-    if _is_peach_blossom(bazi_data, ln_zhi):
-        weights["love"] += 1.2
+    # 年龄阶段强先验（避免幼年出现「事业升迁」）
+    for k, v in _age_stage_priors(age).items():
+        weights[k] += v
+
+    if peach and age >= 16:
+        weights["love"] += 1.35
     if flags.get("chong") or flags.get("tianke_dichong"):
-        weights["health"] += 0.7
-        weights["career"] += 0.35
+        weights["health"] += 0.85 if age <= 18 or age >= 40 else 0.55
+        if 25 <= age <= 55:
+            weights["career"] += 0.3
+        if 18 <= age <= 35:
+            weights["love"] += 0.35
     if flags.get("xing") or flags.get("hai"):
-        weights["health"] += 0.55
-        weights["love"] += 0.3
-    if ln_god in ("正财", "偏财", "劫财"):
-        weights["wealth"] += 0.5
-    if ln_god in ("正官", "七杀", "伤官"):
-        weights["career"] += 0.45
-    # 中年后健康权重略升
-    if age >= 45:
-        weights["health"] += 0.25
-    if age >= 60:
-        weights["health"] += 0.35
+        weights["health"] += 0.5
+    if ln_god in ("正财", "偏财", "劫财") and age >= 22:
+        weights["wealth"] += 0.55
+    if ln_god in ("正官", "七杀", "伤官") and age >= 18:
+        weights["career"] += 0.5
+    if ln_god in ("正印", "偏印") and age <= 22:
+        weights["career"] += 0.8  # 学业
+        weights["health"] += 0.3
+
+    # 硬约束：幼年几乎只谈健康/成长
+    if age <= 5:
+        weights = {"career": 0.0, "wealth": 0.0, "love": 0.0, "health": 5.0}
+        if flags.get("chong") or flags.get("xing") or score <= 40:
+            weights["health"] += 1.0
+    elif age <= 12:
+        weights["love"] = 0.0
+        weights["wealth"] = 0.0
+        weights["health"] = max(weights["health"], weights["career"] * 0.8 + 1.0)
 
     domain = max(weights, key=weights.get)
 
-    # 文案库（简体；最后再转繁）
-    tips = {
-        "career": {
-            "正官": "事业：升迁/考职/责权增加之年，宜守规建功，忌与上司硬碰。",
-            "七杀": "事业：竞争与压力大，宜主动布局、找贵人，忌意气用事。",
-            "伤官": "事业：适合创新转岗或表达展示，忌顶撞制度与口舌是非。",
-            "食神": "事业：适合发挥专长与技艺变现，稳中推进项目。",
-            "比肩": "事业：合伙/同辈机遇多，宜分清权责，防意见不合。",
-            "劫财": "事业：变动快，宜防同事抢功或合作纠纷。",
-            "正印": "事业：学习考证、贵人提携年，宜充实专业再求突破。",
-            "偏印": "事业：适合研究、策划、冷门专长，忌三心二意。",
-            "default": "事业：宜稳扎稳打，重大决策先评估资源与时机。",
-        },
-        "wealth": {
-            "正财": "财运：正财稳健，宜储蓄与固定收益，忌盲目加杠杆。",
-            "偏财": "财运：偏财机会现，可适度把握，但需止损纪律。",
-            "劫财": "财运：破财风险偏高，忌借贷担保、合伙不清。",
-            "食神": "财运：才艺/服务变现佳，宜开源轻资产。",
-            "伤官": "财运：创意变现可期，忌投机赌博心态。",
-            "七杀": "财运：求财辛苦，宜以技以劳换酬，忌急功近利。",
-            "default": "财运：量入为出，大额投资宜分批、留备用金。",
-        },
-        "love": {
-            "正财": "感情：男命正财为妻星，关注家庭经营与承诺兑现。",
-            "偏财": "感情：人际桃花增，已婚者尤须界限清楚。",
-            "正官": "感情：女命正官为夫星，婚恋进展或责任议题升温。",
-            "七杀": "感情：关系张力大，宜沟通而非冷战或控制。",
-            "食神": "感情：相处轻松有情趣，适合增进亲密与共同兴趣。",
-            "伤官": "感情：口舌易起，表达真诚但需收敛锐气。",
-            "peach": "感情：桃花年，单身宜识人，有伴者防暧昧干扰。",
-            "chong": "感情：变动之年，聚散议题浮现，宜理性处理关系节点。",
-            "default": "感情：重沟通与陪伴，少冷战，重大决定勿冲动。",
-        },
-        "health": {
-            "default": f"健康：留意{WX_ORGAN.get(ln_wx, '作息与体检')}，劳逸结合，勿硬撑。",
-            "chong": f"健康：冲刑之年压力大，重点养护{WX_ORGAN.get(ln_wx, '身心')}，定期检查。",
-            "kill": "健康：压力/血压/睡眠宜重点管理，运动疏泄情绪。",
-            "print": "健康：宜养神静心，避免过劳透支；饮食规律。",
-        },
-    }
+    # —— 按年龄生成文案 ——
+    text = ""
 
-    if domain == "career":
-        text = tips["career"].get(ln_god) or tips["career"]["default"]
-    elif domain == "wealth":
-        text = tips["wealth"].get(ln_god) or tips["wealth"]["default"]
-    elif domain == "love":
-        if _is_peach_blossom(bazi_data, ln_zhi):
-            text = tips["love"]["peach"]
-        elif flags.get("chong"):
-            text = tips["love"]["chong"]
-        elif gender.startswith("女") and ln_god in ("正官", "七杀"):
-            text = tips["love"].get(ln_god) or tips["love"]["default"]
-        elif gender.startswith("男") and ln_god in ("正财", "偏财"):
-            text = tips["love"].get(ln_god) or tips["love"]["default"]
-        else:
-            text = tips["love"].get(ln_god) or tips["love"]["default"]
-    else:
+    if age <= 5:
         if flags.get("chong") or flags.get("tianke_dichong") or flags.get("xing"):
-            text = tips["health"]["chong"]
+            text = f"健康：幼冲刑之年，留意感冒跌碰与{organ}，作息规律，家长多陪伴。"
         elif ln_god in ("七杀", "伤官"):
-            text = tips["health"]["kill"]
-        elif ln_god in ("正印", "偏印"):
-            text = tips["health"]["print"]
+            text = f"健康：性情较躁或敏感，宜疏导情绪，防护{organ}，少刺激性环境。"
+        elif ln_god in ("正印", "偏印", "食神"):
+            text = "健康：长养较顺，重营养睡眠与安全看护，培养安心感。"
+        elif score <= 40:
+            text = f"健康：体质偏弱之年，慎风寒饮食，重点养护{organ}。"
         else:
-            text = tips["health"]["default"]
+            text = f"健康：幼儿长养年，均衡饮食、疫苗与体检按程，留意{organ}。"
 
-    # 运势极值附加一句（避免与冲刑文案矛盾）
-    if detailed:
+    elif age <= 12:
+        if domain == "health" or flags.get("chong") or score <= 40:
+            text = f"健康：学龄成长年，睡眠充足、户外运动，留意{organ}与近视防护。"
+        elif ln_god in ("正印", "偏印", "正官"):
+            text = "学业：启蒙/求学期，培养专注与习惯，忌过度报班施压。"
+        elif ln_god in ("伤官", "食神"):
+            text = "学业：思维活跃，适合兴趣启发；防分心与顶撞师长。"
+        else:
+            text = "学业：打牢基础之年，劳逸结合，身心同步成长。"
+
+    elif age <= 18:
+        if domain == "health" and (flags.get("chong") or score <= 38):
+            text = f"健康：青春期注意作息与情绪，养护{organ}，避免熬夜透支。"
+        elif domain == "love" and peach:
+            text = "感情：情窦初开，宜分寸交往，重心仍在学业与自我成长。"
+        elif ln_god in ("正官", "正印", "七杀"):
+            text = "学业：考试/升学关键年，宜规划目标、稳住心态，忌临时抱佛脚。"
+        elif ln_god in ("伤官", "食神"):
+            text = "学业：适合竞赛、表达或技艺发展，防偏科与口舌。"
+        else:
+            text = "学业：打磨能力与志趣，为升学或就业做准备；兼顾身心。"
+
+    elif age <= 22:
+        if domain == "love":
+            if peach:
+                text = "感情：恋爱契机较多，宜识人与自我边界，勿因感情荒废前程。"
+            else:
+                text = "感情：关系议题升温，真诚沟通；重大承诺宜与人生规划一并考虑。"
+        elif domain == "career":
+            text = "事业：求学收官或初入职场，重学习曲线与贵人，忌好高骛远。"
+        elif domain == "wealth":
+            text = "财运：初有进账宜储蓄理财启蒙，忌超前消费与担保。"
+        else:
+            text = f"健康：过渡压力大，规律作息，留意{organ}。"
+
+    elif age <= 30:
+        if domain == "love":
+            if peach:
+                text = "感情：桃花较旺，适婚配或关系定性；有伴者防暧昧与口舌。"
+            elif flags.get("chong"):
+                text = "感情：聚散变动年，婚恋决策宜冷静，沟通优于冷战。"
+            elif gender.startswith("女") and ln_god in ("正官", "七杀"):
+                text = "感情：婚恋/责任议题突出，适合认真看待承诺与匹配度。"
+            elif gender.startswith("男") and ln_god in ("正财", "偏财"):
+                text = "感情：家庭与伴侣经营年，重兑现承诺，忌花心分心。"
+            else:
+                text = "感情：适合深化关系或规划婚姻，也需平衡事业起步。"
+        elif domain == "career":
+            text = tips_career_young(ln_god)
+        elif domain == "wealth":
+            text = tips_wealth(ln_god, age)
+        else:
+            text = f"健康：奋斗期易过劳，运动减压，留意{organ}。"
+
+    elif age <= 40:
+        if domain == "career":
+            text = tips_career_prime(ln_god)
+        elif domain == "wealth":
+            text = tips_wealth(ln_god, age)
+        elif domain == "love":
+            text = "感情：家庭经营与责任年，重陪伴沟通，防因事业冷落伴侣。"
+        else:
+            text = f"健康：压力型透支初显，体检与{organ}养护要跟上。"
+
+    elif age <= 50:
+        if domain == "health" or (flags.get("chong") and score <= 55):
+            text = f"健康：中年转折，定期体检，重点{organ}，戒熬夜烟酒。"
+        elif domain == "career":
+            text = tips_career_mid(ln_god)
+        elif domain == "wealth":
+            text = tips_wealth(ln_god, age)
+        else:
+            text = "感情：家庭与亲代关系议题，宜包容沟通，少争执伤和气。"
+
+    elif age <= 60:
+        if domain == "health":
+            text = f"健康：代谢与慢性风险上升，养护{organ}，保持适度运动。"
+        elif domain == "career":
+            text = "事业：宜传帮带与守成优化，重大扩张需量力；规划退休节奏。"
+        elif domain == "wealth":
+            text = "财运：重保值与配置，忌高风险投机；理清传承与保障。"
+        else:
+            text = "感情：夫妻相处重体贴，亲子关系可多走动、少苛责。"
+
+    else:
+        # 60岁以后：以颐养健康为主，财运/事业为辅
+        if domain == "wealth" and age <= 75 and not (flags.get("chong") and score <= 40):
+            text = "财运：以稳妥保障为先，大额决策与家人商议，防诈骗。"
+        elif domain == "career" and age <= 70:
+            text = "事业：量力参与顾问/兴趣事业，勿过劳；重生活品质。"
+        elif domain == "love":
+            text = "感情：亲情友情为贵，多聚会少执拗，家庭和睦即福。"
+        elif flags.get("chong") or flags.get("xing") or score <= 40:
+            text = f"健康：冲刑或弱运年，起居谨慎，重点{organ}，遵医嘱复查。"
+        elif ln_god in ("正印", "食神"):
+            text = "健康：宜清心缓步、兴趣养生，饮食清淡，防跌滑。"
+        else:
+            text = f"健康：颐养为主，规律体检与用药，留意{organ}与情绪。"
+
+    # 详细年附加语气（成年后）
+    if detailed and age >= 18:
         if flags.get("tianke_dichong"):
             text = "⚠天克地冲：" + text
         elif score >= 78 and not (flags.get("chong") or flags.get("xing")):
-            text = text + "整体气势偏旺，宜主动进取但留余地。"
+            text = text + "整体气势偏旺，可主动进取但留余地。"
         elif score >= 78 and (flags.get("chong") or flags.get("xing")):
-            text = text + "变动中藏机遇，宜主动调整，同时稳住身心。"
+            text = text + "变动中藏机遇，宜调整节奏并稳住身心。"
         elif score <= 35:
-            text = text + "整体宜守不宜攻，大事缓决、防意外开销。"
+            text = text + "整体宜守不宜攻，大事缓决。"
 
-    if not detailed and score >= 45 and score <= 70 and not (
-        flags.get("chong") or flags.get("xing") or flags.get("tianke_dichong")
-        or _is_peach_blossom(bazi_data, ln_zhi)
-        or ln_god in ("正官", "七杀", "正财", "劫财")
+    # 非焦点平常年：缩短（仍保持年龄标签）
+    if not detailed and age >= 13 and score >= 45 and score <= 70 and not (
+        flags.get("chong") or flags.get("xing") or flags.get("tianke_dichong") or peach
     ):
-        # 平常年份：短提示
-        text = {
-            "career": "事业：按部就班即可。",
+        short = {
+            "career": "学业：平稳进取即可。" if age <= 18 else "事业：按部就班即可。",
             "wealth": "财运：收支平稳即可。",
             "love": "感情：维系日常即可。",
             "health": "健康：常规保养即可。",
-        }.get(domain, "运势平稳，顺势而为。")
+        }
+        # 幼年/童年不缩短成「事业」
+        if age <= 12:
+            text = "健康：常规养护即可。" if domain == "health" else "学业：循序渐进即可。"
+        else:
+            text = short.get(domain, "运势平稳，顺势而为。")
 
     return _maybe_trad(text, lang)
+
+
+def tips_career_young(ln_god: str) -> str:
+    table = {
+        "正官": "事业：职场规矩与考核年，宜稳表现、积口碑，忌顶撞上级。",
+        "七杀": "事业：竞争压力大，适合挑战岗，但需策略与抗压，忌意气。",
+        "伤官": "事业：适合创意/表达岗或转轨试错，防口舌与制度冲突。",
+        "食神": "事业：专长变现起步好，深耕技能比跳槽频率更重要。",
+        "正印": "事业：进修考证、导师提携年，先充电再冲刺。",
+        "偏印": "事业：适合研究策划类方向，忌分散目标。",
+        "比肩": "事业：同辈合作多，分清权责，防争功。",
+        "劫财": "事业：变动快，防抢夺与不稳合作。",
+    }
+    return table.get(ln_god, "事业：打基础、建人脉之年，重大跳槽需看清平台。")
+
+
+def tips_career_prime(ln_god: str) -> str:
+    table = {
+        "正官": "事业：升迁/责权扩张窗口，守规建功，忌与制度硬碰。",
+        "七杀": "事业：高压攻坚年，宜借势破局，防过劳与树敌。",
+        "伤官": "事业：创新改革或转岗窗口，表达有力但需政治智慧。",
+        "食神": "事业：专业口碑变现佳，适合做精做深。",
+        "正印": "事业：贵人与资质加持，适合品牌与管理升级。",
+        "偏印": "事业：适合战略、咨询、冷门专长突破。",
+        "比肩": "事业：合伙/团队扩张，契约与股权宜清晰。",
+        "劫财": "事业：变动与竞争并存，防拆台与资源被分。",
+        "正财": "事业：以业绩与现金流说话，稳扎稳打拓展。",
+        "偏财": "事业：项目/机会型收益，评估风险后再上。",
+    }
+    return table.get(ln_god, "事业：建立壁垒与成果兑现年，重大决策先评估资源。")
+
+
+def tips_career_mid(ln_god: str) -> str:
+    table = {
+        "正官": "事业：管理/名望议题，宜传帮带，忌恋战无谓是非。",
+        "七杀": "事业：压力型事务多，授权分工，防健康透支。",
+        "伤官": "事业：可转型咨询/创作，少硬刚体制。",
+        "食神": "事业：经验变现、作品或课程方向佳。",
+        "正印": "事业：顾问、教育、幕后支持角色顺。",
+    }
+    return table.get(ln_god, "事业：优化结构、培养二梯队，扩张需量力。")
+
+
+def tips_wealth(ln_god: str, age: int) -> str:
+    table = {
+        "正财": "财运：正财稳健，宜储蓄与固定收益，忌盲目加杠杆。",
+        "偏财": "财运：偏财机会现，可适度把握，须止损纪律。",
+        "劫财": "财运：破财风险偏高，忌借贷担保、合伙不清。",
+        "食神": "财运：才艺/服务变现佳，宜开源轻资产。",
+        "伤官": "财运：创意变现可期，忌投机赌博心态。",
+        "七杀": "财运：求财辛苦，以技以劳换酬，忌急功近利。",
+    }
+    text = table.get(ln_god, "财运：量入为出，大额投资宜分批、留备用金。")
+    if age >= 45 and ln_god in ("偏财", "劫财"):
+        text = text + "中年后更宜稳健配置。"
+    return text
 
 
 def build_lifetime_fortune(bazi_data: dict, max_age: int = 80, lang: str = "zh") -> List[dict]:
@@ -717,11 +864,7 @@ def build_lifetime_fortune(bazi_data: dict, max_age: int = 80, lang: str = "zh")
     now_y = datetime.now().year
     rows = []
     for age in range(1, max_age + 1):
-        year = birth_year + age  # 实岁：出生年+age ≈ 虚岁常见算法对齐附图
-        # 附图用「实岁」：1岁=出生年，故 year = birth_year + age - 1 更贴「实岁」
-        # 现有引擎大运用 birth_year + start_age，与此前表一致；保持 birth_year + age
-        # 为与附图「1970 age1」一致：若 birth 1969，age1→1970 = birth+1
-        # 用户附图：1970 实岁1 → birth_year 1969, year=birth+age
+        year = birth_year + age
         ln_gan, ln_zhi = ganzhi_of_year(year)
         dy_gan, dy_zhi = _dayun_for_age(bazi_data, age)
         inter = _interaction_bundle(dy_gan, dy_zhi, ln_gan, ln_zhi, natal_zhi)
@@ -782,7 +925,8 @@ def render_lifetime_fortune_html(
         cols = ("西元", "实岁", "大运", "流年", "大运流年合化", "运势", "重要提示")
         hint = (
             f"{level_zh}。红线越长代表该年运势越佳；"
-            "「重要提示」在事业·财运·感情·健康中择最关键一条；"
+            "「重要提示」按年龄阶段（幼年健康、青年感情、壮年事业、中年后健康）"
+            "并结合十神冲合，在事业·财运·感情·健康中择最相关一条；"
             "今年起未来十年提示更细。仅供参考，非医疗/投资建议。"
         )
         if lang == "zh_hant":
@@ -790,11 +934,17 @@ def render_lifetime_fortune_html(
             cols = tuple(_maybe_trad(c, lang) for c in cols)
             hint = _maybe_trad(hint, lang)
 
-    head = "".join(
-        f"<th style='padding:6px 8px;background:#f5f5f5;border-bottom:1px solid #ddd;"
-        f"font-size:0.75rem;font-weight:600;text-align:center;'>{c}</th>"
-        for c in cols
-    )
+    # 列宽：合化收窄约 25%，重要提示加宽
+    # 西元/实岁/大运/流年/合化/运势/重要提示
+    col_widths = ("7%", "5%", "7%", "7%", "9%", "16%", "49%")
+    head_cells = []
+    for i, c in enumerate(cols):
+        w = col_widths[i] if i < len(col_widths) else "auto"
+        head_cells.append(
+            f"<th style='padding:6px 6px;background:#f5f5f5;border-bottom:1px solid #ddd;"
+            f"font-size:0.72rem;font-weight:600;text-align:center;width:{w};'>{c}</th>"
+        )
+    head = "".join(head_cells)
     body_rows = []
     max_score = max(r["score"] for r in rows) or 100
     min_score = min(r["score"] for r in rows) or 0
@@ -820,20 +970,24 @@ def render_lifetime_fortune_html(
         tip_style = "font-weight:600;color:#4E342E;" if is_focus else "color:#666;"
         body_rows.append(
             f"<tr style='{row_bg}'>"
-            f"<td style='padding:4px 6px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;'>{r['year']}</td>"
-            f"<td style='padding:4px 6px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;{age_style}'>{r['age']}</td>"
-            f"<td style='padding:4px 6px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;'>{r['dayun']}</td>"
-            f"<td style='padding:4px 6px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;'>{r['liunian']}</td>"
-            f"<td style='padding:4px 6px;border-bottom:1px solid #eee;text-align:center;font-size:0.72rem;color:#666;'>{inter}</td>"
-            f"<td style='padding:4px 6px;border-bottom:1px solid #eee;'>{bar}</td>"
-            f"<td style='padding:4px 8px;border-bottom:1px solid #eee;text-align:left;font-size:0.75rem;{tip_style};max-width:280px;'>{tip}</td>"
+            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;width:{col_widths[0]};'>{r['year']}</td>"
+            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;width:{col_widths[1]};{age_style}'>{r['age']}</td>"
+            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;width:{col_widths[2]};'>{r['dayun']}</td>"
+            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;width:{col_widths[3]};'>{r['liunian']}</td>"
+            f"<td style='padding:4px 3px;border-bottom:1px solid #eee;text-align:center;font-size:0.68rem;color:#666;"
+            f"width:{col_widths[4]};max-width:72px;word-break:break-word;line-height:1.35;'>{inter}</td>"
+            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;width:{col_widths[5]};'>{bar}</td>"
+            f"<td style='padding:4px 8px;border-bottom:1px solid #eee;text-align:left;font-size:0.75rem;"
+            f"{tip_style};width:{col_widths[6]};min-width:200px;line-height:1.45;'>{tip}</td>"
             "</tr>"
         )
+    colgroup = "".join(f"<col style='width:{w};'/>" for w in col_widths)
     return (
         f"<div style='margin-top:8px;'>"
         f"<div style='font-weight:700;color:#8B4513;margin-bottom:8px;font-size:1.05rem;'>{title}：</div>"
         f"<div style='overflow-x:auto;'>"
-        f"<table style='width:100%;border-collapse:collapse;background:#fff;'>"
+        f"<table style='width:100%;border-collapse:collapse;background:#fff;table-layout:fixed;'>"
+        f"<colgroup>{colgroup}</colgroup>"
         f"<thead><tr>{head}</tr></thead>"
         f"<tbody>{''.join(body_rows)}</tbody>"
         f"</table></div>"

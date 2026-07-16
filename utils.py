@@ -562,8 +562,113 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
         )
 
 
+def _resolve_pdf_cjk_font() -> tuple:
+    """
+    返回 (font_body_name, font_head_name)。
+    优先嵌入 TrueType/OTF 中文字体（避免 CID 在 Chrome/手机 PDF 里显示黑方块）；
+    找不到再回退 CID（依赖阅读器自带字形，兼容性差）。
+    """
+    import tempfile
+    from pathlib import Path
+
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    here = Path(__file__).resolve().parent
+    candidates = [
+        (here / "fonts" / "NotoSansSC-Regular.otf", None),
+        (here / "fonts" / "NotoSansSC-Regular.ttf", None),
+        (here / "fonts" / "SimHei.ttf", None),
+        (Path(r"C:\Windows\Fonts\simhei.ttf"), None),
+        (Path(r"C:\Windows\Fonts\msyh.ttc"), 0),
+        (Path(r"C:\Windows\Fonts\simsun.ttc"), 0),
+        (Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"), 0),
+        (Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"), 0),
+        (Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"), 0),
+        (Path("/usr/share/fonts/truetype/arphic/uming.ttc"), 0),
+    ]
+
+    cache_dir = Path(tempfile.gettempdir()) / "sigma_fate_fonts"
+    cache_font = cache_dir / "NotoSansSC-Regular.otf"
+    if cache_font.exists() and cache_font.stat().st_size > 500_000:
+        candidates.insert(0, (cache_font, None))
+
+    def _try_register(path: Path, subfont_index):
+        if not path.is_file():
+            return None
+        name = "SFCJK"
+        # 同进程内已注册过则直接复用
+        try:
+            if name in pdfmetrics.getRegisteredFontNames():
+                return name
+        except Exception:
+            pass
+        try:
+            if path.suffix.lower() == ".ttc":
+                idx = 0 if subfont_index is None else int(subfont_index)
+                pdfmetrics.registerFont(TTFont(name, str(path), subfontIndex=idx))
+            else:
+                pdfmetrics.registerFont(TTFont(name, str(path)))
+            try:
+                pdfmetrics.registerFontFamily(
+                    name, normal=name, bold=name, italic=name, boldItalic=name
+                )
+            except Exception:
+                pass
+            return name
+        except Exception:
+            return None
+
+    for path, idx in candidates:
+        got = _try_register(path, idx)
+        if got:
+            return got, got
+
+    # Streamlit Cloud 等环境：下载开源 Noto Sans SC 并缓存
+    urls = (
+        "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf",
+        "https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf",
+    )
+    try:
+        import urllib.request
+
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = cache_dir / "NotoSansSC-Regular.otf.part"
+        for url in urls:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "SigmaFateBaZi/1.0"})
+                with urllib.request.urlopen(req, timeout=90) as resp, open(tmp, "wb") as out:
+                    while True:
+                        chunk = resp.read(1024 * 256)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                if tmp.stat().st_size > 500_000:
+                    tmp.replace(cache_font)
+                    got = _try_register(cache_font, None)
+                    if got:
+                        return got, got
+            except Exception:
+                continue
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    try:
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+        pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+        pdfmetrics.registerFont(UnicodeCIDFont("STHeiti-Light"))
+        return "STSong-Light", "STHeiti-Light"
+    except Exception:
+        return "Helvetica", "Helvetica"
+
+
 def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunian: bool = False, lang: str = "zh"):
-    """生成多页中文 PDF（ReportLab CID 宋体）。金/钻可含流年报告；银卡不含。"""
+    """生成多页中文 PDF（嵌入 CJK 字体，避免黑方块）。金/钻可含流年报告；银卡不含。"""
     import io
     import re
     from xml.sax.saxutils import escape
@@ -572,8 +677,6 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
     from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 
     from report_generator import ReportGenerator
@@ -588,13 +691,7 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
                 return s
         return s
 
-    font_body = "STSong-Light"
-    font_head = "STHeiti-Light"
-    try:
-        pdfmetrics.registerFont(UnicodeCIDFont(font_body))
-        pdfmetrics.registerFont(UnicodeCIDFont(font_head))
-    except Exception:
-        font_body = font_head = "Helvetica"
+    font_body, font_head = _resolve_pdf_cjk_font()
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
