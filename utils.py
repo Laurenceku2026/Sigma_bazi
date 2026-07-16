@@ -740,6 +740,25 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
                 p = P(para, style_body)
                 if p:
                     story.append(p)
+        cm = page.get("current_month") if isinstance(page.get("current_month"), dict) else None
+        if cm and any(cm.get(k) for k in ("overview", "career", "wealth", "relationship", "health", "action")):
+            story.append(P("当月注意（事业 · 财运 · 感情 · 健康）", style_h2, bold=True))
+            if cm.get("label"):
+                p = P(str(cm["label"]), style_body, bold=True)
+                if p:
+                    story.append(p)
+            for lab, key in (
+                ("总览", "overview"),
+                ("事业", "career"),
+                ("财运", "wealth"),
+                ("感情", "relationship"),
+                ("健康", "health"),
+                ("行动", "action"),
+            ):
+                if cm.get(key):
+                    pp = P(f"{lab}：{cm[key]}", style_body)
+                    if pp:
+                        story.append(pp)
         quarters = page.get("quarters") if isinstance(page.get("quarters"), list) else []
         if quarters:
             story.append(P("四季流年预测", style_h2, bold=True))

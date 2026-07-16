@@ -607,10 +607,52 @@ def generate_full_report(*, consume_quota: bool = True) -> bool:
 
 def go_report_tab():
     st.session_state.ui_tab = 2
+    st.session_state["_scroll_top"] = True
 
 
 def go_liunian_tab():
     st.session_state.ui_tab = 3
+    st.session_state["_scroll_top"] = True
+
+
+def apply_scroll_top_if_needed():
+    """从命盘底部点进报告时滚回顶部，避免用户仍停在页底误以为没生成。"""
+    if not st.session_state.pop("_scroll_top", False):
+        return
+    import streamlit.components.v1 as components
+
+    components.html(
+        """
+<script>
+(function () {
+  const w = window.parent || window;
+  const tryScroll = () => {
+    try {
+      w.scrollTo(0, 0);
+      const doc = w.document;
+      const nodes = [
+        doc.scrollingElement,
+        doc.documentElement,
+        doc.body,
+        doc.querySelector('[data-testid="stAppViewContainer"]'),
+        doc.querySelector('section.main'),
+        doc.querySelector('[data-testid="stMain"]'),
+      ];
+      nodes.forEach((el) => {
+        if (el && typeof el.scrollTo === 'function') el.scrollTo(0, 0);
+        if (el) el.scrollTop = 0;
+      });
+    } catch (e) {}
+  };
+  tryScroll();
+  setTimeout(tryScroll, 50);
+  setTimeout(tryScroll, 200);
+})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 def render_report_download_row(report: dict, key_prefix: str = "dl"):
@@ -1064,9 +1106,11 @@ for i, lab in enumerate(_nav):
             use_container_width=True,
         ):
             st.session_state.ui_tab = i
+            st.session_state["_scroll_top"] = True
             st.rerun()
 
 _tab = int(st.session_state.get("ui_tab", 0))
+apply_scroll_top_if_needed()
 
 # ========== Tab 1：输入 + 命盘 ==========
 if _tab == 0:
@@ -1190,6 +1234,12 @@ elif _tab == 2:
         if paid:
             st.caption(f"{t('generated_at', lang)}：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
             st.caption(t("report_part_legend", lang))
+            if ReportGenerator.health_part2_missing(report):
+                st.warning(
+                    "当前报告缺少「健康详批 Part 2（方向与化解）」。请点击重新生成完整报告以获得页八+页九。"
+                    if _is_zh()
+                    else "Health Part 2 is missing. Please regenerate the full report for pages 8–9."
+                )
             if tier in ("gold", "diamond"):
                 if st.button(
                     t("goto_liunian_report", lang),

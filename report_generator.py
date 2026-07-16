@@ -38,7 +38,7 @@ class ReportGenerator:
         ("page7", "感情详批 (Part 2)", "【方向与化解】关系经营方向、另一半特质与相处法、环境/风水辅助、矛盾化解与推进时机"),
         ("page8", "健康详批 (Part 1)", "【局势】须结合实岁/虚岁与大运；五行脏腑对应；中年后心血管/血压/代谢风险；易病月份与体检警示（参考非诊断）"),
         ("page9", "健康详批 (Part 2)", "【方向与化解】针对 Part1 风险的调养方向、作息/饮食/运动建议、五行补泻思路、就医检查清单与情绪压力化解（参考非诊断）"),
-        ("page10", "流年报告", "流年总论 + 四季（春夏秋冬）预测与建议，每季点出1～2个关键流月"),
+        ("page10", "流年报告", "当年干支总论；当月（流月）事业·财运·感情·健康注意事项；四季走势与每季1～2个关键流月"),
     ]
 
     PAGE_SPECS_EN = [
@@ -51,7 +51,7 @@ class ReportGenerator:
         ("page7", "Relationship (Part 2)", "[Direction & remedy] How to nurture the bond, partner traits & approach, environment tips, conflict remedies and timing"),
         ("page8", "Health (Part 1)", "[Situation] Age + decade stage; organ map; midlife cardio/BP/metabolic risks; sensitive months; screening alerts (not diagnosis)"),
         ("page9", "Health (Part 2)", "[Direction & remedy] Care direction for Part1 risks; lifestyle/diet/exercise; element-balancing tips; checkup list & stress remedies (not diagnosis)"),
-        ("page10", "Annual Luck Report", "Year overview + four seasons with 1–2 key months each"),
+        ("page10", "Annual Luck Report", "Year overview; current month cautions for career/wealth/relationship/health; four seasons with 1–2 key months each"),
     ]
 
     CORE_PAGE_COUNT = 9  # page1–page9（含健康 Part2）；page10 为流年
@@ -141,25 +141,37 @@ class ReportGenerator:
 
     @staticmethod
     def resolve_liunian_key(report: Optional[dict]) -> Optional[str]:
-        """新版 page10；旧报告若 page9 带四季则为流年。"""
+        """新版 page10；旧报告若 page9 带四季且非健康标题则为流年。"""
         if not isinstance(report, dict):
             return None
         if "page10" in report:
             return "page10"
         p9 = report.get("page9")
         if isinstance(p9, dict) and p9.get("quarters"):
+            title = str(p9.get("title") or "")
+            if "健康" in title or "Health" in title:
+                return None
             return "page9"
         return None
 
     @staticmethod
     def is_legacy_liunian_page9(report: Optional[dict]) -> bool:
         """page9 仍是旧版流年（无健康 Part2）时，主报告勿当健康页展示。"""
+        return ReportGenerator.resolve_liunian_key(report) == "page9"
+
+    @staticmethod
+    def health_part2_missing(report: Optional[dict]) -> bool:
+        """主报告缺健康 Part2（需重新生成）。"""
         if not isinstance(report, dict):
-            return False
-        if "page10" in report:
-            return False
+            return True
+        if ReportGenerator.is_legacy_liunian_page9(report):
+            return True
         p9 = report.get("page9")
-        return isinstance(p9, dict) and bool(p9.get("quarters"))
+        if not isinstance(p9, dict):
+            return True
+        if p9.get("quarters") and ("健康" not in str(p9.get("title") or "") and "Health" not in str(p9.get("title") or "")):
+            return True
+        return not ReportGenerator._page_has_text(p9)
 
     @staticmethod
     def _to_traditional_page(page: Dict[str, Any]) -> Dict[str, Any]:
@@ -384,6 +396,29 @@ class ReportGenerator:
                     f"当前实岁：{age_profile['age']}岁；虚岁：{age_profile['age_nominal']}岁；"
                     f"年龄段：{age_profile['band']}。\n"
                 )
+        flow = bazi_data.get("flow") or {}
+        def _flow_gz(key: str) -> str:
+            item = flow.get(key) or {}
+            g, z = item.get("gan") or "", item.get("zhi") or ""
+            return f"{g}{z}" if g or z else ""
+        flow_line = ""
+        if flow:
+            if self.lang == "en":
+                flow_line = (
+                    f"Current pillars — Da Yun: {_flow_gz('da_yun')}; "
+                    f"Year: {_flow_gz('liu_nian')}; Month: {_flow_gz('liu_yue')}; "
+                    f"Day: {_flow_gz('liu_ri')}. "
+                    f"Calendar hint: year={(flow.get('liu_nian') or {}).get('year', '')}, "
+                    f"month={(flow.get('liu_yue') or {}).get('month', '')}.\n"
+                )
+            else:
+                flow_line = (
+                    f"【当前运势柱】大运{_flow_gz('da_yun')}；"
+                    f"流年{_flow_gz('liu_nian')}（{(flow.get('liu_nian') or {}).get('year', '')}年）；"
+                    f"流月{_flow_gz('liu_yue')}（{(flow.get('liu_yue') or {}).get('month', '')}月）；"
+                    f"流日{_flow_gz('liu_ri')}。"
+                    f"《流年报告》必须重点展开「当年」与「当月」四维：事业·财运·感情·健康。\n"
+                )
         if self.lang == "en":
             dy = (
                 f"Step {current_da_yun.get('step')} {current_da_yun.get('gan')}{current_da_yun.get('zhi')} "
@@ -398,7 +433,7 @@ class ReportGenerator:
             )
             return (
                 f"Name: {birth_info.get('name', 'User')}; Gender: {bazi_data.get('gender')}; "
-                f"Birth: {birth_info.get('birth_date', '')}; {age_line}"
+                f"Birth: {birth_info.get('birth_date', '')}; {age_line}{flow_line}"
                 f"BaZi: Year {bazi['年柱'][0]}{bazi['年柱'][1]} "
                 f"Month {bazi['月柱'][0]}{bazi['月柱'][1]} "
                 f"Day {bazi['日柱'][0]}{bazi['日柱'][1]} "
@@ -428,7 +463,7 @@ class ReportGenerator:
         )
         return (
             f"姓名：{birth_info.get('name', '用户')}；性别：{bazi_data.get('gender')}；"
-            f"出生：{birth_info.get('birth_date', '')}；{age_line}"
+            f"出生：{birth_info.get('birth_date', '')}；{age_line}{flow_line}"
             f"八字：年{bazi['年柱'][0]}{bazi['年柱'][1]} "
             f"月{bazi['月柱'][0]}{bazi['月柱'][1]} "
             f"日{bazi['日柱'][0]}{bazi['日柱'][1]} "
@@ -445,7 +480,7 @@ class ReportGenerator:
         )
 
     def _generate_liunian_chapter(self, context: str, spec: tuple) -> Dict:
-        """独立篇章《流年报告》：年度总论 + 四季预测。"""
+        """独立篇章《流年报告》：当年总论 + 当月四维 + 四季。"""
         key, title, focus = spec
         seasons = self._season_specs()
         seasons_hint = "\n".join(
@@ -453,7 +488,7 @@ class ReportGenerator:
         )
         lang_rule = self._lang_rule()
         if self.lang == "en":
-            prompt = f"""Write the independent chapter 《{title}》 from the BaZi chart. Output valid JSON only, no markdown fences.
+            prompt = f"""Write the independent chapter 《{title}》. Valid JSON only, no markdown fences.
 
 {lang_rule}
 
@@ -467,11 +502,20 @@ Output:
 "{key}": {{
   "title": "{title}",
   "professional": [
-    "Year overview vs chart (60-90 words)",
-    "Career/wealth rhythm this year (60-90 words)",
-    "Relationship & health highlights (60-90 words)",
-    "Strongest vs caution periods (60-90 words)"
+    "This year's stem-branch vs natal chart — overall climate (70-100 words)",
+    "Career & wealth rhythm for the YEAR (70-100 words)",
+    "Relationship & health for the YEAR (70-100 words)",
+    "Strongest vs caution periods this year (70-100 words)"
   ],
+  "current_month": {{
+    "label": "current month pillar from context (e.g. 2026 Jul · Yi Wei)",
+    "overview": "why this month matters vs year luck (50-80 words)",
+    "career": "career cautions/opportunities this month (40-70 words)",
+    "wealth": "money/investing cautions this month (40-70 words)",
+    "relationship": "relationship/people cautions this month (40-70 words)",
+    "health": "health cautions this month, age-aware (40-70 words)",
+    "action": "3 concrete do / don't for this month (40-60 words)"
+  }},
   "quarters": [
     {{"name":"Spring","branch":"Yin Mao Chen","months":"approx. Feb–Apr","outlook":"60-90 words","focus_months":"1–2 key months","advice":"40-60 words"}},
     {{"name":"Summer","branch":"Si Wu Wei","months":"approx. May–Jul","outlook":"...","focus_months":"...","advice":"..."}},
@@ -479,9 +523,9 @@ Output:
     {{"name":"Winter","branch":"Hai Zi Chou","months":"approx. Nov–Jan","outlook":"...","focus_months":"...","advice":"..."}}
   ],
   "plain": {{
-    "summary":"one plain-English line (≤40 words, zero jargon)",
+    "summary":"one plain line on this year + this month (≤40 words, zero jargon)",
     "points":["tip1","tip2","tip3"],
-    "detail":"80-120 words plain English",
+    "detail":"90-130 words plain English covering year then this month",
     "quarters_plain":[
       {{"name":"Spring","summary":"≤30 words","tips":["A","B"]}},
       {{"name":"Summer","summary":"...","tips":["...","..."]}},
@@ -491,7 +535,7 @@ Output:
   }}
 }}
 
-Hard rules: exactly 4 seasons; plain text forbids BaZi jargon ({self.FORBIDDEN_PLAIN}).
+Hard rules: current_month REQUIRED with all four domains; exactly 4 seasons; plain forbids jargon ({self.FORBIDDEN_PLAIN}).
 """
         else:
             prompt = f"""根据命盘写独立篇章《{title}》。只输出合法 JSON，不要 markdown 代码块。
@@ -501,8 +545,12 @@ Hard rules: exactly 4 seasons; plain text forbids BaZi jargon ({self.FORBIDDEN_P
 命盘：{context}
 主题：{focus}
 
-【命理写法】本篇章以「四时/四季」为主：春寅卯辰、夏巳午未、秋申酉戌、冬亥子丑，
-每季只点 1～2 个关键流月或节气，避免十二个月堆砌。
+【专业写法·强制】
+1) 先写「当年」流年干支相对命局的总气候，再分事业·财运·感情·健康四维。
+2) 必须单列「当月」：用上下文中的流月干支与公历月份，写清本月注意事项；
+   当月同样覆盖事业·财运·感情·健康，并给出可执行的做/不做。
+3) 四季：春寅卯辰、夏巳午未、秋申酉戌、冬亥子丑；每季只点 1～2 个关键流月，勿十二个月流水账。
+4) 语气专业、具体，避免空话；健康结合年龄，强调参考非诊断。
 
 四季对照：
 {seasons_hint}
@@ -511,11 +559,20 @@ Hard rules: exactly 4 seasons; plain text forbids BaZi jargon ({self.FORBIDDEN_P
 "{key}": {{
   "title": "{title}",
   "professional": [
-    "流年总论：干支与命局大势（60-90字）",
-    "事业/财运今年节奏（60-90字）",
-    "感情/人际与健康提要（60-90字）",
-    "全年最旺与需防时段总括（60-90字）"
+    "流年总论：今年干支与命局大势（70-100字）",
+    "当年事业与财运节奏（70-100字）",
+    "当年感情/人际与健康提要（70-100字）",
+    "全年最旺与需防时段（70-100字）"
   ],
+  "current_month": {{
+    "label": "当月标签，如：2026年7月 · 乙未月",
+    "overview": "当月相对流年的气机要点（50-80字）",
+    "career": "本月事业注意/机遇（40-70字）",
+    "wealth": "本月财运注意/机遇（40-70字）",
+    "relationship": "本月感情与人际注意（40-70字）",
+    "health": "本月健康注意（结合年龄，40-70字）",
+    "action": "本月三条做与不做（40-60字）"
+  }},
   "quarters": [
     {{"name":"春季","branch":"寅卯辰","months":"约2–4月","outlook":"本季专业判断60-90字","focus_months":"点出1～2个关键流月或节气","advice":"本季行动建议40-60字"}},
     {{"name":"夏季","branch":"巳午未","months":"约5–7月","outlook":"...","focus_months":"...","advice":"..."}},
@@ -523,9 +580,9 @@ Hard rules: exactly 4 seasons; plain text forbids BaZi jargon ({self.FORBIDDEN_P
     {{"name":"冬季","branch":"亥子丑","months":"约11–次年1月","outlook":"...","focus_months":"...","advice":"..."}}
   ],
   "plain": {{
-    "summary":"一句人话总结全年（≤40字，零术语）",
-    "points":["全年建议1","全年建议2","全年建议3"],
-    "detail":"80-120字白话总说",
+    "summary":"一句人话：今年基调 + 本月最该注意什么（≤40字，零术语）",
+    "points":["全年建议1","本月建议2","本月建议3"],
+    "detail":"90-130字白话：先说全年，再说本月四维怎么做",
     "quarters_plain":[
       {{"name":"春季","summary":"本季人话≤30字","tips":["建议A","建议B"]}},
       {{"name":"夏季","summary":"...","tips":["...","..."]}},
@@ -535,20 +592,53 @@ Hard rules: exactly 4 seasons; plain text forbids BaZi jargon ({self.FORBIDDEN_P
   }}
 }}
 
-硬性要求：quarters 恰好春夏秋冬四季；plain/quarters_plain 严禁 {self.FORBIDDEN_PLAIN}
+硬性要求：必须含 current_month 且四维齐全；quarters 恰好四季；plain 严禁 {self.FORBIDDEN_PLAIN}
 """
         raw = self._call_deepseek(prompt)
         parsed = self._parse_json_loose(raw)
         if isinstance(parsed, dict) and key not in parsed:
-            if "quarters" in parsed or "professional" in parsed:
+            if "quarters" in parsed or "professional" in parsed or "current_month" in parsed:
                 parsed = {key: parsed}
         item = parsed.get(key) if isinstance(parsed, dict) else None
         page = self._coerce_page(item, title, raw)
+        if isinstance(item, dict) and isinstance(item.get("current_month"), dict):
+            page["current_month"] = item["current_month"]
+        page = self._normalize_current_month(page, context)
         page = self._normalize_quarters(page)
         page = self._ensure_plain_section(page, title)
         page = self._ensure_quarters_plain(page)
         page["content"] = ReportGenerator.build_content_markdown(page)
         return {key: page}
+
+    def _normalize_current_month(self, page: Dict[str, Any], context: str = "") -> Dict[str, Any]:
+        cm = page.get("current_month") if isinstance(page.get("current_month"), dict) else {}
+        fields = ("label", "overview", "career", "wealth", "relationship", "health", "action")
+        filled = {k: str(cm.get(k) or "").strip() for k in fields}
+        if sum(1 for k in ("career", "wealth", "relationship", "health") if filled[k]) >= 3:
+            page["current_month"] = filled
+            return page
+        # 弱结果：用上下文补一层专业壳，避免当月空白
+        if self.lang == "en":
+            page["current_month"] = {
+                "label": filled["label"] or "Current month",
+                "overview": filled["overview"] or "Read this month against the year pillar; pace decisions.",
+                "career": filled["career"] or "Keep delivery steady; avoid abrupt role gambles mid-month.",
+                "wealth": filled["wealth"] or "Prefer cash-flow clarity; delay large speculative bets.",
+                "relationship": filled["relationship"] or "Clarify expectations; don't escalate minor friction.",
+                "health": filled["health"] or "Sleep, blood pressure, and recovery matter more than intensity.",
+                "action": filled["action"] or "Do: one priority weekly review. Don't: stack three big decisions in one week.",
+            }
+        else:
+            page["current_month"] = {
+                "label": filled["label"] or "当月（见流月）",
+                "overview": filled["overview"] or "本月气机宜对照流年总势看：宜稳中有序，忌冲动拍板。",
+                "career": filled["career"] or "事业：先收口在办事项，重大跳槽/签约尽量避开月中冲动窗口。",
+                "wealth": filled["wealth"] or "财运：以现金流与账目清晰为先，大额投机与盲目加杠杆宜缓。",
+                "relationship": filled["relationship"] or "感情人际：把话说清边界，小摩擦勿升级成立场战。",
+                "health": filled["health"] or "健康：作息与血压/心肺负荷优先，强度训练量力，不适即停并体检。",
+                "action": filled["action"] or "做：每周一次重点复盘。不做：一周内连开三件大事。",
+            }
+        return page
 
     def _normalize_quarters(self, page: Dict[str, Any]) -> Dict[str, Any]:
         raw = page.get("quarters")
@@ -1154,6 +1244,8 @@ Professional text:
         }
         if item.get("quarters"):
             page["quarters"] = item.get("quarters")
+        if isinstance(item.get("current_month"), dict):
+            page["current_month"] = item.get("current_month")
         page["content"] = ReportGenerator.build_content_markdown(page)
         return page
 
@@ -1258,6 +1350,11 @@ Professional text:
             ]
         else:
             out["professional"] = uniq
+        # 保留流年当月块
+        if isinstance(page.get("current_month"), dict):
+            out["current_month"] = page["current_month"]
+        if isinstance(page.get("quarters"), list):
+            out["quarters"] = page["quarters"]
         content = out.get("content")
         if content and ReportGenerator._looks_like_json_blob(str(content)):
             out["content"] = ReportGenerator.build_content_markdown(out)
@@ -1349,6 +1446,24 @@ Professional text:
         for p in page.get("professional") or []:
             lines.append(str(p).strip())
             lines.append("")
+        cm = page.get("current_month") if isinstance(page.get("current_month"), dict) else None
+        if cm:
+            lines.append("#### 当月注意事项（事业·财运·感情·健康）")
+            lines.append("")
+            if cm.get("label"):
+                lines.append(f"**{cm['label']}**")
+                lines.append("")
+            for lab, key in (
+                ("总览", "overview"),
+                ("事业", "career"),
+                ("财运", "wealth"),
+                ("感情", "relationship"),
+                ("健康", "health"),
+                ("行动", "action"),
+            ):
+                if cm.get(key):
+                    lines.append(f"**{lab}：** {cm[key]}")
+                    lines.append("")
         quarters = page.get("quarters") or []
         if quarters:
             lines.append("#### 四季流年")
@@ -1419,16 +1534,31 @@ Professional text:
             season_title, summary_l = "四季流年預測", "一句話"
             how_l, focus_l, advice_l = "怎麼做", "關鍵月", "建議"
             season_tips = "四季白話"
+            month_title = "當月注意（事業 · 財運 · 感情 · 健康）"
+            month_labs = {
+                "overview": "總覽", "career": "事業", "wealth": "財運",
+                "relationship": "感情", "health": "健康", "action": "行動",
+            }
         elif lang == "en":
             pro_title, plain_title = "Professional", "In plain words"
             season_title, summary_l = "Seasonal outlook", "In one line"
             how_l, focus_l, advice_l = "What to do", "Key months", "Advice"
             season_tips = "Season tips"
+            month_title = "This month (Career · Wealth · Relationship · Health)"
+            month_labs = {
+                "overview": "Overview", "career": "Career", "wealth": "Wealth",
+                "relationship": "Relationship", "health": "Health", "action": "Actions",
+            }
         else:
             pro_title, plain_title = "专业解读", "白话说明"
             season_title, summary_l = "四季流年预测", "一句话"
             how_l, focus_l, advice_l = "怎么做", "关键月", "建议"
             season_tips = "四季白话"
+            month_title = "当月注意（事业 · 财运 · 感情 · 健康）"
+            month_labs = {
+                "overview": "总览", "career": "事业", "wealth": "财运",
+                "relationship": "感情", "health": "健康", "action": "行动",
+            }
 
         pro_blocks = []
         for p in page.get("professional") or []:
@@ -1438,10 +1568,37 @@ Professional text:
             pro_blocks.append(
                 f"<p style='margin:0 0 14px 0;line-height:1.85;color:#333;font-size:0.98rem;'>{p}</p>"
             )
-        if not pro_blocks and page.get("content") and not page.get("quarters"):
+        if not pro_blocks and page.get("content") and not page.get("quarters") and not page.get("current_month"):
             return (
                 f"<div style='line-height:1.85;white-space:pre-wrap;'>"
                 f"{ReportGenerator._escape(str(page.get('content')))}</div>"
+            )
+
+        month_html = ""
+        cm = page.get("current_month") if isinstance(page.get("current_month"), dict) else None
+        if cm and any(cm.get(k) for k in ("overview", "career", "wealth", "relationship", "health", "action")):
+            rows = []
+            if cm.get("label"):
+                rows.append(
+                    f"<div style='font-weight:800;color:#e65100;margin-bottom:8px;'>"
+                    f"{ReportGenerator._escape(str(cm['label']))}</div>"
+                )
+            for key in ("overview", "career", "wealth", "relationship", "health", "action"):
+                if not cm.get(key):
+                    continue
+                rows.append(
+                    f"<div style='margin:0 0 10px 0;padding:10px 12px;background:#fff;"
+                    f"border-radius:8px;border:1px solid #ffe0b2;'>"
+                    f"<div style='font-weight:700;color:#ef6c00;margin-bottom:4px;'>"
+                    f"{month_labs.get(key, key)}</div>"
+                    f"<div style='line-height:1.75;color:#333;'>"
+                    f"{ReportGenerator._escape(str(cm[key]))}</div></div>"
+                )
+            month_html = (
+                f"<div style='padding:14px 16px;border:1px solid #ffcc80;border-radius:10px;"
+                f"background:#fff8e1;'>"
+                f"<div style='font-weight:800;font-size:1.05rem;margin-bottom:12px;color:#e65100;'>"
+                f"{month_title}</div>{''.join(rows)}</div>"
             )
 
         season_html = ""
@@ -1539,6 +1696,7 @@ Professional text:
     {ReportGenerator._escape(str(page.get("title") or ""))}
   </div>
   {pro_section}
+  {month_html}
   {season_html}
   <div style="padding:16px 18px;border:1px solid #c8e6c9;border-radius:10px;background:#f1f8f4;">
     <div style="font-weight:800;font-size:1.1rem;margin-bottom:12px;color:#2e7d32;">{plain_title}</div>
