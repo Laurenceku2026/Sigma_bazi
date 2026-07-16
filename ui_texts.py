@@ -196,7 +196,7 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "sidebar_body": (
             "This app merges **DFSS (Design for Six Sigma)** with classical BaZi wisdom:\n\n"
             "- ✅ Precise charting (true solar time)\n"
-            "- ✅ Eight-page deep reports\n"
+            "- ✅ Nine-page deep reports (Career/Wealth/Relationship/Health each have Part1+Part2)\n"
             "- ✅ Career · Wealth · Relationship · Health\n"
             "- ✅ Engineering-style destiny analytics"
         ),
