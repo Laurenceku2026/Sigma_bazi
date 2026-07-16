@@ -225,14 +225,23 @@ def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
         ss = p.get("shensha") or []
         if not ss:
             return "<span style='color:#bbb;'>—</span>"
+        if lang == "zh_hant":
+            from zh_convert import to_traditional
+
+            ss = [to_traditional(s) for s in ss]
         return "<br>".join(
             f"<span style='font-size:0.8rem;color:#6a1b9a;'>{s}</span>" for s in ss
         )
 
     cells = "".join(cell(k, shensha_cell) for k in order)
+    shensha_lab = "神煞" if lang != "en" else "Shen Sha"
+    if lang == "zh_hant":
+        from zh_convert import to_traditional
+
+        shensha_lab = to_traditional(shensha_lab)
     rows.append(
         f"<tr><td style='background:#fafafa;padding:8px;border:1px solid #ddd;font-weight:600;'>"
-        f"{'神煞' if lang != 'en' else 'Shen Sha'}</td>{cells}</tr>"
+        f"{shensha_lab}</td>{cells}</tr>"
     )
 
     def cs_cell(p, _):
@@ -272,16 +281,21 @@ def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
             else ""
         )
     )
-    return (
+    html = (
         "<table style='width:100%;border-collapse:collapse;background:#fff;'>"
         + "".join(rows)
         + "</table>"
         + caption
     )
+    if lang == "zh_hant":
+        from zh_convert import to_traditional
+
+        html = to_traditional(html)
+    return html
 
 
 def render_flow_pillar_table(bazi_data, lang: str = "zh") -> str:
-    """出生四柱 + 当前大运/流年/流月/流日（附图一核心）。"""
+    """出生四柱 + 当前大运/流年/流月/流日。"""
     pillars = _build_pillars(bazi_data)
     flow = bazi_data.get("flow") or {}
     order_birth = ["年柱", "月柱", "日柱", "时柱"]
@@ -381,7 +395,7 @@ def render_liunian_timeline(bazi_data, lang: str = "zh") -> str:
 
 
 def render_dayun_liunian_matrix(bazi_data, lang: str = "zh") -> str:
-    """附图二：每列一步大运，下列十年流年（五行上色）。"""
+    """每列一步大运，下列十年流年（五行上色）。"""
     da_yun = bazi_data.get("da_yun") or []
     if not da_yun:
         return "<div>—</div>"
@@ -424,7 +438,7 @@ def render_dayun_liunian_matrix(bazi_data, lang: str = "zh") -> str:
 
 
 def render_bazi_chart(bazi_data, lang: str = "zh"):
-    """彩色四柱 + 五行 + 附图风格的大运/流年双表。"""
+    """彩色四柱 + 五行 + 大运/流年双表。"""
     from ui_texts import t
 
     info = st.session_state.get("birth_info") or {}

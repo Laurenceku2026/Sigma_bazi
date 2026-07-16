@@ -35,7 +35,7 @@ for key, default in [
     ("bazi_data", None),
     ("birth_info", None),
     ("app_user_synced", False),
-    ("lang", "zh"),
+    ("lang", "zh_hant"),
     ("admin_logged_in", False),
     ("show_admin", False),
     ("user_email", ""),

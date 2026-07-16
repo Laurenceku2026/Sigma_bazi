@@ -130,9 +130,11 @@ class BaziEngine:
         shensha = shensha_for_chart(
             self.day_master,
             self.day_branch,
+            pillars["年柱"][0],
             pillars["年柱"][1],
             pillars["月柱"][1],
             pillars,
+            gender=getattr(self, "gender", "男") or "男",
         )
         kong_flags = {name: (zhi in kw) for name, (_g, zhi) in pillars.items()}
         return {
