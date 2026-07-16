@@ -1217,6 +1217,9 @@ for i, lab in enumerate(_nav):
             st.session_state.ui_tab = i
             st.session_state["_scroll_top"] = True
             st.rerun()
+        # 试用反馈按钮下显示黄金会员提示
+        if i == 4:
+            st.caption(t("survey_gold_hint", lang))
 
 _tab = int(st.session_state.get("ui_tab", 0))
 apply_scroll_top_if_needed()
