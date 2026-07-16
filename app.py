@@ -576,9 +576,15 @@ def generate_full_report(*, consume_quota: bool = True) -> bool:
             tier if tier in PAID_TIERS else "silver",  # 免费预览用银卡页数结构
             lang=lang,
         )
-        # 免费/银卡：无独立流年报告篇章
+        # 免费/银卡：无独立流年报告篇章（page10；兼容旧 page9 流年）
         if tier == "free" or tier not in ("gold", "diamond"):
-            report = {k: v for k, v in report.items() if k != "page9"}
+            report = {
+                k: v
+                for k, v in report.items()
+                if k != "page10" and not (
+                    k == "page9" and isinstance(v, dict) and v.get("quarters")
+                )
+            }
         st.session_state.report_content = report
         st.session_state.report_language = lang
         st.session_state.report_generated = True
@@ -608,7 +614,7 @@ def go_liunian_tab():
 
 
 def render_report_download_row(report: dict, key_prefix: str = "dl"):
-    """付费用户：下载 PDF（金/钻含流年；银卡仅八页）+ JSON。"""
+    """付费用户：下载 PDF（金/钻含流年；银卡仅九页主报告）+ JSON。"""
     tier = st.session_state.subscription_tier
     include_liunian = tier in ("gold", "diamond")
     col_dl1, col_dl2 = st.columns(2)
@@ -783,18 +789,32 @@ def _wrap_protected_html(inner_html: str, mark: str) -> str:
 
 
 def render_report_pages(report: dict, *, protected: bool = False, pages=None):
-    """渲染报告页；默认 1–8。流年报告（page9）另用独立入口。"""
+    """渲染主报告页；默认 1–9（含健康 Part2）。流年（page10）另用独立入口。"""
     tier = st.session_state.subscription_tier
-    page_range = pages or range(1, 9)
+    page_range = pages or range(1, ReportGenerator.CORE_PAGE_COUNT + 1)
     labels_zh = [
-        "页一：八字命盘与基本信息", "页二：事业详批 (Part 1)", "页三：事业详批 (Part 2)",
-        "页四：财运详批 (Part 1)", "页五：财运详批 (Part 2)", "页六：感情详批 (Part 1)",
-        "页七：感情详批 (Part 2)", "页八：健康详批", "流年报告",
+        "页一：八字命盘与基本信息",
+        "页二：事业详批 (Part 1｜局势)",
+        "页三：事业详批 (Part 2｜方向与化解)",
+        "页四：财运详批 (Part 1｜局势)",
+        "页五：财运详批 (Part 2｜方向与化解)",
+        "页六：感情详批 (Part 1｜局势)",
+        "页七：感情详批 (Part 2｜方向与化解)",
+        "页八：健康详批 (Part 1｜局势)",
+        "页九：健康详批 (Part 2｜方向与化解)",
+        "流年报告",
     ]
     labels_en = [
-        "Page 1: Chart", "Page 2: Career (1)", "Page 3: Career (2)",
-        "Page 4: Wealth (1)", "Page 5: Wealth (2)", "Page 6: Relationship (1)",
-        "Page 7: Relationship (2)", "Page 8: Health", "Annual Luck Report",
+        "Page 1: Chart",
+        "Page 2: Career (Part 1 · Situation)",
+        "Page 3: Career (Part 2 · Direction & Remedy)",
+        "Page 4: Wealth (Part 1 · Situation)",
+        "Page 5: Wealth (Part 2 · Direction & Remedy)",
+        "Page 6: Relationship (Part 1 · Situation)",
+        "Page 7: Relationship (Part 2 · Direction & Remedy)",
+        "Page 8: Health (Part 1 · Situation)",
+        "Page 9: Health (Part 2 · Direction & Remedy)",
+        "Annual Luck Report",
     ]
     labels = labels_en if lang == "en" else labels_zh
     if lang == "zh_hant":
@@ -805,33 +825,45 @@ def render_report_pages(report: dict, *, protected: bool = False, pages=None):
         except Exception:
             pass
     mark = st.session_state.get("user_email") or (st.session_state.birth_info or {}).get("name") or "SIGMA-FATE"
+    legacy_ln9 = ReportGenerator.is_legacy_liunian_page9(report)
+    # 主报告视图：多页且含第1页；流年单页视图不跳过旧 page9
+    core_mode = pages is None or (1 in page_range and len(list(page_range)) > 1)
 
     for i in page_range:
-        if i == 9 and tier not in ("gold", "diamond"):
+        if i == 10 and tier not in ("gold", "diamond"):
+            continue
+        if i == 9 and legacy_ln9 and core_mode:
             continue
         pk = f"page{i}"
-        with st.expander(labels[i - 1] if i <= len(labels) else pk, expanded=(i == page_range.start)):
+        lab = labels[i - 1] if i <= len(labels) else pk
+        # 流年页（page10 或旧 page9 带四季）统一用「流年报告」标签
+        page_obj = report.get(pk) if isinstance(report, dict) else None
+        if isinstance(page_obj, dict) and page_obj.get("quarters"):
+            lab = labels[9] if len(labels) > 9 else ("流年报告" if lang != "en" else "Annual Luck Report")
+        with st.expander(lab, expanded=(i == page_range.start)):
             if pk not in report:
+                if i == 9 and not legacy_ln9:
+                    st.info(
+                        "本篇为健康 Part 2（方向与化解）。当前报告尚未生成此页，请重新生成完整报告。"
+                        if _is_zh()
+                        else "Health Part 2 is missing — please regenerate the full report."
+                    )
                 continue
             page = report[pk]
             if not isinstance(page, dict):
-                page = {"content": str(page), "title": labels[i - 1]}
-            page = ReportGenerator.sanitize_page_for_display(
-                page, labels[i - 1] if i <= len(labels) else pk
-            )
+                page = {"content": str(page), "title": lab}
+            page = ReportGenerator.sanitize_page_for_display(page, lab)
             if not page.get("professional") and page.get("content"):
                 page = ReportGenerator._split_legacy_content(
                     str(page.get("content")),
-                    page.get("title") or labels[i - 1],
+                    page.get("title") or lab,
                 )
-                page = ReportGenerator.sanitize_page_for_display(
-                    page, labels[i - 1] if i <= len(labels) else pk
-                )
+                page = ReportGenerator.sanitize_page_for_display(page, lab)
             if report_gen and report_gen._plain_missing(page.get("plain")):
                 try:
                     report_gen.lang = lang
                     page = report_gen._ensure_plain_section(
-                        page, page.get("title") or labels[i - 1]
+                        page, page.get("title") or lab
                     )
                     st.session_state.report_content[pk] = page
                 except Exception:
@@ -845,14 +877,17 @@ def render_report_pages(report: dict, *, protected: bool = False, pages=None):
 def render_liunian_report(report: dict, *, protected: bool = False):
     """独立篇章：流年报告（金卡/钻石）。"""
     st.caption(t("liunian_chapter_badge", lang))
-    if "page9" not in (report or {}):
+    lk = ReportGenerator.resolve_liunian_key(report)
+    if not lk:
         st.info(
             "尚未生成流年报告。请重新生成完整报告（金卡/钻石会包含本篇）。"
             if _is_zh()
             else "No Annual Luck Report yet. Regenerate (Gold/Diamond includes this chapter)."
         )
         return
-    render_report_pages(report, protected=protected, pages=range(9, 10))
+    # page10 → range 10；旧 page9 流年 → range 9
+    idx = 10 if lk == "page10" else 9
+    render_report_pages(report, protected=protected, pages=range(idx, idx + 1))
 
 
 def render_generate_report_button(key_prefix: str = "main"):
@@ -1119,7 +1154,7 @@ elif _tab == 1:
         st.markdown("---")
         render_report_cta("tab_chart")
 
-# ========== Tab 3：完整报告（八页） ==========
+# ========== Tab 3：完整报告（九页） ==========
 elif _tab == 2:
     tier = st.session_state.subscription_tier
     paid = tier in PAID_TIERS
@@ -1154,6 +1189,7 @@ elif _tab == 2:
                         st.rerun()
         if paid:
             st.caption(f"{t('generated_at', lang)}：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+            st.caption(t("report_part_legend", lang))
             if tier in ("gold", "diamond"):
                 if st.button(
                     t("goto_liunian_report", lang),
@@ -1162,7 +1198,7 @@ elif _tab == 2:
                 ):
                     go_liunian_tab()
                     st.rerun()
-            render_report_pages(report, protected=False, pages=range(1, 9))
+            render_report_pages(report, protected=False, pages=range(1, 10))
             st.markdown("---")
             render_report_download_row(report, "tab_report")
             st.markdown("---")
@@ -1173,7 +1209,7 @@ elif _tab == 2:
                 if _is_zh()
                 else "Free preview with watermark — no copy/download. Upgrade to unlock."
             )
-            render_report_pages(report, protected=True, pages=range(1, 9))
+            render_report_pages(report, protected=True, pages=range(1, 10))
             st.markdown("---")
             st.markdown(f"### {t('unlock_heading', lang)}")
             st.markdown(t("unlock_body", lang))

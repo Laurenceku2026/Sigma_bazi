@@ -39,17 +39,17 @@ def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
         outlines = {
             "silver": [
                 "Page 1: BaZi chart & basics",
-                "Pages 2–3: Career",
-                "Pages 4–5: Wealth",
-                "Pages 6–7: Relationship",
-                "Page 8: Health",
-                "10 full 8-page reports (no Annual Luck Report)",
+                "Pages 2–3: Career (Part1 situation / Part2 direction & remedy)",
+                "Pages 4–5: Wealth (Part1 / Part2)",
+                "Pages 6–7: Relationship (Part1 / Part2)",
+                "Pages 8–9: Health (Part1 / Part2)",
+                "10 full 9-page reports (no Annual Luck Report)",
             ],
             "gold": [
-                "All Silver benefits (8-page report)",
+                "All Silver benefits (9-page report)",
                 "Independent chapter: Annual Luck Report",
                 "Four seasons + key months + action tips",
-                "10 uses of 8-page report + Annual Luck Report",
+                "10 uses of 9-page report + Annual Luck Report",
             ],
             "diamond": [
                 "All Gold benefits",
@@ -63,17 +63,17 @@ def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
     outlines = {
         "silver": [
             "页一：八字命盘与基本信息",
-            "页二～三：事业详批",
-            "页四～五：财运详批",
-            "页六～七：感情详批",
-            "页八：健康详批",
-            "含 10 次完整八页报告（不含流年报告）",
+            "页二～三：事业详批（Part1 局势 / Part2 方向与化解）",
+            "页四～五：财运详批（Part1 / Part2）",
+            "页六～七：感情详批（Part1 / Part2）",
+            "页八～九：健康详批（Part1 / Part2）",
+            "含 10 次完整九页报告（不含流年报告）",
         ],
         "gold": [
-            "银卡全部内容（完整八页报告）",
+            "银卡全部内容（完整九页报告）",
             "独立篇章：《流年报告》",
             "四季预测 + 每季关键月 + 行动建议",
-            "含 10 次八页报告 + 流年报告",
+            "含 10 次九页报告 + 流年报告",
         ],
         "diamond": [
             "金卡全部内容",

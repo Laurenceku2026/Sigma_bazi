@@ -704,18 +704,22 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
 
     # 目录
     toc_items = []
+    legacy_ln9 = ReportGenerator.is_legacy_liunian_page9(report_content)
     if isinstance(report_content, dict):
-        for i in range(1, 10):
-            if i == 9 and not include_liunian:
+        for i in range(1, 11):
+            if i == 10 and not include_liunian:
+                continue
+            if i == 9 and legacy_ln9 and not include_liunian:
                 continue
             pk = f"page{i}"
             if pk not in report_content:
                 continue
+            is_ln = (i == 10) or (i == 9 and legacy_ln9)
             page = ReportGenerator.sanitize_page_for_display(
                 report_content[pk],
-                T("流年报告") if i == 9 else T(f"第{i}页"),
+                T("流年报告") if is_ln else T(f"第{i}页"),
             )
-            toc_items.append(str(page.get("title") or (T("流年报告") if i == 9 else T(f"第{i}页"))))
+            toc_items.append(str(page.get("title") or (T("流年报告") if is_ln else T(f"第{i}页"))))
     if toc_items:
         story.append(Spacer(1, 0.8 * cm))
         story.append(P("目录", style_h2, bold=True))
@@ -789,8 +793,10 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
         story.append(PageBreak())
 
     if isinstance(report_content, dict):
-        for i in range(1, 10):
-            if i == 9 and not include_liunian:
+        for i in range(1, 11):
+            if i == 10 and not include_liunian:
+                continue
+            if i == 9 and legacy_ln9 and not include_liunian:
                 continue
             pk = f"page{i}"
             if pk not in report_content:
@@ -798,7 +804,8 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
             page = report_content[pk]
             if not isinstance(page, dict):
                 page = {"content": str(page), "title": T(f"第{i}页")}
-            fallback = T("流年报告") if i == 9 else T(f"第{i}页")
+            is_ln = (i == 10) or (i == 9 and legacy_ln9)
+            fallback = T("流年报告") if is_ln else T(f"第{i}页")
             add_page_block(page, fallback)
     else:
         story.append(P("暂无报告内容。", style_body))

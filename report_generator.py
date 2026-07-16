@@ -1,5 +1,6 @@
 """
-八页报告生成器 - 分页调用 DeepSeek；专业段与白话段分字段，强制分段排版
+九页命理报告 + 可选流年篇章。
+Part 1 = 局势研判；Part 2 = 方向与化解（须更进一步、可执行）。
 """
 from __future__ import annotations
 
@@ -11,31 +12,50 @@ import requests
 
 
 class ReportGenerator:
-    """生成命理报告（按页/批次请求，保证内容完整、分段可读）"""
+    """生成命理报告（按页请求；事业/财运/感情/健康均含 Part1+Part2）"""
+
+    # Part 1：局势（发生什么、风险、关键月）
+    # Part 2：方向与化解（往哪走、如何调候/行为化解、可执行策略）
+    PART_RULE_ZH = (
+        "【Part 分工·强制】"
+        "凡标题含 Part 1：只写「局势研判」——运势起伏、可能事件、注意事项、关键月份；少写长期规划。"
+        "凡标题含 Part 2：必须写「方向与化解」——具体方向（行业/资产/关系/调养）、化解方法、行动步骤；"
+        "要比 Part 1 更进一步，禁止重复 Part 1 的事件罗列。"
+    )
+    PART_RULE_EN = (
+        "PART RULE: Part 1 = situation forecast (events, risks, key months). "
+        "Part 2 = direction & remedies (concrete paths, how to resolve/adjust, actionable steps). "
+        "Part 2 must go further than Part 1 — do not repeat Part 1 event lists."
+    )
 
     PAGE_SPECS = [
         ("page1", "八字命盘与基本信息", "四柱十神、藏干、纳音空亡、神煞要点、五行旺衰、大运起运与走势、知进退建议；须引用命盘已算神煞做联动说明"),
-        ("page2", "事业详批 (Part 1)", "当年事业运势、大事、注意事项、关键月份"),
-        ("page3", "事业详批 (Part 2)", "事业特质、五行行业方向、职业与发展策略"),
-        ("page4", "财运详批 (Part 1)", "财运趋势、投资适否、旺财破财月份与方向"),
-        ("page5", "财运详批 (Part 2)", "资产五行方向、理财方式、风险与积累策略"),
-        ("page6", "感情详批 (Part 1)", "感情事件预测、桃花、注意事项"),
-        ("page7", "感情详批 (Part 2)", "风水布局、另一半特质、感情时机"),
-        ("page8", "健康详批", "须结合当前实岁/虚岁与大运阶段；五行脏腑对应；中年后心血管/血压/代谢风险；易病月份；体检与就医建议（仅供参考，非医疗诊断）"),
-        ("page9", "流年报告", "流年总论 + 四季（春夏秋冬）预测与建议，每季点出1～2个关键流月"),
+        ("page2", "事业详批 (Part 1)", "【局势】当年/近阶段事业运势、可能大事、职场风险与注意事项、关键月份"),
+        ("page3", "事业详批 (Part 2)", "【方向与化解】适合的行业与岗位方向、五行喜用对应赛道、瓶颈化解、升迁/转职策略与可执行步骤"),
+        ("page4", "财运详批 (Part 1)", "【局势】财运趋势、求财时机、投资适否、旺财/破财月份与风险警示"),
+        ("page5", "财运详批 (Part 2)", "【方向与化解】资产配置方向、五行财库思路、理财方式、止损与积累策略、化解破财的具体做法"),
+        ("page6", "感情详批 (Part 1)", "【局势】感情事件预测、桃花/人际波动、婚恋风险与注意事项、敏感月份"),
+        ("page7", "感情详批 (Part 2)", "【方向与化解】关系经营方向、另一半特质与相处法、环境/风水辅助、矛盾化解与推进时机"),
+        ("page8", "健康详批 (Part 1)", "【局势】须结合实岁/虚岁与大运；五行脏腑对应；中年后心血管/血压/代谢风险；易病月份与体检警示（参考非诊断）"),
+        ("page9", "健康详批 (Part 2)", "【方向与化解】针对 Part1 风险的调养方向、作息/饮食/运动建议、五行补泻思路、就医检查清单与情绪压力化解（参考非诊断）"),
+        ("page10", "流年报告", "流年总论 + 四季（春夏秋冬）预测与建议，每季点出1～2个关键流月"),
     ]
 
     PAGE_SPECS_EN = [
-        ("page1", "BaZi Chart & Basics", "Pillars, ten gods, nayin/void, key Shen Sha from the chart, five elements, decade luck onset and path, timing advice"),
-        ("page2", "Career (Part 1)", "Career outlook, key events, cautions, important months"),
-        ("page3", "Career (Part 2)", "Career traits, industry direction by elements, strategy"),
-        ("page4", "Wealth (Part 1)", "Wealth trend, investing, strong/weak months and directions"),
-        ("page5", "Wealth (Part 2)", "Asset direction by elements, money habits, risk & savings"),
-        ("page6", "Relationship (Part 1)", "Relationship events, romance, cautions"),
-        ("page7", "Relationship (Part 2)", "Environment tips, partner traits, timing"),
-        ("page8", "Health", "Must use current age + decade stage; organ map by elements; midlife cardio/BP/metabolic risks; sensitive months; screening tips (reference only, not diagnosis)"),
-        ("page9", "Annual Luck Report", "Year overview + four seasons with 1–2 key months each"),
+        ("page1", "BaZi Chart & Basics", "Pillars, ten gods, nayin/void, key Shen Sha, five elements, decade luck onset and path"),
+        ("page2", "Career (Part 1)", "[Situation] Career outlook, key events, workplace risks, important months"),
+        ("page3", "Career (Part 2)", "[Direction & remedy] Industry/role direction, element-aligned paths, bottleneck remedies, promotion/switch steps"),
+        ("page4", "Wealth (Part 1)", "[Situation] Wealth trend, timing, investing fit, strong/weak months and risks"),
+        ("page5", "Wealth (Part 2)", "[Direction & remedy] Asset allocation direction, money habits, stop-loss/savings strategy, remedies for loss risk"),
+        ("page6", "Relationship (Part 1)", "[Situation] Relationship events, romance swings, cautions, sensitive months"),
+        ("page7", "Relationship (Part 2)", "[Direction & remedy] How to nurture the bond, partner traits & approach, environment tips, conflict remedies and timing"),
+        ("page8", "Health (Part 1)", "[Situation] Age + decade stage; organ map; midlife cardio/BP/metabolic risks; sensitive months; screening alerts (not diagnosis)"),
+        ("page9", "Health (Part 2)", "[Direction & remedy] Care direction for Part1 risks; lifestyle/diet/exercise; element-balancing tips; checkup list & stress remedies (not diagnosis)"),
+        ("page10", "Annual Luck Report", "Year overview + four seasons with 1–2 key months each"),
     ]
+
+    CORE_PAGE_COUNT = 9  # page1–page9（含健康 Part2）；page10 为流年
+    LIUNIAN_KEY = "page10"
 
     # 四时与地支（命理惯例：季内三支合局气）
     SEASON_SPECS = [
@@ -82,13 +102,14 @@ class ReportGenerator:
     def generate(self, bazi_data, birth_info, payment_tier="silver", lang: str = "zh"):
         self.lang = lang if lang in ("zh", "zh_hant", "en") else "zh"
         include_liunian = payment_tier in ("gold", "diamond")
-        pages = self._page_specs() if include_liunian else self._page_specs()[:8]
+        all_specs = self._page_specs()
+        pages = all_specs if include_liunian else all_specs[: self.CORE_PAGE_COUNT]
         context = self._bazi_context(bazi_data, birth_info)
 
         report: Dict = {}
-        # 每次 1 页；page9 为独立《流年报告》篇章（金/钻）
+        # 每次 1 页；page10 为独立《流年报告》篇章（金/钻）
         for spec in pages:
-            if spec[0] == "page9":
+            if spec[0] == self.LIUNIAN_KEY:
                 chunk = self._generate_liunian_chapter(context, spec)
             else:
                 chunk = self._generate_batch(context, [spec])
@@ -117,6 +138,28 @@ class ReportGenerator:
                 if self.lang == "zh_hant":
                     report[key] = self._to_traditional_page(report[key])
         return report
+
+    @staticmethod
+    def resolve_liunian_key(report: Optional[dict]) -> Optional[str]:
+        """新版 page10；旧报告若 page9 带四季则为流年。"""
+        if not isinstance(report, dict):
+            return None
+        if "page10" in report:
+            return "page10"
+        p9 = report.get("page9")
+        if isinstance(p9, dict) and p9.get("quarters"):
+            return "page9"
+        return None
+
+    @staticmethod
+    def is_legacy_liunian_page9(report: Optional[dict]) -> bool:
+        """page9 仍是旧版流年（无健康 Part2）时，主报告勿当健康页展示。"""
+        if not isinstance(report, dict):
+            return False
+        if "page10" in report:
+            return False
+        p9 = report.get("page9")
+        return isinstance(p9, dict) and bool(p9.get("quarters"))
 
     @staticmethod
     def _to_traditional_page(page: Dict[str, Any]) -> Dict[str, Any]:
@@ -364,9 +407,10 @@ class ReportGenerator:
                 f"Five elements: {json.dumps(bazi_data.get('wuxing_stats', {}), ensure_ascii=False)}; "
                 f"Current decade luck: {dy}; Current year luck: {ln}.\n"
                 f"Chart details (must use in analysis, especially page1):\n{detail}\n"
-                f"Health bridge (BaZi organs × modern screening; page8 must use age):\n{health}\n"
+                f"Health bridge (BaZi organs × modern screening; health Part1+Part2 must use age):\n{health}\n"
                 "Tie Shen Sha / nayin / void / decade luck to the narrative — do not invent stars not listed. "
-                "Page8 must name age-appropriate risks (e.g. 55+ cardio/BP) when chart supports it. "
+                "Health Part1 = risks/situation; Health Part2 = remedies and checkup direction. "
+                "Page8/9 must name age-appropriate risks (e.g. 55+ cardio/BP) when chart supports it. "
                 "For Annual Luck Report use four seasons "
                 "(Spring Yin-Mao-Chen, Summer Si-Wu-Wei, Autumn Shen-You-Xu, Winter Hai-Zi-Chou); "
                 "name 1–2 key months per season, not a 12-month laundry list."
@@ -393,8 +437,9 @@ class ReportGenerator:
             f"五行：{json.dumps(bazi_data.get('wuxing_stats', {}), ensure_ascii=False)}；"
             f"当前大运：{dy}；当前流年：{ln}。\n"
             f"【命盘明细·报告须联动引用，尤其第1页；勿编造未列出的神煞】\n{detail}\n"
-            f"【健康交叉提示·第8页必须结合年龄】\n{health}\n"
+            f"【健康交叉提示·健康 Part1/Part2 必须结合年龄】\n{health}\n"
             "说明：八字脏腑对应仅作体质倾向，须结合年龄与现代体检建议书写；禁止恐吓，强调「参考+就医」。"
+            "健康 Part1 写局势与风险；健康 Part2 写调养方向与化解，勿重复 Part1。"
             "分析结合流年与命局；《流年报告》按四时分述（春寅卯辰、夏巳午未、秋申酉戌、冬亥子丑），"
             "每季点出一至两个关键流月，勿写成十二个月流水账。"
         )
@@ -652,6 +697,7 @@ Professional seasons:
             prompt = f"""Write a BaZi report page from the chart. Output valid JSON only, no markdown fences.
 
 {lang_rule}
+{self.PART_RULE_EN}
 
 Chart: {context}
 
@@ -680,11 +726,13 @@ Hard rules:
 3) plain must never use: {self.FORBIDDEN_PLAIN}
 4) Professional may use BaZi terms; plain must not.
 5) Entire output in English.
+6) Obey PART RULE strictly for Part 1 vs Part 2 pages.
 """
         else:
             prompt = f"""根据命盘写命理报告。只输出合法 JSON，不要 markdown 代码块。
 
 {lang_rule}
+{self.PART_RULE_ZH}
 
 命盘：{context}
 
@@ -698,7 +746,7 @@ Hard rules:
     "第一段：本页核心判断（约60-90字，独立完整句）",
     "第二段：展开分析细节（约60-90字）",
     "第三段：月份或阶段要点（约60-90字）",
-    "第四段：风险与应对（约60-90字）"
+    "第四段：风险与应对 / 或化解步骤（约60-90字）"
   ],
   "plain": {{
     "summary": "一句人话总结（不超过40字，零术语）",
@@ -719,6 +767,7 @@ Hard rules:
 5) 若有多页，每个 page key 都按同一结构输出。
 6) title 只能是纯中文/英文标题字符串，禁止出现 {{、}}、"page1"、JSON 片段。
 7) 第1页须引用上下文中的神煞/纳音/空亡/大运，勿编造未列出的神煞。
+8) 严格遵守 Part 1=局势、Part 2=方向与化解；Part 2 禁止复述 Part 1 事件清单。
 """
         raw = self._call_deepseek(prompt)
         parsed = self._parse_json_loose(raw)

@@ -29,7 +29,7 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "sidebar_body": (
             "本系统将 **六西格玛设计 (DFSS)** 方法论与千年命理智慧融合，为你提供：\n\n"
             "- ✅ 精准八字排盘（真太阳时校正）\n"
-            "- ✅ 八页深度命理报告\n"
+            "- ✅ 九页深度命理报告（事业/财运/感情/健康均含 Part1+Part2）\n"
             "- ✅ 事业 · 财运 · 感情 · 健康 全方位分析\n"
             "- ✅ 基于大数据与AI的工程化命理"
         ),
@@ -44,8 +44,9 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "tab_report": "📄 完整报告",
         "tab_liunian": "📅 流年报告",
         "liunian_chapter_badge": "金卡 / 钻石专属独立篇章",
-        "liunian_locked": "流年报告为金卡、钻石会员专属。银卡含完整八页报告，升级后解锁本篇。",
+        "liunian_locked": "流年报告为金卡、钻石会员专属。银卡含完整九页报告，升级后解锁本篇。",
         "liunian_heading": "📅 流年报告",
+        "report_part_legend": "Part 1＝局势研判；Part 2＝方向与化解（更进一步、可执行）",
         "input_heading": "请输入您的出生信息",
         "input_caption": "所有信息将严格保密，仅用于生成您的专属命理报告",
         "name": "👤 您的姓名",
@@ -92,9 +93,9 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "password": "🔑 密码",
         "password_confirm": "🔑 确认密码",
         "membership_heading": "💎 升级会员 · 解锁完整报告",
-        "btn_silver": "🥈 银卡会员\n\nHK$10 · 10次\n完整八页报告",
-        "btn_gold": "🥇 金卡会员\n\nHK$100 · 10次\n八页报告 + 独立流年报告",
-        "btn_diamond": "💎 钻石会员\n\nHK$999 · 一年无限\n八页报告 + 独立流年报告",
+        "btn_silver": "🥈 银卡会员\n\nHK$10 · 10次\n完整九页报告",
+        "btn_gold": "🥇 金卡会员\n\nHK$100 · 10次\n九页报告 + 独立流年报告",
+        "btn_diamond": "💎 钻石会员\n\nHK$999 · 一年无限\n九页报告 + 独立流年报告",
         "outline_title": "📋 报告大纲预览",
         "pay_now": "💳 前往支付",
         "remaining_reports": "剩余报告次数",
@@ -116,25 +117,25 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "dayun": "🚀 大运走势",
         "liunian": "📅 流年运势",
         "step": "第{n}步",
-        "locked_report": "🔒 您当前为免费用户，完整八页报告需要订阅会员",
+        "locked_report": "🔒 您当前为免费用户，完整九页报告需要订阅会员",
         "unlock_heading": "💎 订阅会员解锁完整报告",
         "unlock_body": (
-            "**银卡**：10次完整八页报告\n"
-            "**金卡**：10次八页报告 + 流年预测专章\n"
+            "**银卡**：10次完整九页报告（事业/财运/感情/健康均含 Part1+Part2）\n"
+            "**金卡**：10次九页报告 + 流年预测专章\n"
             "**钻石**：一年内无限次报告 + 流年预测\n\n"
             "排盘后在下方选择会员方案"
         ),
         "preview": "📄 报告预览（仅限会员）",
         "need_generate": "👆 请先在「输入信息」标签页生成报告",
-        "your_report": "📄 您的八页命理报告",
+        "your_report": "📄 您的九页命理报告",
         "generated_at": "生成时间",
         "download_pdf": "📥 下载PDF报告",
         "export_json": "📋 导出数据（JSON）",
         "pdf_warn": "PDF生成功能需要额外配置，请使用复制文本功能",
-        "pdf_includes_liunian": "PDF 含完整八页 + 流年报告",
-        "pdf_silver_no_liunian": "银卡 PDF 含完整八页（不含流年报告；升级金卡/钻石可含）",
+        "pdf_includes_liunian": "PDF 含完整九页 + 流年报告",
+        "pdf_silver_no_liunian": "银卡 PDF 含完整九页（不含流年报告；升级金卡/钻石可含）",
         "goto_liunian_report": "📅 查看流年报告（独立篇章）",
-        "goto_full_report": "📄 返回八页命理报告",
+        "goto_full_report": "📄 返回九页命理报告",
         "footer": "⚠️ 本系统仅供娱乐与自我参考，请理性看待命理分析结果。",
         "admin_help": "管理员登录",
         "admin_login_title": "管理员登录",
@@ -210,8 +211,9 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "tab_report": "📄 Full Report",
         "tab_liunian": "📅 Annual Luck Report",
         "liunian_chapter_badge": "Gold / Diamond exclusive chapter",
-        "liunian_locked": "Annual Luck Report is for Gold and Diamond only. Silver includes the full 8-page report; upgrade to unlock this chapter.",
+        "liunian_locked": "Annual Luck Report is for Gold/Diamond. Silver includes the full 9-page report.",
         "liunian_heading": "📅 Annual Luck Report",
+        "report_part_legend": "Part 1 = situation; Part 2 = direction & remedies (actionable next steps)",
         "input_heading": "Enter birth information",
         "input_caption": "Your data is private and used only to generate your report",
         "name": "👤 Name",
@@ -258,9 +260,9 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "password": "🔑 Password",
         "password_confirm": "🔑 Confirm password",
         "membership_heading": "💎 Upgrade · Unlock full reports",
-        "btn_silver": "🥈 Silver\n\nHK$10 · 10 uses\nFull 8-page report",
-        "btn_gold": "🥇 Gold\n\nHK$100 · 10 uses\n8 pages + Annual Luck Report",
-        "btn_diamond": "💎 Diamond\n\nHK$999 · 1 year unlimited\n8 pages + Annual Luck Report",
+        "btn_silver": "🥈 Silver\n\nHK$10 · 10 uses\nFull 9-page report",
+        "btn_gold": "🥇 Gold\n\nHK$100 · 10 uses\n9 pages + Annual Luck Report",
+        "btn_diamond": "💎 Diamond\n\nHK$999 · 1 year unlimited\n9 pages + Annual Luck Report",
         "outline_title": "📋 Report outline",
         "pay_now": "💳 Pay now",
         "remaining_reports": "Reports remaining",
@@ -282,25 +284,25 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "dayun": "🚀 Decade Luck",
         "liunian": "📅 Annual Luck",
         "step": "Step {n}",
-        "locked_report": "🔒 Full 8-page report requires a paid subscription",
+        "locked_report": "🔒 Full 9-page report requires a paid subscription",
         "unlock_heading": "💎 Subscribe to unlock",
         "unlock_body": (
-            "**Silver**: 10 full 8-page reports\n"
+            "**Silver**: 10 full 9-page reports (Career/Wealth/Relationship/Health each have Part1+Part2)\n"
             "**Gold**: 10 reports + annual luck chapter\n"
             "**Diamond**: unlimited reports for 1 year\n\n"
             "Choose a plan below after charting"
         ),
         "preview": "📄 Report preview (members only)",
         "need_generate": "👆 Generate a report on the Input tab first",
-        "your_report": "📄 Your 8-page BaZi report",
+        "your_report": "📄 Your 9-page BaZi report",
         "generated_at": "Generated at",
         "download_pdf": "📥 Download PDF",
         "export_json": "📋 Export JSON",
         "pdf_warn": "PDF needs extra setup; use JSON export for now",
-        "pdf_includes_liunian": "PDF includes 8 pages + Annual Luck Report",
-        "pdf_silver_no_liunian": "Silver PDF: 8 pages only (upgrade Gold/Diamond for Annual Luck)",
+        "pdf_includes_liunian": "PDF includes 9 pages + Annual Luck Report",
+        "pdf_silver_no_liunian": "Silver PDF: 9 pages only (upgrade Gold/Diamond for Annual Luck)",
         "goto_liunian_report": "📅 Open Annual Luck Report",
-        "goto_full_report": "📄 Back to 8-page report",
+        "goto_full_report": "📄 Back to 9-page report",
         "footer": "⚠️ For entertainment and self-reflection only.",
         "admin_help": "Admin login",
         "admin_login_title": "Admin Login",
