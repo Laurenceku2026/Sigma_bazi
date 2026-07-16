@@ -488,6 +488,41 @@ def sync_app_user(email: Optional[str] = None):
         return None
 
 
+def _form_birth_fingerprint(form: Dict[str, Any]) -> tuple:
+    """排盘关键字段指纹（不含姓名，姓名不影响四柱）。"""
+    bd = form.get("birth_date")
+    if hasattr(bd, "isoformat"):
+        bd = bd.isoformat()
+    return (
+        str(form.get("gender") or ""),
+        str(bd or ""),
+        int(form.get("birth_hour") or 0),
+        int(form.get("birth_minute") or 0),
+        str(form.get("region_id") or ""),
+        bool(form.get("use_true_solar", True)),
+    )
+
+
+def _saved_birth_fingerprint(info: Dict[str, Any] | None) -> tuple | None:
+    if not info or not info.get("birth_date"):
+        return None
+    return (
+        str(info.get("gender") or ""),
+        str(info.get("birth_date") or ""),
+        int(info.get("birth_hour") or 0),
+        int(info.get("birth_minute") or 0),
+        str(info.get("region_id") or ""),
+        bool(info.get("use_true_solar", True)),
+    )
+
+
+def birth_data_unchanged(form: Dict[str, Any], info: Dict[str, Any] | None) -> bool:
+    saved = _saved_birth_fingerprint(info)
+    if saved is None:
+        return False
+    return _form_birth_fingerprint(form) == saved
+
+
 def run_bazi(form: Dict[str, Any]):
     lon = region_longitude(form["region_id"])
     engine = BaziEngine(
@@ -511,6 +546,7 @@ def run_bazi(form: Dict[str, Any]):
         "region_id": form["region_id"],
         "region_label": region_label(form["region_id"], lang),
         "birth_place": form.get("birth_place", ""),
+        "use_true_solar": bool(form.get("use_true_solar", True)),
         "email": st.session_state.user_email,
         "payment_tier": st.session_state.subscription_tier,
     }
@@ -1231,6 +1267,13 @@ if _tab == 0:
             st.session_state.pending_form = form_snapshot
             st.session_state.show_register = True
             st.rerun()
+        elif (
+            birth_data_unchanged(form_snapshot, st.session_state.birth_info)
+            and st.session_state.bazi_data is not None
+            and st.session_state.report_content
+        ):
+            st.info(t("chart_unchanged_skip", lang))
+            st.rerun()
         else:
             with st.spinner(t("generating", lang)):
                 run_bazi(form_snapshot)
@@ -1340,6 +1383,15 @@ elif _tab == 3:
     tier = st.session_state.subscription_tier
     paid = tier in PAID_TIERS
     has_report = bool(st.session_state.report_content)
+
+    if st.session_state.bazi_data is not None:
+        from bazi_analysis import render_lifetime_fortune_html
+
+        st.markdown(
+            render_lifetime_fortune_html(st.session_state.bazi_data, lang),
+            unsafe_allow_html=True,
+        )
+        st.markdown("---")
 
     if not has_report:
         if st.session_state.bazi_data is None:

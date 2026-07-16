@@ -492,6 +492,14 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
             )
             st.progress(min(max(bar["pct"] / 100.0, 0.0), 1.0))
 
+    from bazi_analysis import render_personality_html
+
+    st.markdown("---")
+    st.markdown(
+        "### " + ("🧠 性格分析" if lang != "en" else "🧠 Personality")
+    )
+    st.markdown(render_personality_html(bazi_data, lang), unsafe_allow_html=True)
+
     st.markdown("---")
     st.markdown(
         "### " + ("🧭 当前运势柱（大运 · 流年 · 流月 · 流日）" if lang != "en"
