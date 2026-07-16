@@ -598,8 +598,12 @@ class SupabaseClient:
             try:
                 result = (
                     self._table(self.USER_TABLE)
-                    .select("user_id,email,app_id,subscription_tier,free_trials_remaining,"
-                            "subscription_expires_at,created_at,last_login_at,email_confirmed")
+                    .select(
+                        "user_id,email,app_id,subscription_tier,free_trials_remaining,"
+                        "subscription_expires_at,created_at,last_login_at,email_confirmed,"
+                        "display_name,gender,birth_date,birth_hour,birth_minute,"
+                        "region_id,birth_place,last_birth_info"
+                    )
                     .eq("app_id", self.app_id)
                     .limit(limit)
                     .execute()

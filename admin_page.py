@@ -5,11 +5,12 @@ import csv
 import hmac
 import io
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
-from ui_texts import t
+from ui_texts import region_label, t
 
 
 def _safe_date(value: Any) -> str:
@@ -17,6 +18,47 @@ def _safe_date(value: Any) -> str:
         return "-"
     s = str(value)
     return s[:10] if len(s) >= 10 else s
+
+
+def _birth_info_fallback(user: Dict[str, Any]) -> Dict[str, Any]:
+    raw = user.get("last_birth_info") or {}
+    if isinstance(raw, str):
+        try:
+            import json
+
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _format_birth_time(user: Dict[str, Any]) -> str:
+    h = user.get("birth_hour")
+    m = user.get("birth_minute")
+    if h is None:
+        h = _birth_info_fallback(user).get("birth_hour")
+    if m is None:
+        m = _birth_info_fallback(user).get("birth_minute")
+    if h is None:
+        return "-"
+    try:
+        return f"{int(h):02d}:{int(m if m is not None else 0):02d}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _format_birth_location(user: Dict[str, Any], lang: str) -> str:
+    raw = _birth_info_fallback(user)
+    rid = user.get("region_id") or raw.get("region_id")
+    place = user.get("birth_place")
+    if place is None:
+        place = raw.get("birth_place") or raw.get("region_label") or ""
+    parts = []
+    if rid:
+        parts.append(region_label(str(rid), lang))
+    if str(place or "").strip():
+        parts.append(str(place).strip())
+    return " · ".join(parts) if parts else "-"
 
 
 def check_admin_password(password: str, expected: str) -> bool:
@@ -197,7 +239,9 @@ def render_admin_page(lang: str, supabase_client) -> None:
             {
                 t("email_col", lang): u.get("email") or "-",
                 ("姓名" if lang == "zh" else "Name"): u.get("display_name") or "-",
-                ("生日" if lang == "zh" else "Birthday"): u.get("birth_date") or "-",
+                ("生日" if lang == "zh" else "Birthday"): _safe_date(u.get("birth_date")),
+                ("出生时间" if lang == "zh" else "Birth time"): _format_birth_time(u),
+                ("出生地点" if lang == "zh" else "Birth place"): _format_birth_location(u, lang),
                 t("subscription_col", lang): u.get("subscription_tier", "free"),
                 t("trials_col", lang): u.get("free_trials_remaining", 5),
                 t("expires_col", lang): _safe_date(u.get("subscription_expires_at")),
@@ -227,6 +271,17 @@ def render_admin_page(lang: str, supabase_client) -> None:
         return
 
     st.caption(f"{t('current_user', lang)}: {selected_user.get('email') or selected_user.get('user_id')}")
+
+    st.markdown("#### 📍 " + ("出生资料" if lang == "zh" else "Birth profile"))
+    bc1, bc2, bc3, bc4 = st.columns(4)
+    bc1.metric("姓名" if lang == "zh" else "Name", selected_user.get("display_name") or "-")
+    bc2.metric("生日" if lang == "zh" else "Date", _safe_date(selected_user.get("birth_date")))
+    bc3.metric("时间" if lang == "zh" else "Time", _format_birth_time(selected_user))
+    bc4.metric("性别" if lang == "zh" else "Gender", selected_user.get("gender") or "-")
+    st.caption(
+        ("出生地点：" if lang == "zh" else "Birth place: ")
+        + _format_birth_location(selected_user, lang)
+    )
 
     st.markdown("---")
     st.markdown(f"### 📝 {t('edit_subscription', lang)}")
@@ -286,6 +341,33 @@ def render_admin_page(lang: str, supabase_client) -> None:
     with b3:
         if st.button(f"🔄 {t('refresh_data', lang)}", key="admin_refresh", use_container_width=True):
             st.rerun()
+
+    st.markdown("---")
+    st.markdown("### 📋 " + ("試用問卷（發給測試者）" if lang == "zh" else "Trial questionnaire"))
+    with st.expander("查看 10 題問卷摘要" if lang == "zh" else "View 10-question summary", expanded=False):
+        st.markdown(
+            """
+1. 首次註冊與排盤體驗  
+2. 命盤準確度與信任感（1–5）  
+3. DFSS × 八字概念是否清楚  
+4. 專業段 vs 白話段哪個更有用  
+5. 事業/財運/感情/健康哪類最有價值  
+6. 報告生成速度與穩定性  
+7. 介面語言與手機體驗  
+8. 免費預覽 vs 付費會員意願  
+9. 推薦意願 NPS（0–10）  
+10. 最重要的一項改進建議（開放題）
+            """.strip()
+        )
+        qpath = Path(__file__).resolve().parent / "docs" / "trial_questionnaire_zh_hant.md"
+        if qpath.is_file():
+            st.download_button(
+                "📥 下載完整問卷（Markdown）" if lang == "zh" else "📥 Download questionnaire (MD)",
+                data=qpath.read_text(encoding="utf-8"),
+                file_name="sigma_fate_trial_questionnaire.md",
+                mime="text/markdown",
+                key="admin_download_questionnaire",
+            )
 
     st.markdown("---")
     st.markdown(f"### 🔁 {t('bulk_ops', lang)}")
