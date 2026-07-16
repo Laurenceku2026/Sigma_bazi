@@ -21,6 +21,30 @@ def _safe_date(value: Any) -> str:
     return s[:10] if len(s) >= 10 else s
 
 
+def _safe_datetime(value: Any) -> str:
+    """显示日期+时间，如 2026-07-16 18:53。"""
+    if not value:
+        return "-"
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M")
+    s = str(value).strip()
+    if not s:
+        return "-"
+    # ISO: 2026-07-16T18:53:01.123456+00:00 / 2026-07-16 18:53:01
+    try:
+        normalized = s.replace("Z", "+00:00")
+        if "T" in normalized or " " in normalized[:20]:
+            dt = datetime.fromisoformat(normalized)
+            return dt.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        pass
+    if len(s) >= 16:
+        # 回退：截取到分钟
+        body = s[:16].replace("T", " ")
+        return body
+    return s[:10] if len(s) >= 10 else s
+
+
 def _birth_info_fallback(user: Dict[str, Any]) -> Dict[str, Any]:
     raw = user.get("last_birth_info") or {}
     if isinstance(raw, str):
@@ -228,8 +252,8 @@ def render_admin_page(lang: str, supabase_client) -> None:
                 t("subscription_col", lang): u.get("subscription_tier", "free"),
                 t("trials_col", lang): u.get("free_trials_remaining", 5),
                 t("expires_col", lang): _safe_date(u.get("subscription_expires_at")),
-                t("created_col", lang): _safe_date(u.get("created_at")),
-                t("last_login_col", lang): _safe_date(u.get("last_login_at")),
+                t("created_col", lang): _safe_datetime(u.get("created_at")),
+                t("last_login_col", lang): _safe_datetime(u.get("last_login_at")),
                 t("email_confirmed_col", lang): "✅" if u.get("email_confirmed") else "—",
             }
         )
@@ -254,6 +278,9 @@ def render_admin_page(lang: str, supabase_client) -> None:
         return
 
     st.caption(f"{t('current_user', lang)}: {selected_user.get('email') or selected_user.get('user_id')}")
+    st.caption(
+        f"{t('last_login_col', lang)}: {_safe_datetime(selected_user.get('last_login_at'))}"
+    )
 
     st.markdown(f"#### 📍 {t('admin_birth_profile', lang)}")
     bc1, bc2, bc3, bc4 = st.columns(4)

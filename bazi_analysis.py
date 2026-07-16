@@ -773,7 +773,7 @@ def _pick_important_tip(
     # 详细年附加语气（成年后）
     if detailed and age >= 18:
         if flags.get("tianke_dichong"):
-            text = "⚠天克地冲：" + text
+            text = "【天克地冲】" + text
         elif score >= 78 and not (flags.get("chong") or flags.get("xing")):
             text = text + "整体气势偏旺，可主动进取但留余地。"
         elif score >= 78 and (flags.get("chong") or flags.get("xing")):
@@ -936,9 +936,9 @@ def render_lifetime_fortune_html(
             cols = tuple(_maybe_trad(c, lang) for c in cols)
             hint = _maybe_trad(hint, lang)
 
-    # 列宽：合化收窄约 25%，重要提示加宽
+    # 列宽：重要提示再收窄约 10%；运势列加宽，条用百分比限制在列内
     # 西元/实岁/大运/流年/合化/运势/重要提示
-    col_widths = ("7%", "5%", "7%", "7%", "9%", "16%", "49%")
+    col_widths = ("7%", "5%", "7%", "7%", "9%", "22%", "43%")
     head_cells = []
     for i, c in enumerate(cols):
         w = col_widths[i] if i < len(col_widths) else "auto"
@@ -957,30 +957,31 @@ def render_lifetime_fortune_html(
         is_focus = r.get("detailed")
         age_style = "color:#C62828;font-weight:700;" if is_cur else ""
         row_bg = "background:#FFF8E7;" if is_cur else ("background:#FAFAFA;" if is_focus else "")
-        # 相对拉伸，让强弱对比更明显
+        # 百分比宽度，限制在运势列内，绝不溢出到「重要提示」
         norm = (r["score"] - min_score) / span
-        bar_w = int(28 + norm * 170)
+        bar_pct = int(18 + norm * 82)
         bar_color = "#C2185B" if r["score"] >= 55 else "#AB47BC"
         if r["score"] <= 35:
             bar_color = "#78909C"
         bar = (
-            f"<div style='height:10px;width:{bar_w}px;background:{bar_color};"
-            f"border-radius:2px;' title='{r['score']}'></div>"
+            f"<div style='width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;'>"
+            f"<div style='height:10px;width:{bar_pct}%;max-width:100%;background:{bar_color};"
+            f"border-radius:2px;' title='{r['score']}'></div></div>"
         )
         inter = r["interaction"] or "—"
         tip = r.get("tip") or "—"
         tip_style = "font-weight:600;color:#4E342E;" if is_focus else "color:#666;"
         body_rows.append(
             f"<tr style='{row_bg}'>"
-            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;width:{col_widths[0]};'>{r['year']}</td>"
-            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;width:{col_widths[1]};{age_style}'>{r['age']}</td>"
-            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;width:{col_widths[2]};'>{r['dayun']}</td>"
-            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;width:{col_widths[3]};'>{r['liunian']}</td>"
+            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;'>{r['year']}</td>"
+            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;{age_style}'>{r['age']}</td>"
+            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;'>{r['dayun']}</td>"
+            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;text-align:center;font-size:0.8rem;'>{r['liunian']}</td>"
             f"<td style='padding:4px 3px;border-bottom:1px solid #eee;text-align:center;font-size:0.68rem;color:#666;"
-            f"width:{col_widths[4]};max-width:72px;word-break:break-word;line-height:1.35;'>{inter}</td>"
-            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;width:{col_widths[5]};'>{bar}</td>"
+            f"word-break:break-word;line-height:1.35;'>{inter}</td>"
+            f"<td style='padding:4px 4px;border-bottom:1px solid #eee;overflow:hidden;'>{bar}</td>"
             f"<td style='padding:4px 8px;border-bottom:1px solid #eee;text-align:left;font-size:0.75rem;"
-            f"{tip_style};width:{col_widths[6]};min-width:200px;line-height:1.45;'>{tip}</td>"
+            f"{tip_style};line-height:1.45;word-break:break-word;'>{tip}</td>"
             "</tr>"
         )
     colgroup = "".join(f"<col style='width:{w};'/>" for w in col_widths)

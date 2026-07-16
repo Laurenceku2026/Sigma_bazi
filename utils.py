@@ -598,20 +598,33 @@ def _resolve_pdf_cjk_font() -> tuple:
         if not path or not path.is_file() or path.stat().st_size < 100_000:
             return None
         name = "SFCJK"
+        bold_name = "SFCJK-Bold"
         try:
-            if name in pdfmetrics.getRegisteredFontNames():
+            registered = set(pdfmetrics.getRegisteredFontNames())
+            # 若已用 TrueType 注册成功则复用；若误注册成其它字体则继续尝试
+            if name in registered and bold_name in registered:
                 return name
         except Exception:
-            pass
+            registered = set()
         try:
             if path.suffix.lower() == ".ttc":
                 idx = 0 if subfont_index is None else int(subfont_index)
-                pdfmetrics.registerFont(TTFont(name, str(path), subfontIndex=idx))
+                if name not in registered:
+                    pdfmetrics.registerFont(TTFont(name, str(path), subfontIndex=idx))
+                if bold_name not in registered:
+                    pdfmetrics.registerFont(TTFont(bold_name, str(path), subfontIndex=idx))
             else:
-                pdfmetrics.registerFont(TTFont(name, str(path)))
+                if name not in registered:
+                    pdfmetrics.registerFont(TTFont(name, str(path)))
+                if bold_name not in registered:
+                    pdfmetrics.registerFont(TTFont(bold_name, str(path)))
             try:
                 pdfmetrics.registerFontFamily(
-                    name, normal=name, bold=name, italic=name, boldItalic=name
+                    name,
+                    normal=name,
+                    bold=bold_name,
+                    italic=name,
+                    boldItalic=bold_name,
                 )
             except Exception:
                 pass
@@ -676,6 +689,105 @@ def _resolve_pdf_cjk_font() -> tuple:
         return "Helvetica", "Helvetica"
 
 
+
+def _cjk_font_file():
+    """返回可用于 PIL 的中文字体路径。"""
+    from pathlib import Path
+    here = Path(__file__).resolve().parent
+    candidates = [
+        here / "fonts" / "NotoSansSC-Regular.ttf",
+        here / "fonts" / "NotoSansSC-Regular.otf",
+        Path(r"C:\Windows\Fonts\simhei.ttf"),
+        Path(r"C:\Windows\Fonts\msyh.ttc"),
+        Path(r"C:\Windows\Fonts\simsun.ttc"),
+        Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+    ]
+    for p in candidates:
+        try:
+            if p.is_file() and p.stat().st_size > 100_000:
+                return p
+        except Exception:
+            continue
+    return None
+
+
+def _pdf_text_image(
+    text: str,
+    *,
+    font_path,
+    font_size: int = 11,
+    max_width_pt: float = 460,
+    fill: str = "#222222",
+    align: str = "left",
+):
+    """把中文绘成图片 Flowable，避免 ReportLab TTF 子集缺字黑方块。"""
+    import io
+    from reportlab.platypus import Image as RLImage
+    from PIL import Image, ImageDraw, ImageFont
+
+    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not raw:
+        return None
+
+    # pt -> px @ 2x for清晰度
+    scale = 2
+    font = ImageFont.truetype(str(font_path), font_size * scale)
+    max_w = int(max_width_pt * scale)
+
+    def char_w(ch: str) -> int:
+        box = font.getbbox(ch)
+        return max(1, box[2] - box[0])
+
+    lines = []
+    for para in raw.split("\n"):
+        if not para:
+            lines.append("")
+            continue
+        cur = ""
+        cur_w = 0
+        for ch in para:
+            w = char_w(ch)
+            if cur and cur_w + w > max_w:
+                lines.append(cur)
+                cur = ch
+                cur_w = w
+            else:
+                cur += ch
+                cur_w += w
+        lines.append(cur)
+
+    line_h = int(font_size * scale * 1.55)
+    pad = int(2 * scale)
+    img_h = pad * 2 + max(line_h, line_h * len(lines))
+    img_w = max_w + pad * 2
+    img = Image.new("RGB", (img_w, img_h), "white")
+    draw = ImageDraw.Draw(img)
+    y = pad
+    for line in lines:
+        if not line:
+            y += line_h
+            continue
+        bbox = font.getbbox(line)
+        tw = bbox[2] - bbox[0]
+        if align == "center":
+            x = pad + max(0, (max_w - tw) // 2)
+        else:
+            x = pad
+        draw.text((x, y), line, font=font, fill=fill)
+        y += line_h
+
+    # 裁掉底部空白
+    img = img.crop((0, 0, img_w, min(img_h, y + pad)))
+    bio = io.BytesIO()
+    img.save(bio, format="PNG")
+    bio.seek(0)
+    draw_w = max_width_pt
+    draw_h = img.size[1] / scale
+    # ReportLab Image 接受文件路径或 BytesIO，不要包 ImageReader
+    return RLImage(bio, width=draw_w, height=draw_h)
+
+
 def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunian: bool = False, lang: str = "zh"):
     """生成多页中文 PDF（嵌入 CJK 字体，避免黑方块）。金/钻可含流年报告；银卡不含。"""
     import io
@@ -701,6 +813,9 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
         return s
 
     font_body, font_head = _resolve_pdf_cjk_font()
+    cjk_path = _cjk_font_file()
+    # 有可用 TTF 时用 PIL 出字（ReportLab 子集化 CJK 易出黑方块）
+    use_pil = cjk_path is not None
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -715,92 +830,92 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
     )
 
     styles = getSampleStyleSheet()
-    style_cover = ParagraphStyle(
-        "Cover",
-        parent=styles["Normal"],
-        fontName=font_head,
-        fontSize=24,
-        leading=32,
-        alignment=TA_CENTER,
-        spaceAfter=16,
-        textColor="#0B1F33",
-    )
+    # 英文字母副标题仍可用内置字体
     style_cover_sub = ParagraphStyle(
         "CoverSub",
         parent=styles["Normal"],
-        fontName=font_body,
+        fontName="Helvetica",
         fontSize=11,
         leading=16,
         alignment=TA_CENTER,
         spaceAfter=10,
         textColor="#455A64",
     )
+    # 下面样式仅作回退；中文主路径走 PIL
     style_h1 = ParagraphStyle(
-        "H1CN",
-        parent=styles["Normal"],
-        fontName=font_head,
-        fontSize=18,
-        leading=26,
-        spaceBefore=6,
-        spaceAfter=10,
-        alignment=TA_LEFT,
-        textColor="#0B1F33",
+        "H1CN", parent=styles["Normal"], fontName=font_head, fontSize=18, leading=26,
+        spaceBefore=6, spaceAfter=10, alignment=TA_LEFT, textColor="#0B1F33",
     )
     style_h2 = ParagraphStyle(
-        "H2CN",
-        parent=styles["Normal"],
-        fontName=font_head,
-        fontSize=13,
-        leading=20,
-        spaceBefore=12,
-        spaceAfter=6,
-        textColor="#1565C0",
+        "H2CN", parent=styles["Normal"], fontName=font_head, fontSize=13, leading=20,
+        spaceBefore=12, spaceAfter=6, textColor="#1565C0",
     )
     style_body = ParagraphStyle(
-        "BodyCN",
-        parent=styles["Normal"],
-        fontName=font_body,
-        fontSize=10.5,
-        leading=17,
-        alignment=TA_JUSTIFY,
-        spaceAfter=8,
+        "BodyCN", parent=styles["Normal"], fontName=font_body, fontSize=10.5, leading=17,
+        alignment=TA_JUSTIFY, spaceAfter=8,
     )
     style_meta = ParagraphStyle(
-        "MetaCN",
-        parent=styles["Normal"],
-        fontName=font_body,
-        fontSize=11,
-        leading=18,
-        alignment=TA_CENTER,
-        spaceAfter=6,
+        "MetaCN", parent=styles["Normal"], fontName=font_body, fontSize=11, leading=18,
+        alignment=TA_CENTER, spaceAfter=6,
     )
     style_toc = ParagraphStyle(
-        "TocCN",
-        parent=styles["Normal"],
-        fontName=font_body,
-        fontSize=11,
-        leading=18,
-        alignment=TA_LEFT,
-        leftIndent=12,
-        spaceAfter=4,
+        "TocCN", parent=styles["Normal"], fontName=font_body, fontSize=11, leading=18,
+        alignment=TA_LEFT, leftIndent=12, spaceAfter=4,
     )
     style_bullet = ParagraphStyle(
-        "BulletCN",
-        parent=styles["Normal"],
-        fontName=font_body,
-        fontSize=10.5,
-        leading=17,
-        leftIndent=14,
-        spaceAfter=4,
+        "BulletCN", parent=styles["Normal"], fontName=font_body, fontSize=10.5, leading=17,
+        leftIndent=14, spaceAfter=4,
     )
 
+    content_width = A4[0] - 3.6 * cm
+
+    def _pdf_safe(text: str) -> str:
+        if not text:
+            return ""
+        return (
+            str(text)
+            .replace("⚠️", "")
+            .replace("⚠", "")
+            .replace("★", "*")
+            .replace("☆", "*")
+            .replace("●", "-")
+            .replace("○", "-")
+        )
+
     def P(text: str, style=style_body, bold: bool = False):
-        raw = T(str(text or "").strip())
+        raw = T(_pdf_safe(str(text or "").strip()))
         if not raw:
             return None
+        if use_pil:
+            size = 11
+            fill = "#222222"
+            align = "left"
+            width = content_width
+            if style is style_h1:
+                size, fill = 18, "#0B1F33"
+            elif style is style_h2:
+                size, fill = 13, "#1565C0"
+            elif style is style_meta:
+                size, fill, align = 12, "#333333", "center"
+            elif style is style_toc:
+                size = 11
+            elif style is style_bullet:
+                size = 10
+                raw = "  " + raw
+            if bold and size < 16:
+                size += 1
+            img = _pdf_text_image(
+                raw,
+                font_path=cjk_path,
+                font_size=size,
+                max_width_pt=float(width),
+                fill=fill,
+                align=align,
+            )
+            if img is not None:
+                return img
+        # 回退 Paragraph（可能黑方块，仅无字体失败时）
         t = escape(raw).replace("\n", "<br/>")
-        if bold:
-            t = f"<b>{t}</b>"
         return Paragraph(t, style)
 
     story = []
@@ -809,7 +924,19 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
     birth = str((birth_info or {}).get("birth_date") or "")
 
     story.append(Spacer(1, 1.8 * cm))
-    story.append(Paragraph(f"<b>{escape(T('六西格玛命理 · 八字命理报告'))}</b>", style_cover))
+    cover = P("六西格玛命理 · 八字命理报告", style_h1)
+    if cover is not None:
+        # 封面标题居中：重绘
+        if use_pil:
+            cover = _pdf_text_image(
+                T(_pdf_safe("六西格玛命理 · 八字命理报告")),
+                font_path=cjk_path,
+                font_size=22,
+                max_width_pt=float(content_width),
+                fill="#0B1F33",
+                align="center",
+            )
+        story.append(cover)
     story.append(Paragraph(escape("Sigma Fate BaZi Report"), style_cover_sub))
     story.append(Spacer(1, 0.5 * cm))
     if name:
