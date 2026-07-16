@@ -86,3 +86,62 @@ def month_branch_by_jieqi(dt: datetime) -> Tuple[str, str]:
         else:
             break
     return branch, name
+
+# 十二「节」（分月界，不含中气）
+JIE_INDICES = (0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22)
+
+
+def _jie_points_around(dt: datetime) -> List[Tuple[datetime, int, str]]:
+    y = dt.year
+    pts = []
+    for yy in (y - 1, y, y + 1):
+        for n in JIE_INDICES:
+            pts.append((jieqi_datetime(yy, n), n, JIEQI_NAMES[n]))
+    pts.sort(key=lambda x: x[0])
+    return pts
+
+
+def prev_next_jie(dt: datetime) -> Tuple[Tuple[datetime, str], Tuple[datetime, str]]:
+    """返回 (上一节, 下一节)，各为 (时刻, 节名)。"""
+    pts = _jie_points_around(dt)
+    prev = (pts[0][0], pts[0][2])
+    nxt = (pts[-1][0], pts[-1][2])
+    for i, (jq_dt, _n, name) in enumerate(pts):
+        if jq_dt <= dt:
+            prev = (jq_dt, name)
+            if i + 1 < len(pts):
+                nxt = (pts[i + 1][0], pts[i + 1][2])
+        else:
+            nxt = (jq_dt, name)
+            break
+    return prev, nxt
+
+
+def qi_yun_from_jieqi(birth: datetime, forward: bool) -> dict:
+    """
+    起运：顺行数至下一节，逆行数至上一节；三天折一年，一天折四月。
+    """
+    prev, nxt = prev_next_jie(birth)
+    target_dt, target_name = (nxt if forward else prev)
+    delta = (target_dt - birth) if forward else (birth - target_dt)
+    total_seconds = abs(delta.total_seconds())
+    total_days = total_seconds / 86400.0
+    years = int(total_days // 3)
+    rem_days = total_days - years * 3
+    months = int(rem_days * 4)
+    if months >= 12:
+        years += months // 12
+        months = months % 12
+    age_float = years + months / 12.0
+    age_label = f"{years}岁{months}个月" if months else f"{years}岁"
+    return {
+        "years": years,
+        "months": months,
+        "days_span": round(total_days, 2),
+        "target_jie": target_name,
+        "target_dt": target_dt.isoformat(sep=" ", timespec="minutes"),
+        "forward": forward,
+        "age_years_float": age_float,
+        "age_label": age_label,
+        "start_age": max(1, years) if total_days >= 1 else 1,
+    }

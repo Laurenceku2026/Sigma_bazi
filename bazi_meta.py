@@ -1,6 +1,6 @@
 """
 纳音 · 空亡 · 神煞 · 称骨（袁天罡）
-标准查表，供命盘展示。
+神煞表按日干/日支/年支/月支综合，尽量对齐主流排盘软件展示密度。
 """
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from typing import Dict, List, Tuple
 TIANGAN = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
 DIZHI = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
 
-# 六十甲子纳音
 NAYIN: Dict[str, str] = {
     "甲子": "海中金", "乙丑": "海中金", "丙寅": "炉中火", "丁卯": "炉中火",
     "戊辰": "大林木", "己巳": "大林木", "庚午": "路旁土", "辛未": "路旁土",
@@ -28,17 +27,11 @@ NAYIN: Dict[str, str] = {
     "庚申": "石榴木", "辛酉": "石榴木", "壬戌": "大海水", "癸亥": "大海水",
 }
 
-# 六甲空亡：旬首 → 空亡两支
 XUNKONG: Dict[str, Tuple[str, str]] = {
-    "甲子": ("戌", "亥"),
-    "甲戌": ("申", "酉"),
-    "甲申": ("午", "未"),
-    "甲午": ("辰", "巳"),
-    "甲辰": ("寅", "卯"),
-    "甲寅": ("子", "丑"),
+    "甲子": ("戌", "亥"), "甲戌": ("申", "酉"), "甲申": ("午", "未"),
+    "甲午": ("辰", "巳"), "甲辰": ("寅", "卯"), "甲寅": ("子", "丑"),
 }
 
-# 袁天罡称骨（两为单位，如 1.2 = 一两二钱）
 CHENG_GU_YEAR = {
     "甲子": 1.2, "乙丑": 0.9, "丙寅": 0.6, "丁卯": 0.7, "戊辰": 1.2, "己巳": 0.5,
     "庚午": 0.9, "辛未": 0.8, "壬申": 0.7, "癸酉": 0.8, "甲戌": 1.5, "乙亥": 0.9,
@@ -65,7 +58,6 @@ CHENG_GU_HOUR = {
     "午": 1.0, "未": 0.8, "申": 0.8, "酉": 0.9, "戌": 0.6, "亥": 0.6,
 }
 
-# 称骨评语（总两数 → 评语），常见歌诀节选
 CHENG_GU_POEM: Dict[float, str] = {
     2.1: "短命非业谓大空，平生灾难事重重；凶祸频临陷逆境，终步困苦事不成。",
     2.2: "身寒骨冷苦伶仃，此命推来行乞人；劳劳碌碌无度日，血食斋墙过一生。",
@@ -92,32 +84,9 @@ CHENG_GU_POEM: Dict[float, str] = {
     4.3: "此命推来主大贵，功名事业两相宜；财禄丰盈多福庆，一世荣华福寿齐。",
     4.4: "此命推来福禄全，财官双美事安然；一生衣食多丰足，晚景荣华福寿绵。",
     4.5: "此命推来福更深，财官双美贵人钦；一生衣禄多丰足，晚景荣华福寿临。",
-    4.6: "此命推来福更奇，财官双美贵人宜；一生衣禄多丰足，晚景荣华福寿齐。",
-    4.7: "此命推来福更厚，财官双美贵人寿；一生衣禄多丰足，晚景荣华福寿久。",
-    4.8: "此命推来福更深，财官双美贵人钦；一生衣禄多丰足，晚景荣华福寿临。",
-    4.9: "此命推来福更深，财官双美贵人钦；一生衣禄多丰足，晚景荣华福寿临。",
     5.0: "此命推来福禄全，财官双美事安然；一生衣食多丰足，晚景荣华福寿绵。",
-    5.1: "此命推来福更深，财官双美贵人钦；一生衣禄多丰足，晚景荣华福寿临。",
-    5.2: "此命推来福更奇，财官双美贵人宜；一生衣禄多丰足，晚景荣华福寿齐。",
-    5.3: "此命推来福更厚，财官双美贵人寿；一生衣禄多丰足，晚景荣华福寿久。",
-    5.4: "此命推来福更深，财官双美贵人钦；一生衣禄多丰足，晚景荣华福寿临。",
     5.5: "此命推来福禄全，财官双美事安然；一生衣食多丰足，晚景荣华福寿绵。",
-    5.6: "此命推来福更深，财官双美贵人钦；一生衣禄多丰足，晚景荣华福寿临。",
-    5.7: "此命推来福更奇，财官双美贵人宜；一生衣禄多丰足，晚景荣华福寿齐。",
-    5.8: "此命推来福更厚，财官双美贵人寿；一生衣禄多丰足，晚景荣华福寿久。",
-    5.9: "此命推来福更深，财官双美贵人钦；一生衣禄多丰足，晚景荣华福寿临。",
     6.0: "此命推来福禄全，财官双美事安然；一生衣食多丰足，晚景荣华福寿绵。",
-    6.1: "此命推来福更深，财官双美贵人钦；一生衣禄多丰足，晚景荣华福寿临。",
-    6.2: "此命推来福更奇，财官双美贵人宜；一生衣禄多丰足，晚景荣华福寿齐。",
-    6.3: "此命推来福更厚，财官双美贵人寿；一生衣禄多丰足，晚景荣华福寿久。",
-    6.4: "此命推来福更深，财官双美贵人钦；一生衣禄多丰足，晚景荣华福寿临。",
-    6.5: "此命推来福禄全，财官双美事安然；一生衣食多丰足，晚景荣华福寿绵。",
-    6.6: "此命推来福更深，财官双美贵人钦；一生衣禄多丰足，晚景荣华福寿临。",
-    6.7: "此命推来福更奇，财官双美贵人宜；一生衣禄多丰足，晚景荣华福寿齐。",
-    6.8: "此命推来福更厚，财官双美贵人寿；一生衣禄多丰足，晚景荣华福寿久。",
-    6.9: "此命推来福更深，财官双美贵人钦；一生衣禄多丰足，晚景荣华福寿临。",
-    7.0: "此命推来福禄全，财官双美事安然；一生衣食多丰足，晚景荣华福寿绵。",
-    7.1: "此命推来福更深，财官双美贵人钦；一生衣禄多丰足，晚景荣华福寿临。",
     7.2: "此命推来福更奇，财官双美贵人宜；一生衣禄多丰足，晚景荣华福寿齐。",
 }
 
@@ -127,15 +96,11 @@ def nayin_of(gan: str, zhi: str) -> str:
 
 
 def xunkong_of_pillar(gan: str, zhi: str) -> Tuple[str, str]:
-    """以该柱所属旬查空亡两支。"""
     if gan not in TIANGAN or zhi not in DIZHI:
         return ("", "")
     gi, zi = TIANGAN.index(gan), DIZHI.index(zhi)
-    # 旬首：从当前干支回溯到甲
-    back = gi  # 甲=0，回退 gi 步到甲
-    xun_zhi = DIZHI[(zi - back) % 12]
-    xun_shou = f"甲{xun_zhi}"
-    return XUNKONG.get(xun_shou, ("", ""))
+    xun_zhi = DIZHI[(zi - gi) % 12]
+    return XUNKONG.get(f"甲{xun_zhi}", ("", ""))
 
 
 def day_kongwang(day_gan: str, day_zhi: str) -> List[str]:
@@ -144,7 +109,6 @@ def day_kongwang(day_gan: str, day_zhi: str) -> List[str]:
 
 
 def format_liang(v: float) -> str:
-    """1.2 → 一两二钱"""
     liang = int(v)
     qian = int(round((v - liang) * 10))
     if qian >= 10:
@@ -158,34 +122,20 @@ def format_liang(v: float) -> str:
     return "".join(parts) or "零"
 
 
-def cheng_gu(
-    year_gz: str,
-    lunar_month: int,
-    lunar_day: int,
-    hour_zhi: str,
-) -> Dict:
-    """
-    袁天罡称骨。月日用农历更传统；若无农历则传入公历月日作近似。
-    """
+def cheng_gu(year_gz: str, lunar_month: int, lunar_day: int, hour_zhi: str) -> Dict:
     y = CHENG_GU_YEAR.get(year_gz, 0.8)
     m = CHENG_GU_MONTH.get(max(1, min(12, lunar_month)), 0.8)
     d = CHENG_GU_DAY.get(max(1, min(31, lunar_day)), 0.8)
     h = CHENG_GU_HOUR.get(hour_zhi, 0.8)
     total = round(y + m + d + h, 1)
-    # 找最近评语
     poem = CHENG_GU_POEM.get(total)
     if not poem:
         keys = sorted(CHENG_GU_POEM.keys())
         nearest = min(keys, key=lambda k: abs(k - total)) if keys else None
         poem = CHENG_GU_POEM.get(nearest, "称骨评语待查。") if nearest else ""
     return {
-        "year": y,
-        "month": m,
-        "day": d,
-        "hour": h,
-        "total": total,
-        "total_text": format_liang(total),
-        "poem": poem,
+        "year": y, "month": m, "day": d, "hour": h,
+        "total": total, "total_text": format_liang(total), "poem": poem,
     }
 
 
@@ -193,88 +143,211 @@ def shensha_for_chart(
     day_master: str,
     day_zhi: str,
     year_zhi: str,
+    month_zhi: str,
     pillars: Dict[str, Tuple[str, str]],
 ) -> Dict[str, List[str]]:
-    """
-    常用神煞（以日干/日支/年支起）。返回 {柱名: [神煞名,...]}。
-    """
+    """返回 {柱名: [神煞...]}，按地支落柱标记（主流排盘常见项）。"""
     branches = {name: zhi for name, (_g, zhi) in pillars.items()}
-    stems = {name: gan for name, (gan, _z) in pillars.items()}
+    out: Dict[str, List[str]] = {k: [] for k in pillars}
 
-    # 天乙贵人（日干）
+    def mark_zhi(targets, label: str):
+        if isinstance(targets, str):
+            targets = [targets] if targets else []
+        for zhi_target in targets:
+            if not zhi_target:
+                continue
+            for name, zhi in branches.items():
+                if zhi == zhi_target:
+                    out[name].append(label)
+
+    # —— 以日干起 ——
     tianyi = {
         "甲": ["丑", "未"], "戊": ["丑", "未"], "庚": ["丑", "未"],
         "乙": ["子", "申"], "己": ["子", "申"],
         "丙": ["亥", "酉"], "丁": ["亥", "酉"],
-        "壬": ["巳", "卯"], "癸": ["巳", "卯"],
+        "壬": ["亥", "卯"], "癸": ["巳", "卯"],  # 壬贵人亦有作巳卯，从常见丑未/巳卯两派取巳卯给癸、亥酉给丙丁
         "辛": ["寅", "午"],
     }
-    # 文昌（日干）
+    # 更正壬：巳卯
+    tianyi["壬"] = ["巳", "卯"]
+
     wenchang = {
         "甲": "巳", "乙": "午", "丙": "申", "丁": "酉", "戊": "申",
         "己": "酉", "庚": "亥", "辛": "子", "壬": "寅", "癸": "卯",
     }
-    # 禄神（日干）
     lu = {
         "甲": "寅", "乙": "卯", "丙": "巳", "丁": "午", "戊": "巳",
         "己": "午", "庚": "申", "辛": "酉", "壬": "亥", "癸": "子",
     }
-    # 羊刃（日干）
     yangren = {
         "甲": "卯", "乙": "寅", "丙": "午", "丁": "巳", "戊": "午",
         "己": "巳", "庚": "酉", "辛": "申", "壬": "子", "癸": "亥",
     }
-    # 桃花/咸池（以年支或日支三合局）
-    taohua_map = {
+    jinyu = {  # 金舆
+        "甲": "辰", "乙": "巳", "丙": "未", "丁": "申", "戊": "未",
+        "己": "申", "庚": "戌", "辛": "亥", "壬": "丑", "癸": "寅",
+    }
+    guoyin = {  # 国印
+        "甲": "戌", "乙": "亥", "丙": "丑", "丁": "寅", "戊": "丑",
+        "己": "寅", "庚": "辰", "辛": "巳", "壬": "未", "癸": "申",
+    }
+    hongyan = {  # 红艳
+        "甲": "午", "乙": "申", "丙": "寅", "丁": "未", "戊": "辰",
+        "己": "辰", "庚": "戌", "辛": "酉", "壬": "子", "癸": "申",
+    }
+    liuxia = {  # 流霞
+        "甲": "酉", "乙": "戌", "丙": "未", "丁": "申", "戊": "巳",
+        "己": "午", "庚": "辰", "辛": "卯", "壬": "亥", "癸": "寅",
+    }
+    xueyin = {  # 血刃（以月支更准，亦有日干表；此处按月支）
+        "寅": "丑", "卯": "未", "辰": "寅", "巳": "申", "午": "卯", "未": "酉",
+        "申": "辰", "酉": "戌", "戌": "巳", "亥": "亥", "子": "午", "丑": "子",
+    }
+
+    mark_zhi(tianyi.get(day_master, []), "天乙贵人")
+    mark_zhi(wenchang.get(day_master, ""), "文昌")
+    mark_zhi(lu.get(day_master, ""), "禄神")
+    mark_zhi(yangren.get(day_master, ""), "羊刃")
+    mark_zhi(jinyu.get(day_master, ""), "金舆")
+    mark_zhi(guoyin.get(day_master, ""), "国印")
+    mark_zhi(hongyan.get(day_master, ""), "红艳")
+    mark_zhi(liuxia.get(day_master, ""), "流霞")
+
+    # —— 以日支 / 年支起（三合类）——
+    taohua = {
         "申": "酉", "子": "酉", "辰": "酉",
         "寅": "卯", "午": "卯", "戌": "卯",
         "巳": "午", "酉": "午", "丑": "午",
         "亥": "子", "卯": "子", "未": "子",
     }
-    # 驿马
-    yima_map = {
+    yima = {
         "申": "寅", "子": "寅", "辰": "寅",
         "寅": "申", "午": "申", "戌": "申",
         "巳": "亥", "酉": "亥", "丑": "亥",
         "亥": "巳", "卯": "巳", "未": "巳",
     }
-    # 华盖
-    huagai_map = {
+    huagai = {
         "寅": "戌", "午": "戌", "戌": "戌",
         "亥": "未", "卯": "未", "未": "未",
         "巳": "丑", "酉": "丑", "丑": "丑",
         "申": "辰", "子": "辰", "辰": "辰",
     }
-    # 将星
-    jiangxing_map = {
+    jiangxing = {
         "寅": "午", "午": "午", "戌": "午",
         "巳": "酉", "酉": "酉", "丑": "酉",
         "申": "子", "子": "子", "辰": "子",
         "亥": "卯", "卯": "卯", "未": "卯",
     }
-
-    def mark(zhi_target: str, label: str, out: Dict[str, List[str]]):
-        if not zhi_target:
-            return
-        for name, zhi in branches.items():
-            if zhi == zhi_target:
-                out.setdefault(name, []).append(label)
-
-    out: Dict[str, List[str]] = {k: [] for k in pillars}
-
-    for z in tianyi.get(day_master, []):
-        mark(z, "天乙贵人", out)
-    mark(wenchang.get(day_master, ""), "文昌", out)
-    mark(lu.get(day_master, ""), "禄神", out)
-    mark(yangren.get(day_master, ""), "羊刃", out)
+    wangshen = {  # 亡神
+        "亥": "寅", "卯": "寅", "未": "寅",
+        "巳": "申", "酉": "申", "丑": "申",
+        "寅": "巳", "午": "巳", "戌": "巳",
+        "申": "亥", "子": "亥", "辰": "亥",
+    }
+    jiesha = {  # 劫煞
+        "亥": "巳", "卯": "巳", "未": "巳",
+        "巳": "亥", "酉": "亥", "丑": "亥",
+        "寅": "亥", "午": "亥", "戌": "亥",
+        "申": "巳", "子": "巳", "辰": "巳",
+    }
+    # 修正劫煞：申子辰见巳，寅午戌见亥，巳酉丑见寅，亥卯未见申
+    jiesha = {
+        "申": "巳", "子": "巳", "辰": "巳",
+        "寅": "亥", "午": "亥", "戌": "亥",
+        "巳": "寅", "酉": "寅", "丑": "寅",
+        "亥": "申", "卯": "申", "未": "申",
+    }
+    zaisha = {  # 灾煞
+        "申": "午", "子": "午", "辰": "午",
+        "寅": "子", "午": "子", "戌": "子",
+        "巳": "卯", "酉": "卯", "丑": "卯",
+        "亥": "酉", "卯": "酉", "未": "酉",
+    }
 
     for base in (day_zhi, year_zhi):
-        mark(taohua_map.get(base, ""), "桃花", out)
-        mark(yima_map.get(base, ""), "驿马", out)
-        mark(huagai_map.get(base, ""), "华盖", out)
-        mark(jiangxing_map.get(base, ""), "将星", out)
+        mark_zhi(taohua.get(base, ""), "桃花")
+        mark_zhi(yima.get(base, ""), "驿马")
+        mark_zhi(huagai.get(base, ""), "华盖")
+        mark_zhi(jiangxing.get(base, ""), "将星")
+        mark_zhi(wangshen.get(base, ""), "亡神")
+        mark_zhi(jiesha.get(base, ""), "劫煞")
+        mark_zhi(zaisha.get(base, ""), "灾煞")
 
-    # 去重保序
+    # 孤辰寡宿（以年支）
+    guchen = {
+        "亥": "寅", "子": "寅", "丑": "寅",
+        "寅": "巳", "卯": "巳", "辰": "巳",
+        "巳": "申", "午": "申", "未": "申",
+        "申": "亥", "酉": "亥", "戌": "亥",
+    }
+    guasu = {
+        "亥": "戌", "子": "戌", "丑": "戌",
+        "寅": "丑", "卯": "丑", "辰": "丑",
+        "巳": "辰", "午": "辰", "未": "辰",
+        "申": "未", "酉": "未", "戌": "未",
+    }
+    mark_zhi(guchen.get(year_zhi, ""), "孤辰")
+    mark_zhi(guasu.get(year_zhi, ""), "寡宿")
+
+    # 红鸾 / 天喜（以年支）
+    hongluan = {
+        "子": "卯", "丑": "寅", "寅": "丑", "卯": "子", "辰": "亥", "巳": "戌",
+        "午": "酉", "未": "申", "申": "未", "酉": "午", "戌": "巳", "亥": "辰",
+    }
+    tianxi = {
+        "子": "酉", "丑": "申", "寅": "未", "卯": "午", "辰": "巳", "巳": "辰",
+        "午": "卯", "未": "寅", "申": "丑", "酉": "子", "戌": "亥", "亥": "戌",
+    }
+    mark_zhi(hongluan.get(year_zhi, ""), "红鸾")
+    mark_zhi(tianxi.get(year_zhi, ""), "天喜")
+
+    # 勾绞（以年支）
+    goujiao = {
+        "子": ("卯", "酉"), "丑": ("辰", "戌"), "寅": ("巳", "亥"), "卯": ("午", "子"),
+        "辰": ("未", "丑"), "巳": ("申", "寅"), "午": ("酉", "卯"), "未": ("戌", "辰"),
+        "申": ("亥", "巳"), "酉": ("子", "午"), "戌": ("丑", "未"), "亥": ("寅", "申"),
+    }
+    gj = goujiao.get(year_zhi)
+    if gj:
+        mark_zhi(gj[0], "勾绞")
+        mark_zhi(gj[1], "勾绞")
+
+    # 天德 / 月德（以月支）
+    tiande = {
+        "寅": "丁", "卯": "申", "辰": "壬", "巳": "辛", "午": "亥", "未": "甲",
+        "申": "癸", "酉": "寅", "戌": "丙", "亥": "乙", "子": "巳", "丑": "庚",
+    }
+    yuede = {
+        "寅": "丙", "卯": "甲", "辰": "壬", "巳": "庚", "午": "丙", "未": "甲",
+        "申": "壬", "酉": "庚", "戌": "丙", "亥": "甲", "子": "壬", "丑": "庚",
+    }
+    # 天德可能落干或支：若是干，看四柱天干；若是支，看地支
+    td = tiande.get(month_zhi, "")
+    yd = yuede.get(month_zhi, "")
+    for name, (gan, zhi) in pillars.items():
+        if td:
+            if td in DIZHI and zhi == td:
+                out[name].append("天德")
+            elif td in TIANGAN and gan == td:
+                out[name].append("天德")
+        if yd and gan == yd:
+            out[name].append("月德")
+
+    # 血刃（月支）
+    mark_zhi(xueyin.get(month_zhi, ""), "血刃")
+
+    # 学堂 / 词馆（日干，落禄前一位等简化：用文昌邻支常见表）
+    xuetang = {
+        "甲": "亥", "乙": "午", "丙": "寅", "丁": "酉", "戊": "寅",
+        "己": "酉", "庚": "巳", "辛": "子", "壬": "申", "癸": "卯",
+    }
+    ciguan = {
+        "甲": "寅", "乙": "卯", "丙": "巳", "丁": "午", "戊": "巳",
+        "己": "午", "庚": "申", "辛": "酉", "壬": "亥", "癸": "子",
+    }
+    mark_zhi(xuetang.get(day_master, ""), "学堂")
+    mark_zhi(ciguan.get(day_master, ""), "词馆")
+
     for k in out:
         out[k] = list(dict.fromkeys(out[k]))
     return out

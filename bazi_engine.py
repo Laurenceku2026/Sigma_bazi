@@ -8,7 +8,7 @@
 """
 from datetime import datetime, timedelta
 
-from solar_terms import lichun, month_branch_by_jieqi
+from solar_terms import lichun, month_branch_by_jieqi, qi_yun_from_jieqi
 from bazi_meta import (
     cheng_gu,
     day_kongwang,
@@ -131,6 +131,7 @@ class BaziEngine:
             self.day_master,
             self.day_branch,
             pillars["年柱"][1],
+            pillars["月柱"][1],
             pillars,
         )
         kong_flags = {name: (zhi in kw) for name, (_g, zhi) in pillars.items()}
@@ -293,18 +294,27 @@ class BaziEngine:
         return stats
 
     def _calculate_da_yun(self):
-        day_tg = self.day_master
-        is_yang = day_tg in self.YANG_GAN
+        """大运：以年干阴阳+性别定顺逆；起运按交节三天折一年。"""
+        year_tg = self.bazi["年柱"][0]
+        year_yang = year_tg in self.YANG_GAN
         is_male = self.gender == "男"
-        is_forward = (is_yang and is_male) or (not is_yang and not is_male)
+        # 阳男阴女顺，阴男阳女逆（专以年干）
+        is_forward = (year_yang and is_male) or ((not year_yang) and (not is_male))
+
+        qy = qi_yun_from_jieqi(self.birth_date, is_forward)
+        self.qi_yun_info = qy
+        qi_yun_age = int(qy.get("start_age") or 1)
 
         month_tg, month_dz = self.bazi["月柱"]
         tg_index = self.TIANGAN.index(month_tg)
         dz_index = self.DIZHI.index(month_dz)
         birth_year = self.raw_birth.year
-        qi_yun_age = 2
-        now_year = datetime.now().year
-        current_age = max(0, now_year - birth_year)
+        now = datetime.now()
+        # 现年龄：周岁近似
+        current_age = now.year - birth_year
+        if (now.month, now.day) < (self.raw_birth.month, self.raw_birth.day):
+            current_age -= 1
+        current_age = max(0, current_age)
 
         da_yun = []
         for i in range(9):
@@ -328,7 +338,7 @@ class BaziEngine:
                         "gan": yg,
                         "zhi": yz,
                         "gan_god": self._shishen_of(yg),
-                        "is_current": y == now_year,
+                        "is_current": y == now.year,
                     }
                 )
             da_yun.append(
@@ -344,6 +354,8 @@ class BaziEngine:
                     age_label=f"{start_age:02d}岁",
                     liu_nian=years_ln,
                     is_current=start_age <= current_age <= end_age,
+                    direction="顺" if is_forward else "逆",
+                    qi_yun_label=qy.get("age_label", ""),
                 )
             )
         return da_yun
@@ -503,6 +515,7 @@ class BaziEngine:
             "ten_gods": self.ten_gods,
             "wuxing_stats": self.wuxing_stats,
             "da_yun": self.da_yun,
+            "qi_yun": getattr(self, "qi_yun_info", {}),
             "liu_nian": self.liu_nian,
             "xiao_yun": getattr(self, "xiao_yun", []),
             "flow": getattr(self, "flow", {}),
