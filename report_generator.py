@@ -99,22 +99,45 @@ class ReportGenerator:
             return "語言：全篇必須使用繁體中文，禁止簡體字。"
         return "语言：全篇必须使用简体中文。"
 
-    def generate(self, bazi_data, birth_info, payment_tier="silver", lang: str = "zh"):
+    def generate(
+        self,
+        bazi_data,
+        birth_info,
+        payment_tier="silver",
+        lang: str = "zh",
+        progress_callback=None,
+    ):
         self.lang = lang if lang in ("zh", "zh_hant", "en") else "zh"
+        # 生成时用简体再统一转繁，减少模型不稳定；展示层已有繁体转换
+        gen_lang = "zh" if self.lang == "zh_hant" else self.lang
+        orig_lang = self.lang
+        self.lang = gen_lang
+
         include_liunian = payment_tier in ("gold", "diamond")
         all_specs = self._page_specs()
         pages = all_specs if include_liunian else all_specs[: self.CORE_PAGE_COUNT]
         context = self._bazi_context(bazi_data, birth_info)
 
         report: Dict = {}
-        # 每次 1 页；page10 为独立《流年报告》篇章（金/钻）
-        for spec in pages:
+        total = len(pages)
+        for idx, spec in enumerate(pages, 1):
+            if callable(progress_callback):
+                try:
+                    progress_callback(idx - 1, total, spec[1])
+                except Exception:
+                    pass
             if spec[0] == self.LIUNIAN_KEY:
                 chunk = self._generate_liunian_chapter(context, spec)
             else:
                 chunk = self._generate_batch(context, [spec])
             report.update(chunk)
+            if callable(progress_callback):
+                try:
+                    progress_callback(idx, total, spec[1])
+                except Exception:
+                    pass
 
+        self.lang = orig_lang
         fail_pro = (
             "(This page did not generate fully — please regenerate.)"
             if self.lang == "en"
@@ -687,6 +710,7 @@ Hard rules: current_month REQUIRED with all four domains; exactly 4 seasons; pla
         return page
 
     def _ensure_quarters_plain(self, page: Dict[str, Any]) -> Dict[str, Any]:
+        """四季白话本地推导，不再二次调用 API。"""
         plain = page.get("plain") if isinstance(page.get("plain"), dict) else {}
         qp = plain.get("quarters_plain")
         if isinstance(qp, list) and len(qp) >= 4 and all(
@@ -696,85 +720,33 @@ Hard rules: current_month REQUIRED with all four domains; exactly 4 seasons; pla
             return page
 
         quarters = page.get("quarters") or []
-        blob = "\n".join(
-            f"{q.get('name')}/{q.get('months')}：{q.get('outlook')}；关键：{q.get('focus_months')}；建议：{q.get('advice')}"
-            for q in quarters
-        )
-        lang_rule = self._lang_rule()
-        if self.lang == "en":
-            prompt = f"""Rewrite the seasonal outlook below into plain English for lay readers. JSON only:
-{{"quarters_plain":[
-  {{"name":"Spring","summary":"≤30 words","tips":["tip1","tip2"]}},
-  {{"name":"Summer","summary":"...","tips":["...","..."]}},
-  {{"name":"Autumn","summary":"...","tips":["...","..."]}},
-  {{"name":"Winter","summary":"...","tips":["...","..."]}}
-]}}
-{lang_rule}
-Forbid jargon: {self.FORBIDDEN_PLAIN}
-
-Professional seasons:
-{blob[:2000]}
-"""
-        else:
-            prompt = f"""把下面四季专业流年改成普通人能懂的四季白话。只输出 JSON：
-{{"quarters_plain":[
-  {{"name":"春季","summary":"≤30字","tips":["建议1","建议2"]}},
-  {{"name":"夏季","summary":"...","tips":["...","..."]}},
-  {{"name":"秋季","summary":"...","tips":["...","..."]}},
-  {{"name":"冬季","summary":"...","tips":["...","..."]}}
-]}}
-{lang_rule}
-严禁：{self.FORBIDDEN_PLAIN}
-
-专业四季：
-{blob[:2000]}
-"""
-        try:
-            raw = self._call_deepseek(prompt)
-            parsed = self._parse_json_loose(raw)
-            qp2 = []
-            if isinstance(parsed, dict):
-                qp2 = parsed.get("quarters_plain") or []
-            if isinstance(qp2, list) and qp2:
-                plain["quarters_plain"] = []
-                for i, q in enumerate(qp2[:4]):
-                    if not isinstance(q, dict):
-                        continue
-                    tips = q.get("tips") or []
-                    if isinstance(tips, str):
-                        tips = [t.strip() for t in re.split(r"[；;\n]+", tips) if t.strip()]
-                    default_name = (
-                        self.SEASON_SPECS_EN[i][0]
-                        if self.lang == "en"
-                        else self.SEASON_SPECS[i][0] + "季"
-                    )
-                    plain["quarters_plain"].append(
-                        {
-                            "name": str(q.get("name") or default_name),
-                            "summary": str(q.get("summary") or "").strip(),
-                            "tips": [str(t).strip() for t in tips if str(t).strip()][:3],
-                        }
-                    )
-        except Exception as e:
-            print(f"ensure_quarters_plain error: {e}")
+        plain["quarters_plain"] = []
+        seasons = self.SEASON_SPECS_EN if self.lang == "en" else self.SEASON_SPECS
+        for i, (name, *_rest) in enumerate(seasons):
+            src = quarters[i] if i < len(quarters) and isinstance(quarters[i], dict) else {}
+            outlook = str(src.get("outlook") or "").strip()
+            advice = str(src.get("advice") or "").strip()
+            focus = str(src.get("focus_months") or "").strip()
+            default_name = name if self.lang == "en" else f"{name}季"
             if self.lang == "en":
-                plain["quarters_plain"] = [
-                    {
-                        "name": n,
-                        "summary": f"Adjust pacing through {n.lower()}.",
-                        "tips": ["Don't rush big moves early in the season", "Review mid-season, decide at the end"],
-                    }
-                    for n, *_ in self.SEASON_SPECS_EN
+                summary = outlook[:80] if outlook else f"Adjust pacing through {name.lower()}."
+                tips = [t for t in (advice, focus) if t][:2] or [
+                    "Don't rush big moves early in the season",
+                    "Review mid-season, decide at the end",
                 ]
             else:
-                plain["quarters_plain"] = [
-                    {
-                        "name": f"{n}季",
-                        "summary": f"{n}季宜顺势调整节奏。",
-                        "tips": ["大事不赶在季初硬推", "季中做检视，季末再定下一步"],
-                    }
-                    for n, *_ in self.SEASON_SPECS
+                summary = (outlook[:40] if outlook else f"{name}季宜顺势调整节奏。")
+                tips = [t for t in (advice, focus) if t][:2] or [
+                    "大事不赶在季初硬推",
+                    "季中做检视，季末再定下一步",
                 ]
+            plain["quarters_plain"].append(
+                {
+                    "name": str(src.get("name") or default_name),
+                    "summary": summary,
+                    "tips": [str(t).strip() for t in tips if str(t).strip()][:3],
+                }
+            )
         page["plain"] = plain
         return page
 
@@ -904,58 +876,10 @@ Hard rules:
     def _ensure_professional_section(
         self, page: Dict[str, Any], title: str, context: str
     ) -> Dict[str, Any]:
-        """专业段缺失/只剩标题时强制补写。"""
+        """专业段缺失时用本地兜底，不再二次调用 API（避免重新生成卡住）。"""
         if not self._professional_weak(page, title):
             return page
-        lang_rule = self._lang_rule()
-        if self.lang == "en":
-            prompt = f"""Rewrite the professional section for BaZi report page 「{title}」.
-{lang_rule}
-Chart context:
-{context[:2200]}
-
-JSON only:
-{{"professional":["para1 60-90 words","para2 60-90 words","para3 60-90 words","para4 60-90 words"]}}
-Exactly 4 substantive paragraphs. Do not output the title alone. No markdown fences.
-"""
-        else:
-            prompt = f"""请重写命理报告「{title}」的专业解读四段。
-{lang_rule}
-命盘上下文：
-{context[:2200]}
-
-只输出 JSON：
-{{"professional":["第一段60-90字","第二段60-90字","第三段60-90字","第四段60-90字"]}}
-必须恰好 4 段完整分析，禁止只写标题，禁止输出 JSON 外壳说明。不要 markdown 代码块。
-若主题是健康：必须结合上下文中的年龄与五脏/心血管提示。
-若主题是命盘基本信息：必须写四柱、五行、神煞、大运要点。
-"""
-        try:
-            raw = self._call_deepseek(prompt)
-            parsed = self._parse_json_loose(raw)
-            pro = []
-            if isinstance(parsed, dict):
-                if isinstance(parsed.get("professional"), list):
-                    pro = parsed["professional"]
-                elif "page" in str(parsed.keys()):
-                    for v in parsed.values():
-                        if isinstance(v, dict) and isinstance(v.get("professional"), list):
-                            pro = v["professional"]
-                            break
-            paras = [
-                ReportGenerator._clean_pro_paragraph(str(x))
-                for x in (pro or [])
-                if str(x).strip()
-            ]
-            paras = [p for p in paras if p and len(p) >= 20]
-            if len(paras) >= 2:
-                page["professional"] = paras[:4]
-                page["content"] = ReportGenerator.build_content_markdown(page)
-                return page
-        except Exception as e:
-            print(f"ensure_professional_section error: {e}")
-
-        # 结构化兜底，避免页面只剩标题
+        _ = context  # 保留签名兼容；兜底不依赖二次请求
         if self.lang == "en":
             page["professional"] = [
                 f"{title}: chart structure and day master set the tone for this reading.",
@@ -1039,7 +963,7 @@ Exactly 4 substantive paragraphs. Do not output the title alone. No markdown fen
         return False
 
     def _ensure_plain_section(self, page: Dict[str, Any], title: str) -> Dict[str, Any]:
-        """白话缺失时单独再请求一次，保证绿框一定有内容。"""
+        """白话缺失时从专业段本地推导，不再二次调用 API。"""
         plain = page.get("plain") if isinstance(page.get("plain"), dict) else {}
         if not self._plain_missing(plain):
             page["content"] = ReportGenerator.build_content_markdown(page)
@@ -1047,85 +971,44 @@ Exactly 4 substantive paragraphs. Do not output the title alone. No markdown fen
 
         pro_list = [str(p).strip() for p in (page.get("professional") or []) if str(p).strip()]
         pro_text = "\n".join(pro_list)
-        if not pro_text or pro_text.startswith("（"):
-            page["plain"] = {
-                "summary": "这页内容暂时不完整。",
-                "points": ["请点击重新生成完整报告。", "生成后再查看白话说明。", "也可先看上方专业解读作参考。"],
-                "detail": "系统未能写出白话段落，重试生成通常可以一次修好。",
-            }
-            page["content"] = ReportGenerator.build_content_markdown(page)
-            return page
-
-        prompt = f"""你是翻译成大白话的助手。阅读下面「{title}」的专业命理解读，改写成普通人能懂的话。
-{self._lang_rule()}
-只输出 JSON 对象（不要代码块），格式严格为：
-{{"summary":"一句人话总结，不超过40字","points":["建议1","建议2","建议3"],"detail":"80到120字的白话解释，像朋友聊天"}}
-
-严禁出现这些词：{self.FORBIDDEN_PLAIN}
-不要提八字术语，只说工作/钱/感情/健康/人际/时机/注意什么。
-
-专业原文：
-{pro_text[:1800]}
-"""
+        first = re.split(r"[。！？.!?]", pro_text)[0].strip() if pro_text else ""
         if self.lang == "en":
-            prompt = f"""Rewrite the professional BaZi reading for 「{title}」 into plain everyday English.
-{self._lang_rule()}
-JSON only:
-{{"summary":"one plain line ≤40 words","points":["tip1","tip2","tip3"],"detail":"80-120 words like talking to a friend"}}
-
-Never use: {self.FORBIDDEN_PLAIN}
-No BaZi jargon — only work/money/relationships/health/timing.
-
-Professional text:
-{pro_text[:1800]}
-"""
-        try:
-            raw = self._call_deepseek(prompt)
-            parsed = self._parse_json_loose(raw)
-            if not isinstance(parsed, dict):
-                parsed = {}
-            # 兼容包了一层
-            if "plain" in parsed and isinstance(parsed["plain"], dict):
-                parsed = parsed["plain"]
-            pts = parsed.get("points") or []
-            if isinstance(pts, str):
-                pts = [p.strip() for p in re.split(r"[；;\n]+", pts) if p.strip()]
             filled = {
-                "summary": str(parsed.get("summary") or "").strip(),
-                "points": [str(p).strip() for p in pts if str(p).strip()][:5],
-                "detail": str(parsed.get("detail") or "").strip(),
-            }
-            if self._plain_missing(filled):
-                # 最后兜底：从专业段抽第一句做人话摘要壳
-                first = re.split(r"[。！？]", pro_text)[0].strip()
-                filled = {
-                    "summary": (first[:36] + "…") if len(first) > 36 else (first or "先看这几条建议"),
-                    "points": [
-                        "先做一件最要紧、且短期内能完成的事。",
-                        "少同时开太多新计划，把精力放在一两件上。",
-                        "有不确定的决定，先缓冲几天再拍板。",
-                    ],
-                    "detail": (
-                        "上面的术语可以先跳过。简单说：这段话提醒你留意节奏和选择，"
-                        "别急着硬推；把重要事务排清楚，并给自己留一点调整空间。"
-                    ),
-                }
-            page["plain"] = filled
-            # 保留已有四季白话
-            if isinstance(plain, dict) and plain.get("quarters_plain") and not filled.get("quarters_plain"):
-                filled["quarters_plain"] = plain["quarters_plain"]
-                page["plain"] = filled
-        except Exception as e:
-            print(f"ensure_plain_section error: {e}")
-            page["plain"] = {
-                "summary": "先抓住「稳一点、清楚一点」就够了",
+                "summary": (
+                    ((first[:70] + "…") if len(first) > 70 else first)
+                    if first
+                    else f"Key takeaways for {title}."
+                ),
                 "points": [
-                    "重要决定不要当天硬推。",
-                    "优先处理最影响收入或关系的一件事。",
-                    "身体与心情不对时，先减负再冲刺。",
+                    "Do the one most important task first.",
+                    "Don't launch too many new plans at once.",
+                    "If unsure, wait a few days before deciding.",
                 ],
-                "detail": "白话段自动补写时遇到问题，但不影响上方专业内容。建议重新生成一次报告。",
+                "detail": (
+                    "Skip the jargon above for now. In plain terms: pace yourself, "
+                    "clarify priorities, and leave room to adjust."
+                ),
             }
+        else:
+            filled = {
+                "summary": (
+                    ((first[:36] + "…") if len(first) > 36 else first)
+                    if first
+                    else "先看这几条可执行建议"
+                ),
+                "points": [
+                    "先做一件最要紧、且短期内能完成的事。",
+                    "少同时开太多新计划，把精力放在一两件上。",
+                    "有不确定的决定，先缓冲几天再拍板。",
+                ],
+                "detail": (
+                    "上面的术语可以先跳过。简单说：这段话提醒你留意节奏和选择，"
+                    "别急着硬推；把重要事务排清楚，并给自己留一点调整空间。"
+                ),
+            }
+        if isinstance(plain, dict) and plain.get("quarters_plain"):
+            filled["quarters_plain"] = plain["quarters_plain"]
+        page["plain"] = filled
         page["content"] = ReportGenerator.build_content_markdown(page)
         return page
 
@@ -1739,7 +1622,7 @@ Professional text:
             "max_tokens": 5200,
         }
         url = f"{self.base_url}/v1/chat/completions"
-        response = requests.post(url, headers=headers, json=payload, timeout=120)
+        response = requests.post(url, headers=headers, json=payload, timeout=75)
         if response.status_code != 200:
             raise Exception(f"DeepSeek API错误: {response.status_code} - {response.text[:500]}")
         return response.json()["choices"][0]["message"]["content"]

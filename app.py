@@ -556,6 +556,29 @@ def render_membership_plans(key_prefix: str = "main"):
             st.warning(t("pay_unconfigured", lang))
 
 
+def format_welcome(email: str, name: str = "", lang: str = "zh") -> str:
+    """欢迎 Laurence.ku 古念松 回来 —— 邮箱前缀首字母大写 + 姓名。"""
+    local = (email or "").split("@")[0].strip()
+    if local:
+        local = local[0].upper() + local[1:]
+    name = (name or "").strip()
+    who = " ".join(p for p in (local, name) if p).strip() or "用户"
+    if lang == "en":
+        return f"Welcome back, {who}"
+    return f"欢迎 {who} 回来"
+
+
+def report_lang_compatible(report_lang: str | None, ui_lang: str) -> bool:
+    """简繁同属中文，不强制因 zh↔zh_hant 重新生成。"""
+    if not report_lang:
+        return True
+    if report_lang == ui_lang:
+        return True
+    if report_lang in ("zh", "zh_hant") and ui_lang in ("zh", "zh_hant"):
+        return True
+    return False
+
+
 def generate_full_report(*, consume_quota: bool = True) -> bool:
     """生成报告写入 session；成功返回 True。"""
     tier = st.session_state.subscription_tier
@@ -570,11 +593,25 @@ def generate_full_report(*, consume_quota: bool = True) -> bool:
             if not supabase_client.consume_report_quota(st.session_state.user_id):
                 st.error("次数已用完" if _is_zh() else "No quota left")
                 return False
+
+        progress = st.progress(0.0)
+        status = st.empty()
+
+        def on_progress(done: int, total: int, label: str):
+            pct = min(max(done / max(total, 1), 0.0), 1.0)
+            progress.progress(pct)
+            status.caption(
+                f"{t('generating', lang)}（{done}/{total}）{label}"
+                if _is_zh()
+                else f"{t('generating', lang)} ({done}/{total}) {label}"
+            )
+
         report = report_gen.generate(
             st.session_state.bazi_data,
             st.session_state.birth_info,
-            tier if tier in PAID_TIERS else "silver",  # 免费预览用银卡页数结构
+            tier if tier in PAID_TIERS else "silver",
             lang=lang,
+            progress_callback=on_progress,
         )
         # 免费/银卡：无独立流年报告篇章（page10；兼容旧 page9 流年）
         if tier == "free" or tier not in ("gold", "diamond"):
@@ -588,6 +625,8 @@ def generate_full_report(*, consume_quota: bool = True) -> bool:
         st.session_state.report_content = report
         st.session_state.report_language = lang
         st.session_state.report_generated = True
+        progress.progress(1.0)
+        status.caption(t("report_ok", lang))
         if supabase_client and st.session_state.get("auth_ok"):
             try:
                 supabase_client.save_report(
@@ -1040,10 +1079,7 @@ if not is_registered():
             st.rerun()
 else:
     name_hint = (st.session_state.birth_info or {}).get("name") or ""
-    st.success(
-        f"{t('registered_as', lang)}：{st.session_state.user_email}"
-        + (f"（{name_hint}）" if name_hint else "")
-    )
+    st.success(format_welcome(st.session_state.user_email, name_hint, lang))
     if st.session_state.bazi_data is not None:
         st.caption(t("returning_hint", lang))
 
@@ -1223,8 +1259,8 @@ elif _tab == 2:
             f"<h2 style='font-weight:800;margin:0 0 0.4rem 0;'>{t('your_report', lang)}</h2>",
             unsafe_allow_html=True,
         )
-        report_lang = st.session_state.get("report_language") or "zh"
-        if report_lang != lang:
+        report_lang = st.session_state.get("report_language")
+        if not report_lang_compatible(report_lang, lang):
             st.warning(t("report_lang_mismatch", lang))
             if st.button(t("report_regen_lang", lang), key="regen_report_for_lang", type="primary"):
                 with st.spinner(t("generating", lang)):
