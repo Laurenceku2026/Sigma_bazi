@@ -310,11 +310,8 @@ class BaziEngine:
         dz_index = self.DIZHI.index(month_dz)
         birth_year = self.raw_birth.year
         now = datetime.now()
-        # 现年龄：周岁近似
-        current_age = now.year - birth_year
-        if (now.month, now.day) < (self.raw_birth.month, self.raw_birth.day):
-            current_age -= 1
-        current_age = max(0, current_age)
+        # 虚岁：年差 + 1（与大运步龄标注一致）
+        current_age = max(1, now.year - birth_year + 1)
 
         da_yun = []
         for i in range(9):
@@ -403,8 +400,18 @@ class BaziEngine:
 
     def _calculate_current_flow(self):
         now = datetime.now()
+        # 与排盘一致：可选经度平太阳时校正（影响子时边界）
+        if self.true_solar_time:
+            now = now + timedelta(minutes=(self.longitude - 120) * 4)
+
         dy = next((d for d in self.da_yun if d.get("is_current")), self.da_yun[0] if self.da_yun else None)
-        gan_y, zhi_y = self._ganzhi_of_year(now.year)
+
+        # 流年：立春换年
+        y = now.year
+        if now < lichun(y):
+            y -= 1
+        gan_y, zhi_y = self._ganzhi_of_year(y)
+
         dz_m, _ = month_branch_by_jieqi(now)
         tiger = {
             "甲": "丙", "己": "丙", "乙": "戊", "庚": "戊", "丙": "庚", "辛": "庚",
@@ -413,16 +420,23 @@ class BaziEngine:
         start_m = tiger.get(gan_y, "丙")
         m_off = (self.DIZHI.index(dz_m) - 2) % 12
         gan_m = self.TIANGAN[(self.TIANGAN.index(start_m) + m_off) % 10]
+
+        # 流日：子时（23:00）起换日 —— 与命理排盘惯例一致
         day_p = self._day_pillar_for(now)
-        day_age = max(0, now.year - self.raw_birth.year)
+        day_age = max(1, now.year - self.raw_birth.year + 1)
         return {
             "da_yun": dy,
-            "liu_nian": self._pillar_bundle(gan_y, zhi_y, year=now.year, age=day_age, label="流年"),
+            "liu_nian": self._pillar_bundle(gan_y, zhi_y, year=y, age=day_age, label="流年"),
             "liu_yue": self._pillar_bundle(gan_m, dz_m, month=now.month, label="流月"),
-            "liu_ri": self._pillar_bundle(day_p[0], day_p[1], day=now.day, label="流日"),
+            "liu_ri": self._pillar_bundle(
+                day_p[0], day_p[1], day=now.day, label="流日"
+            ),
         }
 
     def _day_pillar_for(self, dt: datetime):
+        """日柱：1900-01-01=甲戌；23:00 起算次日（子时换日）。"""
+        if getattr(dt, "hour", 0) >= 23:
+            dt = dt + timedelta(days=1)
         base = datetime(1900, 1, 1)
         diff = (dt.date() - base.date()).days
         tg_idx = (0 + diff) % 10

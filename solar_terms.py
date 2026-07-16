@@ -143,5 +143,6 @@ def qi_yun_from_jieqi(birth: datetime, forward: bool) -> dict:
         "forward": forward,
         "age_years_float": age_float,
         "age_label": age_label,
-        "start_age": max(1, years) if total_days >= 1 else 1,
+        # 虚岁排大运：出生即一岁，与主流附图「02岁起 / 始于出生年+2」对齐
+        "start_age": max(1, years + 1),
     }

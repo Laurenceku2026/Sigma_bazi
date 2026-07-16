@@ -483,11 +483,6 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
         "### " + ("🧭 当前运势柱（大运 · 流年 · 流月 · 流日）" if lang != "en"
                   else "🧭 Current luck pillars (Da Yun · Liu Nian · Liu Yue · Liu Ri)")
     )
-    st.caption(
-        "此区块对应附图一；干支与留意在免费盘展示，会员报告详述吉凶建议。"
-        if lang != "en"
-        else "Matches reference chart 1; membership report expands commentary."
-    )
     st.markdown(render_flow_pillar_table(bazi_data, lang), unsafe_allow_html=True)
 
     if bazi_data.get("da_yun"):
@@ -497,9 +492,9 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
             direction = ("顺行" if qy.get("forward") else "逆行") if lang != "en" else ("forward" if qy.get("forward") else "reverse")
             age = qy.get("age_label") or ""
             if lang != "en":
-                st.caption(f"起运：{age}（{direction}）")
+                st.caption(f"起运：{age}（{direction} · 虚岁排大运）")
             else:
-                st.caption(f"Qi Yun: {age} ({direction})")
+                st.caption(f"Qi Yun: {age} ({direction}, nominal age)")
         st.markdown(render_dayun_timeline(bazi_data, lang), unsafe_allow_html=True)
     if bazi_data.get("liu_nian"):
         st.markdown(
@@ -525,11 +520,6 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
     st.markdown("---")
     st.markdown(
         "### " + ("📅 大运 · 流年表" if lang != "en" else "📅 Decade × Annual table")
-    )
-    st.caption(
-        "对应附图二：每步大运下嵌套十年流年（亦属流年体系）；详批在报告中展开。"
-        if lang != "en"
-        else "Matches reference chart 2: Liu Nian nested under each Da Yun."
     )
     st.markdown(render_dayun_liunian_matrix(bazi_data, lang), unsafe_allow_html=True)
 
