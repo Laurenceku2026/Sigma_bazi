@@ -21,7 +21,7 @@ class ReportGenerator:
         ("page5", "财运详批 (Part 2)", "资产五行方向、理财方式、风险与积累策略"),
         ("page6", "感情详批 (Part 1)", "感情事件预测、桃花、注意事项"),
         ("page7", "感情详批 (Part 2)", "风水布局、另一半特质、感情时机"),
-        ("page8", "健康详批", "健康风险、易病月份、五脏对应、就医建议"),
+        ("page8", "健康详批", "须结合当前实岁/虚岁与大运阶段；五行脏腑对应；中年后心血管/血压/代谢风险；易病月份；体检与就医建议（仅供参考，非医疗诊断）"),
         ("page9", "流年报告", "流年总论 + 四季（春夏秋冬）预测与建议，每季点出1～2个关键流月"),
     ]
 
@@ -33,7 +33,7 @@ class ReportGenerator:
         ("page5", "Wealth (Part 2)", "Asset direction by elements, money habits, risk & savings"),
         ("page6", "Relationship (Part 1)", "Relationship events, romance, cautions"),
         ("page7", "Relationship (Part 2)", "Environment tips, partner traits, timing"),
-        ("page8", "Health", "Health risks, sensitive months, organ correspondence, care tips"),
+        ("page8", "Health", "Must use current age + decade stage; organ map by elements; midlife cardio/BP/metabolic risks; sensitive months; screening tips (reference only, not diagnosis)"),
         ("page9", "Annual Luck Report", "Year overview + four seasons with 1–2 key months each"),
     ]
 
@@ -156,6 +156,107 @@ class ReportGenerator:
             return True
         return False
 
+    def _age_profile(self, birth_info: dict, bazi_data: dict) -> Dict[str, Any]:
+        """实岁/虚岁与年龄段（供健康页与现代体检建议挂钩）。"""
+        from datetime import date, datetime
+
+        birth_s = str((birth_info or {}).get("birth_date") or "")
+        today = date.today()
+        birth = None
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"):
+            try:
+                birth = datetime.strptime(birth_s[:10], fmt).date()
+                break
+            except Exception:
+                continue
+        if not birth:
+            return {"age": None, "age_nominal": None, "band": "", "notes": []}
+        age = today.year - birth.year - (
+            (today.month, today.day) < (birth.month, birth.day)
+        )
+        age_nominal = today.year - birth.year + 1
+        if age < 18:
+            band = "少年"
+        elif age < 35:
+            band = "青年"
+        elif age < 50:
+            band = "中年前期"
+        elif age < 65:
+            band = "中年后期"
+        else:
+            band = "老年"
+        notes = []
+        if age >= 45:
+            notes.append("现代医学：45岁后心血管、血压、血脂、血糖筛查优先级上升")
+        if age >= 50:
+            notes.append("现代医学：50岁后更需关注血压、心脏负荷、颈动脉与代谢综合征")
+        if age >= 55:
+            notes.append("现代医学：55–65岁为高血压、冠心病、心律失常高发段，宜规律体检")
+        cur = next((d for d in (bazi_data.get("da_yun") or []) if d.get("is_current")), None)
+        if cur:
+            notes.append(
+                f"当前大运：{cur.get('age_label', '')} {cur.get('gan', '')}{cur.get('zhi', '')}"
+            )
+        return {
+            "age": age,
+            "age_nominal": age_nominal,
+            "band": band,
+            "notes": notes,
+            "birth": birth.isoformat(),
+        }
+
+    def _health_theory_lines(self, bazi_data: dict, age_profile: dict) -> str:
+        """
+        命理五脏 + 现代体检角度：火→心/血脉，水→肾/循环，金→肺，木→肝，土→脾胃。
+        水火失衡、火克金、官杀攻身等与中年后心血管风险交叉提示（非诊断）。
+        """
+        wx = bazi_data.get("wuxing_stats") or {}
+        # wuxing_stats may be {木: n, ...} or nested
+        counts = {}
+        if isinstance(wx, dict):
+            for k, v in wx.items():
+                if isinstance(v, (int, float)):
+                    counts[k] = float(v)
+                elif isinstance(v, dict) and "count" in v:
+                    counts[k] = float(v.get("count") or 0)
+        total = sum(counts.values()) or 1.0
+        avg = total / 5.0
+        lines = []
+        organ = {
+            "木": "肝胆/筋目/情绪压力",
+            "火": "心/小肠/血脉循环/血压心率",
+            "土": "脾胃/消化/代谢体重",
+            "金": "肺大肠/呼吸/皮肤",
+            "水": "肾膀胱/骨骼/泌尿与体液",
+        }
+        for el, tip in organ.items():
+            c = counts.get(el, 0)
+            if c <= 0:
+                lines.append(f"五行缺{el} → 留意{tip}（偏弱需养）")
+            elif c >= avg * 1.6:
+                lines.append(f"五行{el}偏旺 → 留意{tip}（过旺宜疏）")
+        fire, water, metal = counts.get("火", 0), counts.get("水", 0), counts.get("金", 0)
+        if fire >= avg * 1.4 and water < avg:
+            lines.append("水火失衡（火偏旺水偏弱）：经典命理提示心火易亢，对应现代需防血压偏高、心悸、失眠")
+        if water >= avg * 1.4 and fire < avg:
+            lines.append("水多火弱：命理提示心阳不足，对应现代需防循环乏力、畏寒、心脏供血相关不适")
+        if metal >= avg and fire >= avg * 1.3:
+            lines.append("火金交战倾向：金主肺、火主心，中年后宜同时关注心肺负荷与血压")
+        age = age_profile.get("age")
+        if age and age >= 50:
+            lines.append(
+                f"年龄{age}岁（{age_profile.get('band')}）：即使命局平稳，亦应按现代指南定期测血压、血脂、心电图；"
+                "若命局再见火旺/水火冲或官杀攻身，须在专业段点名心血管与高血压预防"
+            )
+        dm = bazi_data.get("day_master") or ""
+        if dm in ("庚", "辛") and age and age >= 50:
+            lines.append(
+                "日主金：金受火克为官杀压力；中年后火运/流年火旺时，命理与现代交叉点常在心肺、血压与情绪性心动过速"
+            )
+        for n in age_profile.get("notes") or []:
+            lines.append(n)
+        return "\n".join(f"- {x}" for x in lines) if lines else "- 按五行平衡做常规保养即可"
+
     def _pillar_detail_lines(self, bazi_data: dict) -> str:
         """把命盘已算字段写入上下文，供报告联动解释（神煞/纳音/空亡等）。"""
         pillars = bazi_data.get("pillars") or {}
@@ -226,6 +327,20 @@ class ReportGenerator:
             liu_nian[-1] if liu_nian else None,
         )
         detail = self._pillar_detail_lines(bazi_data)
+        age_profile = self._age_profile(birth_info, bazi_data)
+        health = self._health_theory_lines(bazi_data, age_profile)
+        age_line = ""
+        if age_profile.get("age") is not None:
+            if self.lang == "en":
+                age_line = (
+                    f"Age: {age_profile['age']} (nominal {age_profile['age_nominal']}), "
+                    f"band: {age_profile['band']}.\n"
+                )
+            else:
+                age_line = (
+                    f"当前实岁：{age_profile['age']}岁；虚岁：{age_profile['age_nominal']}岁；"
+                    f"年龄段：{age_profile['band']}。\n"
+                )
         if self.lang == "en":
             dy = (
                 f"Step {current_da_yun.get('step')} {current_da_yun.get('gan')}{current_da_yun.get('zhi')} "
@@ -240,7 +355,7 @@ class ReportGenerator:
             )
             return (
                 f"Name: {birth_info.get('name', 'User')}; Gender: {bazi_data.get('gender')}; "
-                f"Birth: {birth_info.get('birth_date', '')}; "
+                f"Birth: {birth_info.get('birth_date', '')}; {age_line}"
                 f"BaZi: Year {bazi['年柱'][0]}{bazi['年柱'][1]} "
                 f"Month {bazi['月柱'][0]}{bazi['月柱'][1]} "
                 f"Day {bazi['日柱'][0]}{bazi['日柱'][1]} "
@@ -249,7 +364,9 @@ class ReportGenerator:
                 f"Five elements: {json.dumps(bazi_data.get('wuxing_stats', {}), ensure_ascii=False)}; "
                 f"Current decade luck: {dy}; Current year luck: {ln}.\n"
                 f"Chart details (must use in analysis, especially page1):\n{detail}\n"
+                f"Health bridge (BaZi organs × modern screening; page8 must use age):\n{health}\n"
                 "Tie Shen Sha / nayin / void / decade luck to the narrative — do not invent stars not listed. "
+                "Page8 must name age-appropriate risks (e.g. 55+ cardio/BP) when chart supports it. "
                 "For Annual Luck Report use four seasons "
                 "(Spring Yin-Mao-Chen, Summer Si-Wu-Wei, Autumn Shen-You-Xu, Winter Hai-Zi-Chou); "
                 "name 1–2 key months per season, not a 12-month laundry list."
@@ -267,7 +384,7 @@ class ReportGenerator:
         )
         return (
             f"姓名：{birth_info.get('name', '用户')}；性别：{bazi_data.get('gender')}；"
-            f"出生：{birth_info.get('birth_date', '')}；"
+            f"出生：{birth_info.get('birth_date', '')}；{age_line}"
             f"八字：年{bazi['年柱'][0]}{bazi['年柱'][1]} "
             f"月{bazi['月柱'][0]}{bazi['月柱'][1]} "
             f"日{bazi['日柱'][0]}{bazi['日柱'][1]} "
@@ -276,6 +393,8 @@ class ReportGenerator:
             f"五行：{json.dumps(bazi_data.get('wuxing_stats', {}), ensure_ascii=False)}；"
             f"当前大运：{dy}；当前流年：{ln}。\n"
             f"【命盘明细·报告须联动引用，尤其第1页；勿编造未列出的神煞】\n{detail}\n"
+            f"【健康交叉提示·第8页必须结合年龄】\n{health}\n"
+            "说明：八字脏腑对应仅作体质倾向，须结合年龄与现代体检建议书写；禁止恐吓，强调「参考+就医」。"
             "分析结合流年与命局；《流年报告》按四时分述（春寅卯辰、夏巳午未、秋申酉戌、冬亥子丑），"
             "每季点出一至两个关键流月，勿写成十二个月流水账。"
         )
@@ -610,10 +729,163 @@ Hard rules:
         out: Dict[str, Any] = {}
         for key, title, _ in batch:
             item = parsed.get(key) if isinstance(parsed, dict) else None
+            # 解析失败时尝试从原文抽 professional 数组
+            if not isinstance(item, dict) or not item.get("professional"):
+                recovered = self._recover_page_from_raw(raw, key, title)
+                if recovered:
+                    item = recovered
             page = self._coerce_page(item, title, raw if key == keys[0] else "")
+            page = self._ensure_professional_section(page, title, context)
             page = self._ensure_plain_section(page, title)
             out[key] = page
         return out
+
+    def _professional_weak(self, page: Dict[str, Any], title: str) -> bool:
+        pro = page.get("professional") or []
+        if not isinstance(pro, list):
+            return True
+        paras = [str(p).strip() for p in pro if str(p).strip()]
+        if len(paras) < 2:
+            return True
+        # 误把标题当成唯一正文
+        if len(paras) == 1 and paras[0].replace(" ", "") in {
+            title.replace(" ", ""),
+            title.replace(" ", "") + "。",
+        }:
+            return True
+        if all(len(p) < 25 for p in paras):
+            return True
+        if all(
+            ("生成不完整" in p) or ("专业解读缺失" in p) or ("需重新生成" in p) or ("did not generate" in p.lower())
+            for p in paras
+        ):
+            return True
+        return False
+
+    def _ensure_professional_section(
+        self, page: Dict[str, Any], title: str, context: str
+    ) -> Dict[str, Any]:
+        """专业段缺失/只剩标题时强制补写。"""
+        if not self._professional_weak(page, title):
+            return page
+        lang_rule = self._lang_rule()
+        if self.lang == "en":
+            prompt = f"""Rewrite the professional section for BaZi report page 「{title}」.
+{lang_rule}
+Chart context:
+{context[:2200]}
+
+JSON only:
+{{"professional":["para1 60-90 words","para2 60-90 words","para3 60-90 words","para4 60-90 words"]}}
+Exactly 4 substantive paragraphs. Do not output the title alone. No markdown fences.
+"""
+        else:
+            prompt = f"""请重写命理报告「{title}」的专业解读四段。
+{lang_rule}
+命盘上下文：
+{context[:2200]}
+
+只输出 JSON：
+{{"professional":["第一段60-90字","第二段60-90字","第三段60-90字","第四段60-90字"]}}
+必须恰好 4 段完整分析，禁止只写标题，禁止输出 JSON 外壳说明。不要 markdown 代码块。
+若主题是健康：必须结合上下文中的年龄与五脏/心血管提示。
+若主题是命盘基本信息：必须写四柱、五行、神煞、大运要点。
+"""
+        try:
+            raw = self._call_deepseek(prompt)
+            parsed = self._parse_json_loose(raw)
+            pro = []
+            if isinstance(parsed, dict):
+                if isinstance(parsed.get("professional"), list):
+                    pro = parsed["professional"]
+                elif "page" in str(parsed.keys()):
+                    for v in parsed.values():
+                        if isinstance(v, dict) and isinstance(v.get("professional"), list):
+                            pro = v["professional"]
+                            break
+            paras = [
+                ReportGenerator._clean_pro_paragraph(str(x))
+                for x in (pro or [])
+                if str(x).strip()
+            ]
+            paras = [p for p in paras if p and len(p) >= 20]
+            if len(paras) >= 2:
+                page["professional"] = paras[:4]
+                page["content"] = ReportGenerator.build_content_markdown(page)
+                return page
+        except Exception as e:
+            print(f"ensure_professional_section error: {e}")
+
+        # 结构化兜底，避免页面只剩标题
+        if self.lang == "en":
+            page["professional"] = [
+                f"{title}: chart structure and day master set the tone for this reading.",
+                "Five-element balance and current decade luck show where pressure and support sit.",
+                "Key stars and voids on the pillars should be read with the decade timeline, not alone.",
+                "Use this page as the map; later pages apply it to career, wealth, relationship, and health.",
+            ]
+        else:
+            page["professional"] = [
+                f"就「{title}」而言：先以日主与四柱十神定格局基调，再看月令与地支藏干是否通根得气。",
+                "五行旺衰与当前大运、流年形成「体用」关系：旺者宜疏、弱者宜扶，知进退比空谈格局更重要。",
+                "命盘已标神煞、纳音与空亡，应与大运时间轴对照阅读，勿脱离岁运单独论吉凶。",
+                "本页是总图；事业、财运、感情、健康各页须回扣此处的日主强弱与用忌方向。",
+            ]
+        page["content"] = ReportGenerator.build_content_markdown(page)
+        return page
+
+    @staticmethod
+    def _clean_pro_paragraph(text: str) -> str:
+        s = ReportGenerator._strip_json_artifacts(str(text or "").strip())
+        if ReportGenerator._looks_like_json_blob(s):
+            # 尝试从 blob 抽数组元素
+            recovered = ReportGenerator._extract_professional_list(s)
+            if recovered:
+                return recovered[0]
+            return ""
+        return s
+
+    @staticmethod
+    def _extract_professional_list(text: str) -> List[str]:
+        if not text:
+            return []
+        # 直接 JSON
+        try:
+            obj = json.loads(text)
+            if isinstance(obj, dict):
+                pro = obj.get("professional")
+                if isinstance(pro, list):
+                    return [str(x).strip() for x in pro if str(x).strip()]
+                for v in obj.values():
+                    if isinstance(v, dict) and isinstance(v.get("professional"), list):
+                        return [str(x).strip() for x in v["professional"] if str(x).strip()]
+        except Exception:
+            pass
+        m = re.search(r'"professional"\s*:\s*\[(.*?)\]', text, flags=re.S)
+        if not m:
+            return []
+        body = m.group(1)
+        parts = re.findall(r'"((?:\\.|[^"\\])*)"', body)
+        out = []
+        for p in parts:
+            p = p.replace('\\"', '"').replace("\\n", "\n").strip()
+            if p and not p.startswith("page") and len(p) >= 8:
+                out.append(p)
+        return out
+
+    def _recover_page_from_raw(self, raw: str, key: str, title: str) -> Optional[Dict[str, Any]]:
+        if not raw:
+            return None
+        parsed = self._parse_json_loose(raw)
+        if isinstance(parsed, dict):
+            if key in parsed and isinstance(parsed[key], dict):
+                return parsed[key]
+            if "professional" in parsed:
+                return parsed
+        pro = self._extract_professional_list(raw)
+        if len(pro) >= 2:
+            return {"title": title, "professional": pro, "plain": {}}
+        return None
 
     def _plain_missing(self, plain: Any) -> bool:
         if not isinstance(plain, dict):
@@ -764,11 +1036,21 @@ Professional text:
         elif isinstance(pro, list):
             paragraphs = []
             for x in pro:
-                s = ReportGenerator._strip_json_artifacts(str(x).strip())
-                if s and not ReportGenerator._looks_like_json_blob(s):
+                raw = str(x).strip()
+                if ReportGenerator._looks_like_json_blob(raw) or '"professional"' in raw:
+                    paragraphs.extend(ReportGenerator._extract_professional_list(raw))
+                    continue
+                s = ReportGenerator._clean_pro_paragraph(raw)
+                if s and len(s) >= 8:
                     paragraphs.append(s)
         else:
             paragraphs = []
+
+        # 若 professional 字段缺失但 raw/content 含数组，再抽一次
+        if len(paragraphs) < 2 and fallback_raw:
+            paragraphs = ReportGenerator._extract_professional_list(fallback_raw) or paragraphs
+        if len(paragraphs) < 2 and item.get("content"):
+            paragraphs = ReportGenerator._extract_professional_list(str(item.get("content"))) or paragraphs
 
         plain_raw = item.get("plain")
         if isinstance(plain_raw, str):
@@ -841,52 +1123,41 @@ Professional text:
 
     @staticmethod
     def _strip_json_artifacts(text: str) -> str:
-        """去掉模型泄漏的 JSON 外壳残片。"""
+        """去掉模型泄漏的 JSON 外壳残片。绝不把整页 JSON 收成「仅标题」。"""
         if not text:
             return ""
         s = str(text).strip()
         s = re.sub(r"^```(?:json)?\s*", "", s)
         s = re.sub(r"\s*```$", "", s)
-        # 常见泄漏：{ "page1": { "title": "真实标题
-        m = re.match(
-            r'^\{\s*"page\d+"\s*:\s*\{\s*"title"\s*:\s*"(.*?)"\s*,?',
-            s,
-            flags=re.S,
-        )
-        if m and m.group(1) and len(m.group(1)) < 80 and "{" not in m.group(1):
-            return m.group(1).strip()
-        m2 = re.match(r'^\{\s*"title"\s*:\s*"(.*?)"\s*,?', s, flags=re.S)
-        if m2 and m2.group(1) and len(m2.group(1)) < 80 and "{" not in m2.group(1):
-            # 若整段仍是 JSON，交由 looks_like 判断；此处仅抽标题场景
-            if '"professional"' in s:
-                return s  # 保留给上层判定为 blob
+        # 整页/含 professional 的 JSON：优先抽出正文数组，禁止退化成 title
+        if '"professional"' in s or re.search(r'"page\d+"\s*:', s):
+            pro = ReportGenerator._extract_professional_list(s)
+            if pro:
+                return "\n\n".join(pro)
+            # 无法抽出则原样返回，交给 looks_like_json_blob 过滤
+            return s
+        # 仅标题残片：{ "title": "xxx"
+        m2 = re.match(r'^\{\s*"title"\s*:\s*"(.*?)"\s*,?\s*\}?\s*$', s, flags=re.S)
+        if m2 and m2.group(1) and len(m2.group(1)) < 80:
             return m2.group(1).strip()
-        # 去掉开头的 { "page1": { "title": "
-        s = re.sub(
-            r'^\{\s*"page\d+"\s*:\s*\{\s*"title"\s*:\s*"?',
-            "",
-            s,
-            count=1,
-        )
-        s = re.sub(r'^\{\s*"title"\s*:\s*"?', "", s, count=1)
-        s = re.sub(r'"\s*,\s*"professional".*$', "", s, flags=re.S)
+        # 去掉误粘在正文前的短前缀
+        s = re.sub(r'^\{\s*"page\d+"\s*:\s*\{\s*', "", s, count=1)
         s = s.strip().strip('{}" \n')
         return s
 
     @staticmethod
     def sanitize_title(raw: Any, fallback: str) -> str:
         title = str(raw or "").strip()
-        if not title or ReportGenerator._looks_like_json_blob(title):
-            extracted = ReportGenerator._strip_json_artifacts(title)
-            if extracted and not ReportGenerator._looks_like_json_blob(extracted) and len(extracted) < 60:
-                title = extracted
+        if ReportGenerator._looks_like_json_blob(title) or '"page' in title:
+            m = re.search(r'"title"\s*:\s*"([^"]{2,60})"', title)
+            if m:
+                title = m.group(1).strip()
             else:
                 return fallback
-        title = ReportGenerator._strip_json_artifacts(title)
         title = re.sub(r'^["\{\[\s]+', "", title)
         title = re.sub(r'["\}\]\s]+$', "", title)
         title = title.strip()
-        if not title or len(title) > 80 or ReportGenerator._looks_like_json_blob(title):
+        if not title or len(title) > 80:
             return fallback
         if re.search(r"page\d+|professional|plain", title, flags=re.I):
             return fallback
@@ -903,21 +1174,41 @@ Professional text:
                 "content": str(page),
             }
         out = dict(page)
-        out["title"] = ReportGenerator.sanitize_title(out.get("title"), fallback_title or "报告")
+        title = ReportGenerator.sanitize_title(out.get("title"), fallback_title or "报告")
+        out["title"] = title
         pro = out.get("professional") or []
+        cleaned: List[str] = []
         if isinstance(pro, list):
-            cleaned = []
             for p in pro:
-                s = ReportGenerator._strip_json_artifacts(str(p))
-                if s and not ReportGenerator._looks_like_json_blob(s):
-                    cleaned.append(s)
-            out["professional"] = cleaned or [f"（{out['title']}内容需重新生成）"]
+                raw = str(p).strip()
+                if ReportGenerator._looks_like_json_blob(raw) or '"professional"' in raw:
+                    cleaned.extend(ReportGenerator._extract_professional_list(raw))
+                    continue
+                s = ReportGenerator._strip_json_artifacts(raw)
+                if not s or ReportGenerator._looks_like_json_blob(s):
+                    continue
+                # 过滤「只有标题」伪正文
+                if s.replace(" ", "") in {title.replace(" ", ""), title.replace(" ", "") + "。"}:
+                    continue
+                cleaned.append(s)
         elif isinstance(pro, str):
-            s = ReportGenerator._strip_json_artifacts(pro)
-            out["professional"] = (
-                [s] if s and not ReportGenerator._looks_like_json_blob(s)
-                else [f"（{out['title']}内容需重新生成）"]
-            )
+            if ReportGenerator._looks_like_json_blob(pro) or '"professional"' in pro:
+                cleaned = ReportGenerator._extract_professional_list(pro)
+            else:
+                s = ReportGenerator._strip_json_artifacts(pro)
+                if s and not ReportGenerator._looks_like_json_blob(s):
+                    cleaned = [s]
+        # 去重保序
+        uniq = []
+        for x in cleaned:
+            if x and x not in uniq:
+                uniq.append(x)
+        if len(uniq) < 2:
+            out["professional"] = [
+                f"（{title}专业解读不完整，请重新生成报告以获得完整四段分析。）"
+            ]
+        else:
+            out["professional"] = uniq
         content = out.get("content")
         if content and ReportGenerator._looks_like_json_blob(str(content)):
             out["content"] = ReportGenerator.build_content_markdown(out)
@@ -1238,7 +1529,7 @@ Professional text:
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.55,
-            "max_tokens": 4096,
+            "max_tokens": 5200,
         }
         url = f"{self.base_url}/v1/chat/completions"
         response = requests.post(url, headers=headers, json=payload, timeout=120)
