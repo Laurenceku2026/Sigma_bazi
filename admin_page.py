@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 import streamlit as st
 
 from trial_survey import survey_rows_for_admin
+from ui_texts import region_label, t
 
 
 def _safe_date(value: Any) -> str:
