@@ -964,6 +964,21 @@ def go_liunian_tab():
     st.session_state["_scroll_top"] = True
 
 
+def render_cross_report_nav(*, to: str, key: str) -> None:
+    """报告页底部互跳：完整报告 ↔ 流年报告（点击后滚到顶部）。"""
+    st.markdown("---")
+    if to == "liunian":
+        label = t("goto_liunian_report_bottom", lang)
+        if st.button(label, key=key, type="primary", use_container_width=True):
+            go_liunian_tab()
+            st.rerun()
+    else:
+        label = t("goto_full_report_bottom", lang)
+        if st.button(label, key=key, type="primary", use_container_width=True):
+            go_report_tab()
+            st.rerun()
+
+
 def apply_scroll_top_if_needed():
     """从命盘底部点进报告时滚回顶部，避免用户仍停在页底误以为没生成。"""
     if not st.session_state.pop("_scroll_top", False):
@@ -1657,6 +1672,8 @@ elif _tab == 2:
             render_report_download_row(report, "tab_report")
             st.markdown("---")
             render_report_cta("tab_report_paid")
+            if ReportGenerator.resolve_liunian_key(report):
+                render_cross_report_nav(to="liunian", key="goto_liunian_from_report_bottom")
         else:
             st.warning(
                 "免费预览模式：含水印条码，不可复制、不可下载。升级会员可清晰阅读并下载 PDF。"
@@ -1670,6 +1687,7 @@ elif _tab == 2:
                     if _is_zh()
                     else "Annual Luck preview included — open the Annual Luck tab (watermarked)."
                 )
+                render_cross_report_nav(to="liunian", key="goto_liunian_from_report_free_bottom")
             st.markdown("---")
             st.markdown(f"### {t('unlock_heading', lang)}")
             st.markdown(t("unlock_body", lang))
@@ -1737,6 +1755,7 @@ elif _tab == 3:
                 st.markdown(f"### {t('unlock_heading', lang)}")
                 st.markdown(t("unlock_body", lang))
                 render_membership_plans("tab_liunian_free")
+            render_cross_report_nav(to="report", key="goto_report_from_liunian_bottom")
 
 # ========== Tab 5：试用问卷 ==========
 elif _tab == 4:
