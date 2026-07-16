@@ -124,14 +124,9 @@ def _build_pillars(bazi_data):
 
 
 def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
-    """四柱彩色表格 HTML（年/月/日/时）。"""
+    """四柱彩色表格：十神/干支/藏干(本气中气余气)/纳音/神煞/空亡。"""
     order = ["年柱", "月柱", "日柱", "时柱"]
-    zh = lang != "en"
-    labels = (
-        [chart_label(x, lang) for x in order]
-        if zh
-        else [chart_label(x, "en") for x in order]
-    )
+    labels = [chart_label(x, lang) for x in order]
     pillars = _build_pillars(bazi_data)
 
     def cell(name_key, field_fn):
@@ -174,7 +169,13 @@ def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
     )
 
     def zhi_cell(p, _):
-        return _char_html(p.get("zhi", "·"), "2.4rem", lang=lang)
+        z = _char_html(p.get("zhi", "·"), "2.4rem", lang=lang)
+        if p.get("is_kong"):
+            tag = "空" if lang != "en" else "void"
+            z += (
+                f"<div style='color:#c62828;font-size:0.75rem;font-weight:700;'>({tag})</div>"
+            )
+        return z
 
     cells = "".join(cell(k, zhi_cell) for k in order)
     rows.append(
@@ -187,17 +188,60 @@ def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
         for item in p.get("cangan") or []:
             g = item.get("gan", "")
             god = item.get("god", "")
+            role = item.get("role", "")
             god_s = ten_god_display(god, lang) if god else ""
-            parts.append(
-                f"{_char_html(g, '1.05rem', lang=lang)}"
-                f"<span style='color:#777;font-size:0.75rem;'> ({god_s})</span>"
+            role_s = role
+            if lang == "en":
+                role_s = {"本气": "main", "中气": "mid", "余气": "res"}.get(role, role)
+            role_html = (
+                f"<span style='color:#999;font-size:0.7rem;'>[{role_s}]</span> "
+                if role_s
+                else ""
             )
-        return "<br>".join(parts) if parts else "—"
+            parts.append(
+                f"<div style='margin:0 0 6px 0;line-height:1.35;'>{role_html}"
+                f"{_char_html(g, '1.05rem', lang=lang)}"
+                f"<span style='color:#555;font-size:0.8rem;'> {god_s}</span></div>"
+            )
+        return "".join(parts) if parts else "—"
 
     cells = "".join(cell(k, cangan_cell) for k in order)
     rows.append(
         f"<tr><td style='background:#fafafa;padding:8px;border:1px solid #ddd;font-weight:600;'>"
-        f"{chart_label('藏干', lang)}</td>{cells}</tr>"
+        f"{'藏干' if lang != 'en' else 'Hidden Stems'}</td>{cells}</tr>"
+    )
+
+    def nayin_cell(p, _):
+        n = p.get("nayin") or ""
+        return f"<span style='font-size:0.9rem;'>{n or '—'}</span>"
+
+    cells = "".join(cell(k, nayin_cell) for k in order)
+    rows.append(
+        f"<tr><td style='background:#fafafa;padding:8px;border:1px solid #ddd;font-weight:600;'>"
+        f"{'纳音' if lang != 'en' else 'Nayin'}</td>{cells}</tr>"
+    )
+
+    def shensha_cell(p, _):
+        ss = p.get("shensha") or []
+        if not ss:
+            return "<span style='color:#bbb;'>—</span>"
+        return "<br>".join(
+            f"<span style='font-size:0.8rem;color:#6a1b9a;'>{s}</span>" for s in ss
+        )
+
+    cells = "".join(cell(k, shensha_cell) for k in order)
+    rows.append(
+        f"<tr><td style='background:#fafafa;padding:8px;border:1px solid #ddd;font-weight:600;'>"
+        f"{'神煞' if lang != 'en' else 'Shen Sha'}</td>{cells}</tr>"
+    )
+
+    def cs_cell(p, _):
+        return f"<span style='font-size:0.85rem;'>{p.get('chang_sheng') or '—'}</span>"
+
+    cells = "".join(cell(k, cs_cell) for k in order)
+    rows.append(
+        f"<tr><td style='background:#fafafa;padding:8px;border:1px solid #ddd;font-weight:600;'>"
+        f"{'长生' if lang != 'en' else '12 Stages'}</td>{cells}</tr>"
     )
 
     legend = " · ".join(
@@ -205,7 +249,29 @@ def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
         for w, c in WUXING_COLORS.items()
     )
     cap = chart_label("五行配色", lang)
-    caption = f"<div style='margin-top:8px;font-size:0.85rem;'>{cap}: {legend}</div>"
+    meta = bazi_data.get("meta") or {}
+    kw = meta.get("kongwang") or []
+    kw_text = (
+        f"{'日空' if lang != 'en' else 'Day void'}：{''.join(kw)}"
+        if kw
+        else ("" if lang != "en" else "")
+    )
+    jie = bazi_data.get("month_jie") or ""
+    extra = []
+    if kw_text:
+        extra.append(kw_text)
+    if jie and lang != "en":
+        extra.append(f"月令节气：{jie}")
+    elif jie:
+        extra.append(f"Month jieqi: {jie}")
+    caption = (
+        f"<div style='margin-top:8px;font-size:0.85rem;'>{cap}: {legend}</div>"
+        + (
+            f"<div style='margin-top:4px;font-size:0.85rem;color:#555;'>{'　'.join(extra)}</div>"
+            if extra
+            else ""
+        )
+    )
     return (
         "<table style='width:100%;border-collapse:collapse;background:#fff;'>"
         + "".join(rows)
@@ -383,6 +449,21 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
     st.markdown(header, unsafe_allow_html=True)
     st.markdown(render_colored_pillar_table(bazi_data, lang), unsafe_allow_html=True)
 
+    # 称骨评语
+    meta = bazi_data.get("meta") or {}
+    cg = meta.get("cheng_gu") or {}
+    if cg:
+        st.markdown("---")
+        st.markdown("### " + ("⚖️ 称骨评语（袁天罡）" if lang != "en" else "⚖️ Bone-weight verse"))
+        note = cg.get("calendar_note") or ""
+        st.caption(
+            f"总重量：{cg.get('total_text', '')}（年{cg.get('year')} + 月{cg.get('month')} + 日{cg.get('day')} + 时{cg.get('hour')}；{note}）"
+            if lang != "en"
+            else f"Total: {cg.get('total_text', '')} ({note})"
+        )
+        if cg.get("poem"):
+            st.info(cg["poem"])
+
     st.markdown("---")
     st.markdown(f"### {t('wuxing', lang)}")
     bars = render_wuxing_bars(bazi_data["wuxing_stats"])
@@ -428,7 +509,7 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
             f"<div><b>{'地支留意' if lang != 'en' else 'Branch notes'}：</b>"
             f"{'、'.join(notes_b) if notes_b else '—'}</div>"
             f"<div style='color:#888;font-size:0.8rem;'>"
-            f"{'神煞与深度解读见会员报告' if lang != 'en' else 'Detailed reading in membership report'}"
+            f"{'合冲提示；神煞已列于上表各柱' if lang != 'en' else 'Harmony/clash notes; Shen Sha listed per pillar above'}"
             f"</div></div>",
             unsafe_allow_html=True,
         )
