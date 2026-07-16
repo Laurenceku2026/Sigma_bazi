@@ -14,7 +14,7 @@ class ReportGenerator:
     """生成命理报告（按页/批次请求，保证内容完整、分段可读）"""
 
     PAGE_SPECS = [
-        ("page1", "八字命盘与基本信息", "四柱、十神、五行旺衰、大运走势、知进退建议"),
+        ("page1", "八字命盘与基本信息", "四柱十神、藏干、纳音空亡、神煞要点、五行旺衰、大运起运与走势、知进退建议；须引用命盘已算神煞做联动说明"),
         ("page2", "事业详批 (Part 1)", "当年事业运势、大事、注意事项、关键月份"),
         ("page3", "事业详批 (Part 2)", "事业特质、五行行业方向、职业与发展策略"),
         ("page4", "财运详批 (Part 1)", "财运趋势、投资适否、旺财破财月份与方向"),
@@ -26,7 +26,7 @@ class ReportGenerator:
     ]
 
     PAGE_SPECS_EN = [
-        ("page1", "BaZi Chart & Basics", "Four pillars, ten gods, five elements, decade luck, timing advice"),
+        ("page1", "BaZi Chart & Basics", "Pillars, ten gods, nayin/void, key Shen Sha from the chart, five elements, decade luck onset and path, timing advice"),
         ("page2", "Career (Part 1)", "Career outlook, key events, cautions, important months"),
         ("page3", "Career (Part 2)", "Career traits, industry direction by elements, strategy"),
         ("page4", "Wealth (Part 1)", "Wealth trend, investing, strong/weak months and directions"),
@@ -112,8 +112,10 @@ class ReportGenerator:
                     "plain": {"summary": fail_sum, "points": [], "detail": ""},
                     "content": fail_pro,
                 }
-            elif self.lang == "zh_hant":
-                report[key] = self._to_traditional_page(report[key])
+            else:
+                report[key] = self.sanitize_page_for_display(report[key], title)
+                if self.lang == "zh_hant":
+                    report[key] = self._to_traditional_page(report[key])
         return report
 
     @staticmethod
@@ -154,6 +156,66 @@ class ReportGenerator:
             return True
         return False
 
+    def _pillar_detail_lines(self, bazi_data: dict) -> str:
+        """把命盘已算字段写入上下文，供报告联动解释（神煞/纳音/空亡等）。"""
+        pillars = bazi_data.get("pillars") or {}
+        meta = bazi_data.get("meta") or {}
+        lines = []
+        for name in ("年柱", "月柱", "日柱", "时柱"):
+            p = pillars.get(name) or {}
+            gan, zhi = p.get("gan", ""), p.get("zhi", "")
+            if not gan and name in (bazi_data.get("bazi") or {}):
+                gan, zhi = bazi_data["bazi"][name]
+            gods = p.get("gan_god") or ""
+            nayin = p.get("nayin") or ""
+            ss = p.get("shensha") or []
+            kong = "空亡" if p.get("is_kong") else ""
+            cs = p.get("chang_sheng") or ""
+            if self.lang == "en":
+                lines.append(
+                    f"{name}: {gan}{zhi} god={gods}; nayin={nayin}; "
+                    f"stages={cs}; void={bool(p.get('is_kong'))}; "
+                    f"ShenSha={','.join(ss) if ss else '-'}"
+                )
+            else:
+                lines.append(
+                    f"{name}：{gan}{zhi}（{gods}）；纳音{nayin or '—'}；"
+                    f"长生{cs or '—'}；{kong or '非空'}；"
+                    f"神煞：{'、'.join(ss) if ss else '无'}"
+                )
+        kw = meta.get("kongwang_text") or "".join(meta.get("kongwang") or [])
+        cg = meta.get("cheng_gu") or {}
+        qy = bazi_data.get("qi_yun") or {}
+        if self.lang == "en":
+            if kw:
+                lines.append(f"Day void branches: {kw}")
+            if cg.get("total_text"):
+                lines.append(f"Bone-weight: {cg.get('total_text')}")
+            if qy:
+                lines.append(
+                    f"Qi Yun: {qy.get('age_label', '')} "
+                    f"({'forward' if qy.get('forward') else 'reverse'})"
+                )
+        else:
+            if kw:
+                lines.append(f"日空亡：{kw}")
+            if cg.get("total_text"):
+                lines.append(f"称骨：{cg.get('total_text')}")
+            if qy:
+                direction = "顺行" if qy.get("forward") else "逆行"
+                lines.append(f"起运：{qy.get('age_label', '')}（{direction}）")
+        # 大运摘要（前几步 + 当前）
+        da_yun = bazi_data.get("da_yun") or []
+        brief = []
+        for d in da_yun[:6]:
+            mark = "*" if d.get("is_current") else ""
+            brief.append(
+                f"{d.get('age_label', '')}{d.get('gan', '')}{d.get('zhi', '')}{mark}"
+            )
+        if brief:
+            lines.append(("Da Yun: " if self.lang == "en" else "大运：") + " / ".join(brief))
+        return "\n".join(lines)
+
     def _bazi_context(self, bazi_data, birth_info) -> str:
         bazi = bazi_data["bazi"]
         da_yun = bazi_data.get("da_yun") or []
@@ -163,6 +225,7 @@ class ReportGenerator:
             (n for n in liu_nian if n.get("is_current")),
             liu_nian[-1] if liu_nian else None,
         )
+        detail = self._pillar_detail_lines(bazi_data)
         if self.lang == "en":
             dy = (
                 f"Step {current_da_yun.get('step')} {current_da_yun.get('gan')}{current_da_yun.get('zhi')} "
@@ -184,8 +247,10 @@ class ReportGenerator:
                 f"Hour {bazi['时柱'][0]}{bazi['时柱'][1]}; "
                 f"Day Master: {bazi_data.get('day_master')}; "
                 f"Five elements: {json.dumps(bazi_data.get('wuxing_stats', {}), ensure_ascii=False)}; "
-                f"Current decade luck: {dy}; Current year luck: {ln}. "
-                "Analyze chart with year luck; for Annual Luck Report use four seasons "
+                f"Current decade luck: {dy}; Current year luck: {ln}.\n"
+                f"Chart details (must use in analysis, especially page1):\n{detail}\n"
+                "Tie Shen Sha / nayin / void / decade luck to the narrative — do not invent stars not listed. "
+                "For Annual Luck Report use four seasons "
                 "(Spring Yin-Mao-Chen, Summer Si-Wu-Wei, Autumn Shen-You-Xu, Winter Hai-Zi-Chou); "
                 "name 1–2 key months per season, not a 12-month laundry list."
             )
@@ -209,7 +274,8 @@ class ReportGenerator:
             f"时{bazi['时柱'][0]}{bazi['时柱'][1]}；"
             f"日主：{bazi_data.get('day_master')}；"
             f"五行：{json.dumps(bazi_data.get('wuxing_stats', {}), ensure_ascii=False)}；"
-            f"当前大运：{dy}；当前流年：{ln}。"
+            f"当前大运：{dy}；当前流年：{ln}。\n"
+            f"【命盘明细·报告须联动引用，尤其第1页；勿编造未列出的神煞】\n{detail}\n"
             "分析结合流年与命局；《流年报告》按四时分述（春寅卯辰、夏巳午未、秋申酉戌、冬亥子丑），"
             "每季点出一至两个关键流月，勿写成十二个月流水账。"
         )
@@ -532,6 +598,8 @@ Hard rules:
 3) plain 全文禁止出现：{self.FORBIDDEN_PLAIN}
 4) 专业段可用术语；白话段绝对零术语。
 5) 若有多页，每个 page key 都按同一结构输出。
+6) title 只能是纯中文/英文标题字符串，禁止出现 {{、}}、"page1"、JSON 片段。
+7) 第1页须引用上下文中的神煞/纳音/空亡/大运，勿编造未列出的神煞。
 """
         raw = self._call_deepseek(prompt)
         parsed = self._parse_json_loose(raw)
@@ -652,10 +720,24 @@ Professional text:
 
     def _coerce_page(self, item: Any, title: str, fallback_raw: str = "") -> Dict[str, Any]:
         if isinstance(item, str) and item.strip():
-            page = ReportGenerator._split_legacy_content(item.strip(), title)
-            return page
+            cleaned = ReportGenerator._strip_json_artifacts(item.strip())
+            if ReportGenerator._looks_like_json_blob(cleaned):
+                item = None
+            else:
+                page = ReportGenerator._split_legacy_content(cleaned, title)
+                page["title"] = ReportGenerator.sanitize_title(page.get("title"), title)
+                page["professional"] = [
+                    ReportGenerator._strip_json_artifacts(p)
+                    for p in (page.get("professional") or [])
+                    if not ReportGenerator._looks_like_json_blob(p)
+                ] or [f"（{title}专业解读缺失）"]
+                page["content"] = ReportGenerator.build_content_markdown(page)
+                return page
         if not isinstance(item, dict):
-            msg = fallback_raw[:800] if fallback_raw else f"（{title}生成失败，请重试）"
+            # 禁止把原始 JSON 残片塞进正文
+            msg = f"（{title}生成不完整，请重新生成报告）"
+            if fallback_raw and not ReportGenerator._looks_like_json_blob(fallback_raw):
+                msg = ReportGenerator._strip_json_artifacts(fallback_raw[:500]) or msg
             return {
                 "title": title,
                 "professional": [msg],
@@ -676,9 +758,15 @@ Professional text:
 
         pro = item.get("professional")
         if isinstance(pro, str):
-            paragraphs = ReportGenerator._split_paragraphs(pro)
+            paragraphs = ReportGenerator._split_paragraphs(
+                ReportGenerator._strip_json_artifacts(pro)
+            )
         elif isinstance(pro, list):
-            paragraphs = [str(x).strip() for x in pro if str(x).strip()]
+            paragraphs = []
+            for x in pro:
+                s = ReportGenerator._strip_json_artifacts(str(x).strip())
+                if s and not ReportGenerator._looks_like_json_blob(s):
+                    paragraphs.append(s)
         else:
             paragraphs = []
 
@@ -715,17 +803,21 @@ Professional text:
 
         # 兼容旧模型只返回 content
         if (not paragraphs or self._plain_missing(plain)) and item.get("content"):
-            legacy = ReportGenerator._split_legacy_content(str(item.get("content")), title)
-            if not paragraphs:
-                paragraphs = legacy.get("professional") or []
-            if self._plain_missing(plain):
-                plain = legacy.get("plain") or plain
+            content_s = ReportGenerator._strip_json_artifacts(str(item.get("content")))
+            if not ReportGenerator._looks_like_json_blob(content_s):
+                legacy = ReportGenerator._split_legacy_content(content_s, title)
+                if not paragraphs:
+                    paragraphs = legacy.get("professional") or []
+                if self._plain_missing(plain):
+                    plain = legacy.get("plain") or plain
 
         if not paragraphs:
             paragraphs = [f"（{title}专业解读缺失）"]
 
         page = {
-            "title": item.get("title") or item.get("标题") or title,
+            "title": ReportGenerator.sanitize_title(
+                item.get("title") or item.get("标题"), title
+            ),
             "professional": paragraphs,
             "plain": plain,
         }
@@ -733,6 +825,103 @@ Professional text:
             page["quarters"] = item.get("quarters")
         page["content"] = ReportGenerator.build_content_markdown(page)
         return page
+
+    @staticmethod
+    def _looks_like_json_blob(text: str) -> bool:
+        s = (text or "").strip()
+        if not s:
+            return False
+        if s.startswith("{") or s.startswith("["):
+            return True
+        if re.search(r'"page\d+"\s*:', s) or re.search(r'\{\s*"page\d+"', s):
+            return True
+        if '"title"' in s and '"professional"' in s and "{" in s:
+            return True
+        return False
+
+    @staticmethod
+    def _strip_json_artifacts(text: str) -> str:
+        """去掉模型泄漏的 JSON 外壳残片。"""
+        if not text:
+            return ""
+        s = str(text).strip()
+        s = re.sub(r"^```(?:json)?\s*", "", s)
+        s = re.sub(r"\s*```$", "", s)
+        # 常见泄漏：{ "page1": { "title": "真实标题
+        m = re.match(
+            r'^\{\s*"page\d+"\s*:\s*\{\s*"title"\s*:\s*"(.*?)"\s*,?',
+            s,
+            flags=re.S,
+        )
+        if m and m.group(1) and len(m.group(1)) < 80 and "{" not in m.group(1):
+            return m.group(1).strip()
+        m2 = re.match(r'^\{\s*"title"\s*:\s*"(.*?)"\s*,?', s, flags=re.S)
+        if m2 and m2.group(1) and len(m2.group(1)) < 80 and "{" not in m2.group(1):
+            # 若整段仍是 JSON，交由 looks_like 判断；此处仅抽标题场景
+            if '"professional"' in s:
+                return s  # 保留给上层判定为 blob
+            return m2.group(1).strip()
+        # 去掉开头的 { "page1": { "title": "
+        s = re.sub(
+            r'^\{\s*"page\d+"\s*:\s*\{\s*"title"\s*:\s*"?',
+            "",
+            s,
+            count=1,
+        )
+        s = re.sub(r'^\{\s*"title"\s*:\s*"?', "", s, count=1)
+        s = re.sub(r'"\s*,\s*"professional".*$', "", s, flags=re.S)
+        s = s.strip().strip('{}" \n')
+        return s
+
+    @staticmethod
+    def sanitize_title(raw: Any, fallback: str) -> str:
+        title = str(raw or "").strip()
+        if not title or ReportGenerator._looks_like_json_blob(title):
+            extracted = ReportGenerator._strip_json_artifacts(title)
+            if extracted and not ReportGenerator._looks_like_json_blob(extracted) and len(extracted) < 60:
+                title = extracted
+            else:
+                return fallback
+        title = ReportGenerator._strip_json_artifacts(title)
+        title = re.sub(r'^["\{\[\s]+', "", title)
+        title = re.sub(r'["\}\]\s]+$', "", title)
+        title = title.strip()
+        if not title or len(title) > 80 or ReportGenerator._looks_like_json_blob(title):
+            return fallback
+        if re.search(r"page\d+|professional|plain", title, flags=re.I):
+            return fallback
+        return title
+
+    @staticmethod
+    def sanitize_page_for_display(page: Any, fallback_title: str = "") -> Dict[str, Any]:
+        """展示/PDF 前清洗旧报告中的 JSON 残片。"""
+        if not isinstance(page, dict):
+            return {
+                "title": fallback_title or "报告",
+                "professional": [str(page)],
+                "plain": {"summary": "", "points": [], "detail": ""},
+                "content": str(page),
+            }
+        out = dict(page)
+        out["title"] = ReportGenerator.sanitize_title(out.get("title"), fallback_title or "报告")
+        pro = out.get("professional") or []
+        if isinstance(pro, list):
+            cleaned = []
+            for p in pro:
+                s = ReportGenerator._strip_json_artifacts(str(p))
+                if s and not ReportGenerator._looks_like_json_blob(s):
+                    cleaned.append(s)
+            out["professional"] = cleaned or [f"（{out['title']}内容需重新生成）"]
+        elif isinstance(pro, str):
+            s = ReportGenerator._strip_json_artifacts(pro)
+            out["professional"] = (
+                [s] if s and not ReportGenerator._looks_like_json_blob(s)
+                else [f"（{out['title']}内容需重新生成）"]
+            )
+        content = out.get("content")
+        if content and ReportGenerator._looks_like_json_blob(str(content)):
+            out["content"] = ReportGenerator.build_content_markdown(out)
+        return out
 
     @staticmethod
     def _split_legacy_content(text: str, title: str) -> Dict[str, Any]:
@@ -877,6 +1066,10 @@ Professional text:
     @staticmethod
     def render_page_html(page: Dict[str, Any], lang: str = "zh") -> str:
         """页面展示用：视觉分段卡片，避免挤成一团。"""
+        page = ReportGenerator.sanitize_page_for_display(
+            page if isinstance(page, dict) else {},
+            str((page or {}).get("title") or "") if isinstance(page, dict) else "",
+        )
         if lang == "zh_hant":
             try:
                 page = ReportGenerator._to_traditional_page(page) if isinstance(page, dict) else page
@@ -1002,6 +1195,9 @@ Professional text:
 
         return f"""
 <div style="display:flex;flex-direction:column;gap:18px;">
+  <div style="font-weight:800;font-size:1.35rem;line-height:1.45;color:#1a237e;letter-spacing:0.02em;">
+    {ReportGenerator._escape(str(page.get("title") or ""))}
+  </div>
   {pro_section}
   {season_html}
   <div style="padding:16px 18px;border:1px solid #c8e6c9;border-radius:10px;background:#f1f8f4;">
@@ -1063,21 +1259,66 @@ Professional text:
             end = cleaned.find("```", start)
             cleaned = cleaned[start:end].strip() if end > start else cleaned[start:].strip()
 
+        # 去掉模型偶发前缀说明
+        cleaned = re.sub(r"^[^{\[]+", "", cleaned, count=1).strip() or cleaned
+
         try:
-            return json.loads(cleaned)
+            obj = json.loads(cleaned)
+            if isinstance(obj, dict):
+                return obj
         except json.JSONDecodeError:
             pass
 
-        for candidate in (cleaned, cleaned + '"}', cleaned + '"}}', cleaned + "}}"):
+        for candidate in (
+            cleaned,
+            cleaned + '"}',
+            cleaned + '"]}',
+            cleaned + '"]}}',
+            cleaned + '"}}',
+            cleaned + "}}",
+            cleaned + "}]}",
+        ):
             try:
-                return json.loads(candidate)
+                obj = json.loads(candidate)
+                if isinstance(obj, dict):
+                    return obj
             except json.JSONDecodeError:
                 continue
 
         match = re.search(r"\{[\s\S]*\}", cleaned)
         if match:
             try:
-                return json.loads(match.group(0))
+                obj = json.loads(match.group(0))
+                if isinstance(obj, dict):
+                    return obj
             except json.JSONDecodeError:
                 pass
+
+        # 截断 JSON：尽量抽出 pageN 对象
+        m = re.search(
+            r'"(page\d+)"\s*:\s*\{',
+            cleaned,
+        )
+        if m:
+            key = m.group(1)
+            start = cleaned.find("{", m.end() - 1)
+            if start >= 0:
+                depth = 0
+                end = -1
+                for i, ch in enumerate(cleaned[start:], start):
+                    if ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+                blob = cleaned[start:end] if end > start else cleaned[start:]
+                for cand in (blob, blob + "}", blob + '"}', blob + '"]}'):
+                    try:
+                        inner = json.loads(cand)
+                        if isinstance(inner, dict):
+                            return {key: inner}
+                    except json.JSONDecodeError:
+                        continue
         return {}

@@ -603,6 +603,48 @@ def go_report_tab():
     st.session_state.ui_tab = 2
 
 
+def go_liunian_tab():
+    st.session_state.ui_tab = 3
+
+
+def render_report_download_row(report: dict, key_prefix: str = "dl"):
+    """付费用户：下载 PDF（金/钻含流年；银卡仅八页）+ JSON。"""
+    tier = st.session_state.subscription_tier
+    include_liunian = tier in ("gold", "diamond")
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        try:
+            pdf_buffer = generate_pdf_report(
+                report,
+                st.session_state.birth_info or {},
+                st.session_state.bazi_data or {},
+                include_liunian=include_liunian,
+                lang=lang,
+            )
+            label = t("download_pdf", lang)
+            if include_liunian:
+                st.caption(t("pdf_includes_liunian", lang))
+            else:
+                st.caption(t("pdf_silver_no_liunian", lang))
+            st.download_button(
+                label,
+                pdf_buffer,
+                pdf_filename(st.session_state.birth_info or {}),
+                "application/pdf",
+                key=f"{key_prefix}_pdf",
+            )
+        except Exception:
+            st.warning(t("pdf_warn", lang))
+    with col_dl2:
+        st.download_button(
+            t("export_json", lang),
+            json.dumps(report, ensure_ascii=False, indent=2),
+            f"bazi_{datetime.now():%Y%m%d}.json",
+            "application/json",
+            key=f"{key_prefix}_json",
+        )
+
+
 def render_report_cta(key_prefix: str = "main"):
     """命盘下方大号入口：付费看/生成报告；免费预览（带遮挡）。"""
     tier = st.session_state.subscription_tier
@@ -774,10 +816,16 @@ def render_report_pages(report: dict, *, protected: bool = False, pages=None):
             page = report[pk]
             if not isinstance(page, dict):
                 page = {"content": str(page), "title": labels[i - 1]}
+            page = ReportGenerator.sanitize_page_for_display(
+                page, labels[i - 1] if i <= len(labels) else pk
+            )
             if not page.get("professional") and page.get("content"):
                 page = ReportGenerator._split_legacy_content(
                     str(page.get("content")),
                     page.get("title") or labels[i - 1],
+                )
+                page = ReportGenerator.sanitize_page_for_display(
+                    page, labels[i - 1] if i <= len(labels) else pk
                 )
             if report_gen and report_gen._plain_missing(page.get("plain")):
                 try:
@@ -796,7 +844,6 @@ def render_report_pages(report: dict, *, protected: bool = False, pages=None):
 
 def render_liunian_report(report: dict, *, protected: bool = False):
     """独立篇章：流年报告（金卡/钻石）。"""
-    st.markdown(f"### {t('liunian_heading', lang)}")
     st.caption(t("liunian_chapter_badge", lang))
     if "page9" not in (report or {}):
         st.info(
@@ -1093,7 +1140,10 @@ elif _tab == 2:
             render_membership_plans("tab_report")
     else:
         report = st.session_state.report_content
-        st.markdown(f"### {t('your_report', lang)}")
+        st.markdown(
+            f"<h2 style='font-weight:800;margin:0 0 0.4rem 0;'>{t('your_report', lang)}</h2>",
+            unsafe_allow_html=True,
+        )
         report_lang = st.session_state.get("report_language") or "zh"
         if report_lang != lang:
             st.warning(t("report_lang_mismatch", lang))
@@ -1104,37 +1154,17 @@ elif _tab == 2:
                         st.rerun()
         if paid:
             st.caption(f"{t('generated_at', lang)}：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
-            render_report_pages(report, protected=False, pages=range(1, 9))
             if tier in ("gold", "diamond"):
-                st.info(
-                    "金卡/钻石另有独立篇章「流年报告」，请切换顶部「流年报告」标签查看。"
-                    if _is_zh()
-                    else "Gold/Diamond also includes the independent Annual Luck Report tab."
-                )
+                if st.button(
+                    t("goto_liunian_report", lang),
+                    key="goto_liunian_from_report",
+                    use_container_width=True,
+                ):
+                    go_liunian_tab()
+                    st.rerun()
+            render_report_pages(report, protected=False, pages=range(1, 9))
             st.markdown("---")
-            col_dl1, col_dl2 = st.columns(2)
-            with col_dl1:
-                try:
-                    pdf_buffer = generate_pdf_report(
-                        report,
-                        st.session_state.birth_info or {},
-                        st.session_state.bazi_data or {},
-                    )
-                    st.download_button(
-                        t("download_pdf", lang),
-                        pdf_buffer,
-                        pdf_filename(st.session_state.birth_info or {}),
-                        "application/pdf",
-                    )
-                except Exception:
-                    st.warning(t("pdf_warn", lang))
-            with col_dl2:
-                st.download_button(
-                    t("export_json", lang),
-                    json.dumps(report, ensure_ascii=False, indent=2),
-                    f"bazi_{datetime.now():%Y%m%d}.json",
-                    "application/json",
-                )
+            render_report_download_row(report, "tab_report")
             st.markdown("---")
             render_report_cta("tab_report_paid")
         else:
@@ -1172,7 +1202,20 @@ elif _tab == 3:
     else:
         report = st.session_state.report_content
         if paid:
+            st.markdown(
+                f"<h2 style='font-weight:800;margin:0 0 0.4rem 0;'>{t('liunian_heading', lang)}</h2>",
+                unsafe_allow_html=True,
+            )
+            if st.button(
+                t("goto_full_report", lang),
+                key="goto_report_from_liunian",
+                use_container_width=True,
+            ):
+                go_report_tab()
+                st.rerun()
             render_liunian_report(report, protected=False)
+            st.markdown("---")
+            render_report_download_row(report, "tab_liunian")
             st.markdown("---")
             render_report_cta("tab_liunian_paid")
         else:

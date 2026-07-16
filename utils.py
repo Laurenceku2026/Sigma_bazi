@@ -552,19 +552,31 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
         )
 
 
-def generate_pdf_report(report_content, birth_info, bazi_data):
-    """生成多页中文 PDF（ReportLab CID 宋体，避免黑体小方块）。"""
+def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunian: bool = False, lang: str = "zh"):
+    """生成多页中文 PDF（ReportLab CID 宋体）。金/钻可含流年报告；银卡不含。"""
     import io
     import re
     from xml.sax.saxutils import escape
 
-    from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+    from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
     from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
+
+    from report_generator import ReportGenerator
+
+    def T(s: str) -> str:
+        if lang == "zh_hant":
+            try:
+                from zh_convert import to_traditional
+
+                return to_traditional(s)
+            except Exception:
+                return s
+        return s
 
     font_name = "STSong-Light"
     try:
@@ -580,7 +592,7 @@ def generate_pdf_report(report_content, birth_info, bazi_data):
         rightMargin=1.8 * cm,
         topMargin=1.8 * cm,
         bottomMargin=1.8 * cm,
-        title="六西格玛命理 · 八字报告",
+        title=T("六西格玛命理 · 八字报告"),
         author=str((birth_info or {}).get("name") or "Sigma Fate"),
     )
 
@@ -589,26 +601,36 @@ def generate_pdf_report(report_content, birth_info, bazi_data):
         "Cover",
         parent=styles["Normal"],
         fontName=font_name,
-        fontSize=20,
-        leading=28,
+        fontSize=22,
+        leading=30,
         alignment=TA_CENTER,
-        spaceAfter=18,
+        spaceAfter=14,
+    )
+    style_cover_sub = ParagraphStyle(
+        "CoverSub",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=12,
+        leading=18,
+        alignment=TA_CENTER,
+        spaceAfter=8,
     )
     style_h1 = ParagraphStyle(
         "H1CN",
         parent=styles["Normal"],
         fontName=font_name,
-        fontSize=14,
-        leading=22,
-        spaceBefore=8,
-        spaceAfter=10,
+        fontSize=16,
+        leading=24,
+        spaceBefore=4,
+        spaceAfter=12,
+        alignment=TA_LEFT,
     )
     style_h2 = ParagraphStyle(
         "H2CN",
         parent=styles["Normal"],
         fontName=font_name,
-        fontSize=12,
-        leading=18,
+        fontSize=12.5,
+        leading=20,
         spaceBefore=10,
         spaceAfter=6,
     )
@@ -630,6 +652,16 @@ def generate_pdf_report(report_content, birth_info, bazi_data):
         alignment=TA_CENTER,
         spaceAfter=6,
     )
+    style_toc = ParagraphStyle(
+        "TocCN",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=11,
+        leading=18,
+        alignment=TA_LEFT,
+        leftIndent=12,
+        spaceAfter=4,
+    )
     style_bullet = ParagraphStyle(
         "BulletCN",
         parent=styles["Normal"],
@@ -640,10 +672,13 @@ def generate_pdf_report(report_content, birth_info, bazi_data):
         spaceAfter=4,
     )
 
-    def P(text: str, style=style_body):
-        t = escape(str(text or "").strip()).replace("\n", "<br/>")
-        if not t:
+    def P(text: str, style=style_body, bold: bool = False):
+        raw = T(str(text or "").strip())
+        if not raw:
             return None
+        t = escape(raw).replace("\n", "<br/>")
+        if bold:
+            t = f"<b>{t}</b>"
         return Paragraph(t, style)
 
     story = []
@@ -651,42 +686,64 @@ def generate_pdf_report(report_content, birth_info, bazi_data):
     gender = str((birth_info or {}).get("gender") or (bazi_data or {}).get("gender") or "")
     birth = str((birth_info or {}).get("birth_date") or "")
 
-    story.append(Spacer(1, 2.2 * cm))
-    story.append(Paragraph(escape("六西格玛命理 · 八字报告"), style_cover))
-    story.append(Paragraph(escape("Sigma Fate BaZi Report"), style_meta))
-    story.append(Spacer(1, 0.6 * cm))
+    story.append(Spacer(1, 1.8 * cm))
+    story.append(Paragraph(f"<b>{escape(T('六西格玛命理 · 八字命理报告'))}</b>", style_cover))
+    story.append(Paragraph(escape("Sigma Fate BaZi Report"), style_cover_sub))
+    story.append(Spacer(1, 0.5 * cm))
     if name:
-        story.append(Paragraph(escape(f"姓名：{name}"), style_meta))
+        story.append(P(f"姓名：{name}", style_meta, bold=True))
     if gender:
-        story.append(Paragraph(escape(f"性别：{gender}"), style_meta))
+        story.append(P(f"性别：{gender}", style_meta))
     if birth:
-        story.append(Paragraph(escape(f"出生：{birth}"), style_meta))
+        story.append(P(f"出生：{birth}", style_meta))
     dm = (bazi_data or {}).get("day_master") if isinstance(bazi_data, dict) else ""
     if dm:
-        story.append(Paragraph(escape(f"日主：{dm}"), style_meta))
-    story.append(Spacer(1, 1.0 * cm))
-    story.append(Paragraph(escape("本报告仅供参考，请理性看待。"), style_meta))
+        story.append(P(f"日主：{dm}", style_meta, bold=True))
+    story.append(Spacer(1, 0.6 * cm))
+    story.append(P("本报告仅供参考，请理性看待。", style_meta))
+
+    # 目录
+    toc_items = []
+    if isinstance(report_content, dict):
+        for i in range(1, 10):
+            if i == 9 and not include_liunian:
+                continue
+            pk = f"page{i}"
+            if pk not in report_content:
+                continue
+            page = ReportGenerator.sanitize_page_for_display(
+                report_content[pk],
+                T("流年报告") if i == 9 else T(f"第{i}页"),
+            )
+            toc_items.append(str(page.get("title") or (T("流年报告") if i == 9 else T(f"第{i}页"))))
+    if toc_items:
+        story.append(Spacer(1, 0.8 * cm))
+        story.append(P("目录", style_h2, bold=True))
+        for idx, tit in enumerate(toc_items, 1):
+            story.append(P(f"{idx}. {tit}", style_toc))
+
     story.append(PageBreak())
 
     def add_page_block(page: dict, fallback_title: str):
+        page = ReportGenerator.sanitize_page_for_display(page, fallback_title)
         title = page.get("title") or fallback_title
-        story.append(Paragraph(escape(str(title)), style_h1))
+        story.append(P(str(title), style_h1, bold=True))
 
         pro = page.get("professional")
         if isinstance(pro, list) and pro:
-            story.append(Paragraph(escape("专业解读"), style_h2))
+            story.append(P("专业解读", style_h2, bold=True))
             for para in pro:
                 p = P(para, style_body)
                 if p:
                     story.append(p)
         quarters = page.get("quarters") if isinstance(page.get("quarters"), list) else []
         if quarters:
-            story.append(Paragraph(escape("四季流年预测"), style_h2))
+            story.append(P("四季流年预测", style_h2, bold=True))
             for q in quarters:
                 if not isinstance(q, dict):
                     continue
                 head = f"{q.get('name', '')}（{q.get('branch', '')} · {q.get('months', '')}）"
-                p = P(head, style_h2)
+                p = P(head, style_h2, bold=True)
                 if p:
                     story.append(p)
                 for lab, key in (("局势", "outlook"), ("关键月", "focus_months"), ("建议", "advice")):
@@ -696,14 +753,14 @@ def generate_pdf_report(report_content, birth_info, bazi_data):
                             story.append(pp)
         plain = page.get("plain") if isinstance(page.get("plain"), dict) else None
         if plain and (plain.get("summary") or plain.get("points") or plain.get("detail") or plain.get("quarters_plain")):
-            story.append(Paragraph(escape("白话说明"), style_h2))
+            story.append(P("白话说明", style_h2, bold=True))
             if plain.get("summary"):
-                p = P(f"一句话：{plain['summary']}", style_body)
+                p = P(f"一句话：{plain['summary']}", style_body, bold=True)
                 if p:
                     story.append(p)
             pts = plain.get("points") or []
             if pts:
-                story.append(Paragraph(escape("怎么做："), style_body))
+                story.append(P("怎么做：", style_body, bold=True))
                 for i, pt in enumerate(pts, 1):
                     p = P(f"{i}. {pt}", style_bullet)
                     if p:
@@ -715,7 +772,7 @@ def generate_pdf_report(report_content, birth_info, bazi_data):
             for q in plain.get("quarters_plain") or []:
                 if not isinstance(q, dict):
                     continue
-                p = P(f"{q.get('name', '')}：{q.get('summary', '')}", style_body)
+                p = P(f"{q.get('name', '')}：{q.get('summary', '')}", style_body, bold=True)
                 if p:
                     story.append(p)
                 for j, tip in enumerate(q.get("tips") or [], 1):
@@ -724,23 +781,27 @@ def generate_pdf_report(report_content, birth_info, bazi_data):
                         story.append(pp)
         elif page.get("content"):
             content = re.sub(r"[#*`]+", "", str(page.get("content") or ""))
-            for block in re.split(r"\n\s*\n+", content):
-                p = P(block, style_body)
-                if p:
-                    story.append(p)
+            if not ReportGenerator._looks_like_json_blob(content):
+                for block in re.split(r"\n\s*\n+", content):
+                    p = P(block, style_body)
+                    if p:
+                        story.append(p)
         story.append(PageBreak())
 
     if isinstance(report_content, dict):
         for i in range(1, 10):
+            if i == 9 and not include_liunian:
+                continue
             pk = f"page{i}"
             if pk not in report_content:
                 continue
             page = report_content[pk]
             if not isinstance(page, dict):
-                page = {"content": str(page), "title": f"第{i}页"}
-            add_page_block(page, f"第{i}页")
+                page = {"content": str(page), "title": T(f"第{i}页")}
+            fallback = T("流年报告") if i == 9 else T(f"第{i}页")
+            add_page_block(page, fallback)
     else:
-        story.append(Paragraph(escape("暂无报告内容。"), style_body))
+        story.append(P("暂无报告内容。", style_body))
 
     if story and isinstance(story[-1], PageBreak):
         story.pop()
@@ -748,7 +809,6 @@ def generate_pdf_report(report_content, birth_info, bazi_data):
     doc.build(story)
     buffer.seek(0)
     return buffer
-
 
 def pdf_filename(birth_info) -> str:
     """下载文件名：含姓名。"""
