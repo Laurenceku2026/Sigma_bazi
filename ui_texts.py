@@ -107,7 +107,7 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "login_not_found": "本 App 无此账号，请先注册",
         "report_lang_mismatch": "当前报告语言与界面不一致（中文↔英文）。请按当前语言重新生成。",
         "free_preview_quota": "免费预览剩余 {left}/{total} 次（含水印；查看已生成报告不扣次）",
-        "free_preview_exhausted": "免费预览次数已用完，请加入会员后继续生成报告。",
+        "free_preview_exhausted": "免费预览次数已用完，请升级会员后继续生成报告。",
         "report_regen_lang": "按当前语言重新生成报告",
         "login_prompt": "已有账号？请先登录，保护个人隐私，无需重复填写",
         "returning_hint": "已从账号恢复上次排盘资料，可直接查看命盘与报告",

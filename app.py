@@ -626,8 +626,17 @@ def report_lang_compatible(report_lang: str | None, ui_lang: str) -> bool:
     return False
 
 
+def open_upgrade_membership(*, flash: str | None = None, mark_prompted: bool = False) -> None:
+    """打开主区「升级会员」面板（需随后 st.rerun 才能显示）。"""
+    st.session_state.show_join_membership = True
+    if flash:
+        st.session_state["_upgrade_flash"] = flash
+    if mark_prompted:
+        st.session_state["_quota_upgrade_prompted"] = True
+
+
 def generate_full_report(*, consume_quota: bool = True) -> bool:
-    """生成报告写入 session；成功返回 True。"""
+    """生成报告写入 session；成功返回 True。每次成功生成扣 1 次（钻石无限除外）。"""
     tier = st.session_state.subscription_tier
     if not report_gen:
         st.error("报告引擎未配置" if _is_zh() else "Report engine not configured")
@@ -638,11 +647,15 @@ def generate_full_report(*, consume_quota: bool = True) -> bool:
     try:
         if consume_quota and tier in PAID_TIERS and supabase_client:
             if not supabase_client.consume_report_quota(st.session_state.user_id):
-                st.error("次数已用完" if _is_zh() else "No quota left")
+                open_upgrade_membership(
+                    flash="次数已用完，请升级会员后继续生成报告。"
+                    if _is_zh()
+                    else "No quota left. Please upgrade to continue."
+                )
                 return False
         elif tier == "free" and supabase_client and st.session_state.get("auth_ok"):
             if not supabase_client.consume_free_preview_quota(st.session_state.user_id):
-                st.error(t("free_preview_exhausted", lang))
+                open_upgrade_membership(flash=t("free_preview_exhausted", lang))
                 return False
 
         progress = st.progress(0.0)
@@ -826,6 +839,8 @@ div[data-testid="stButton"] > button[kind="primary"] {
                             st.success(t("report_ok", lang))
                             go_report_tab()
                             st.rerun()
+                        elif st.session_state.get("show_join_membership"):
+                            st.rerun()
         elif can_generate_report(tier, trials, expires) and report_gen:
             if st.button(
                 "📄 " + ("生成完整报告" if _is_zh() else "Generate full report"),
@@ -838,8 +853,20 @@ div[data-testid="stButton"] > button[kind="primary"] {
                         st.success(t("report_ok", lang))
                         go_report_tab()
                         st.rerun()
+                    elif st.session_state.get("show_join_membership"):
+                        st.rerun()
         else:
-            st.warning("会员次数不足或已到期，请续费后再生成。" if _is_zh() else "No quota or expired.")
+            st.warning(
+                "会员次数不足或已到期，请升级会员后再生成。"
+                if _is_zh()
+                else "No quota or expired. Please upgrade."
+            )
+            if (
+                not st.session_state.get("show_join_membership")
+                and not st.session_state.get("_quota_upgrade_prompted")
+            ):
+                open_upgrade_membership(mark_prompted=True)
+                st.rerun()
     else:
         # 免费：可预览（默认 5 次含水印；已生成报告可反复查看不扣次）
         free_left = int((profile or {}).get("free_trials_remaining") or 0)
@@ -868,17 +895,29 @@ div[data-testid="stButton"] > button[kind="primary"] {
                 if not report_gen:
                     st.error("报告引擎未配置")
                 elif not can_gen:
-                    st.warning(t("free_preview_exhausted", lang))
+                    open_upgrade_membership(flash=t("free_preview_exhausted", lang))
+                    st.rerun()
                 else:
                     with st.spinner(t("generating", lang)):
                         if generate_full_report(consume_quota=False):
                             go_report_tab()
+                            st.rerun()
+                        elif st.session_state.get("show_join_membership"):
                             st.rerun()
             else:
                 go_report_tab()
                 st.rerun()
         if not has_report and not can_gen:
             st.warning(t("free_preview_exhausted", lang))
+            if (
+                not st.session_state.get("show_join_membership")
+                and not st.session_state.get("_quota_upgrade_prompted")
+            ):
+                open_upgrade_membership(
+                    flash=t("free_preview_exhausted", lang),
+                    mark_prompted=True,
+                )
+                st.rerun()
             render_membership_plans(f"{key_prefix}_free_upgrade")
 
 
@@ -1118,8 +1157,8 @@ with st.sidebar:
     if st.session_state.subscription_tier == "free":
         st.warning(t("free_warning", lang))
 
-    # 加入会员
-    join_label = "💎 加入会员" if _is_zh() else "💎 Join Membership"
+    # 升级会员
+    join_label = "💎 升级会员" if _is_zh() else "💎 Upgrade Membership"
     if st.button(join_label, key="sidebar_join_membership", use_container_width=True):
         st.session_state.show_join_membership = True
         if not is_registered():
@@ -1172,10 +1211,13 @@ if st.session_state.get("show_register") and not is_registered() and not st.sess
 
         render_register_panel("main_reg", after_ok=_after_reg)
 
-# --- 侧边栏「加入会员」：主区弹注册 + 三档支付 ---
+# --- 侧边栏「升级会员」：主区弹注册 + 三档支付 ---
 if st.session_state.get("show_join_membership"):
     with st.container(border=True):
         st.markdown(f"### {join_label}")
+        _upgrade_flash = st.session_state.pop("_upgrade_flash", None)
+        if _upgrade_flash:
+            st.warning(_upgrade_flash)
         if not is_registered():
             st.caption(t("register_caption", lang))
             jc1, jc2 = st.columns(2)
@@ -1349,6 +1391,8 @@ elif _tab == 2:
                 with st.spinner(t("generating", lang)):
                     if generate_full_report(consume_quota=st.session_state.subscription_tier in PAID_TIERS):
                         st.success(t("report_ok", lang))
+                        st.rerun()
+                    elif st.session_state.get("show_join_membership"):
                         st.rerun()
         if paid:
             st.caption(f"{t('generated_at', lang)}：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
