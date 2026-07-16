@@ -492,6 +492,14 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
 
     if bazi_data.get("da_yun"):
         st.markdown("**大运时间轴**" if lang != "en" else "**Decade luck (Da Yun) timeline**")
+        qy = bazi_data.get("qi_yun") or {}
+        if qy:
+            direction = ("顺行" if qy.get("forward") else "逆行") if lang != "en" else ("forward" if qy.get("forward") else "reverse")
+            age = qy.get("age_label") or ""
+            if lang != "en":
+                st.caption(f"起运：{age}（{direction}）")
+            else:
+                st.caption(f"Qi Yun: {age} ({direction})")
         st.markdown(render_dayun_timeline(bazi_data, lang), unsafe_allow_html=True)
     if bazi_data.get("liu_nian"):
         st.markdown(
