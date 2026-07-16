@@ -655,6 +655,7 @@ class SupabaseClient:
         free_trials_remaining: Optional[int] = None,
         subscription_expires_at: Optional[str] = None,
         email_confirmed: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> bool:
         try:
             data: Dict[str, Any] = {"updated_at": self._now()}
@@ -666,6 +667,12 @@ class SupabaseClient:
                 data["subscription_expires_at"] = subscription_expires_at
             if email_confirmed is not None:
                 data["email_confirmed"] = email_confirmed
+            if metadata is not None:
+                user = self.get_user(user_id) or {}
+                existing = user.get("metadata") or {}
+                if not isinstance(existing, dict):
+                    existing = {}
+                data["metadata"] = {**existing, **metadata}
 
             result = (
                 self._table(self.USER_TABLE)
@@ -678,6 +685,31 @@ class SupabaseClient:
         except Exception as e:
             print(f"Admin update user error: {e}")
             return False
+
+    def grant_survey_gold_reward(self, user_id: str) -> bool:
+        """首次提交试用问卷：免费用户一次性升级金卡。"""
+        user = self.get_user(user_id)
+        if not user:
+            return False
+        meta = user.get("metadata") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        if meta.get("survey_gold_rewarded"):
+            return False
+        tier = user.get("subscription_tier", "free")
+        if tier != "free":
+            self.admin_update_user(user_id, metadata={"survey_gold_rewarded": True})
+            return False
+        if not self.apply_membership_tier(user_id, "gold"):
+            return False
+        self.admin_update_user(
+            user_id,
+            metadata={
+                "survey_gold_rewarded": True,
+                "survey_gold_at": self._now(),
+            },
+        )
+        return True
 
     def admin_delete_user(self, user_id: str) -> bool:
         try:

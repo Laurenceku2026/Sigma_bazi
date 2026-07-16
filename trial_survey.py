@@ -140,8 +140,16 @@ def render_trial_survey(lang: str, supabase_client, *, user_id: str, user_email:
             "avg_exp": _avg({k: scores[k] for k in scores if k in {x[0] for x in exp_items}}),
             "avg_all": _avg(scores),
         }
+        first_survey = latest is None
         if supabase_client and supabase_client.save_survey_response(payload):
+            rewarded = False
+            if first_survey:
+                rewarded = supabase_client.grant_survey_gold_reward(user_id)
+                if rewarded:
+                    st.session_state.subscription_tier = "gold"
             st.success(t("survey_thanks", lang))
+            if rewarded:
+                st.success(t("survey_gold_reward", lang))
             st.balloons()
             st.rerun()
         else:
@@ -150,37 +158,44 @@ def render_trial_survey(lang: str, supabase_client, *, user_id: str, user_email:
 
 def survey_rows_for_admin(responses: List[Dict[str, Any]], lang: str) -> List[Dict[str, Any]]:
     """管理员表格行。"""
+    if lang == "en":
+        headers = {
+            "date": "Date",
+            "email": "Email",
+            "background": "Background",
+            "avg_pro": "Pro avg",
+            "avg_exp": "Exp avg",
+            "avg_all": "Overall",
+            "recommend": "Recommend",
+            "feedback": "Feedback",
+        }
+    else:
+        headers = {
+            "date": t("created_col", lang),
+            "email": t("email_col", lang),
+            "background": t("survey_background", lang),
+            "avg_pro": t("survey_col_pro_avg", lang),
+            "avg_exp": t("survey_col_exp_avg", lang),
+            "avg_all": t("survey_col_all_avg", lang),
+            "recommend": t("survey_recommend", lang).split("（")[0].split("(")[0].strip(),
+            "feedback": t("survey_col_feedback", lang),
+        }
     rows = []
     for r in responses:
         scores = r.get("scores") if isinstance(r.get("scores"), dict) else {}
         row = {
-            "日期": str(r.get("created_at") or "")[:10],
-            "邮箱": r.get("email") or "-",
-            "背景": r.get("background") or "-",
-            "专业均分": r.get("avg_pro", "-"),
-            "体验均分": r.get("avg_exp", "-"),
-            "总均分": r.get("avg_all", "-"),
-            "推荐": r.get("recommend_score", "-"),
-            "开放建议": (str(r.get("open_feedback") or ""))[:80],
+            headers["date"]: str(r.get("created_at") or "")[:10],
+            headers["email"]: r.get("email") or "-",
+            headers["background"]: r.get("background") or "-",
+            headers["avg_pro"]: r.get("avg_pro", "-"),
+            headers["avg_exp"]: r.get("avg_exp", "-"),
+            headers["avg_all"]: r.get("avg_all", "-"),
+            headers["recommend"]: r.get("recommend_score", "-"),
+            headers["feedback"]: (str(r.get("open_feedback") or ""))[:80],
         }
         for i in range(1, 15):
             qk = f"q{i}"
             if qk in scores:
                 row[f"Q{i}"] = scores[qk]
         rows.append(row)
-    if lang == "en":
-        return [
-            {
-                "Date": x["日期"],
-                "Email": x["邮箱"],
-                "Background": x["背景"],
-                "Pro avg": x["专业均分"],
-                "Exp avg": x["体验均分"],
-                "Overall": x["总均分"],
-                "Recommend": x["推荐"],
-                "Feedback": x["开放建议"],
-                **{k: v for k, v in x.items() if k.startswith("Q")},
-            }
-            for x in rows
-        ]
     return rows

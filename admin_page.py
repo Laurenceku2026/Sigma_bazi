@@ -111,48 +111,42 @@ def render_admin_page(lang: str, supabase_client) -> None:
         return
 
     st.info(
-        f"🔒 本页只管理本 App 表 **`sf_users`**（`{supabase_client.schema}` / `{supabase_client.app_id}`）。\n\n"
-        f"- 列表里「无姓名无生日」的邮箱，多半是以前无密码注册/试登留下的，**可以删**。\n"
-        f"- 删除这里的行 **不会** 删除赛马 App / 门户的账号，也 **不会** 删掉 Supabase Auth 的总账号；"
-        f"只是本八字 App 看不到他们。\n"
-        f"- 推荐：点「只保留有资料用户」清掉空行，或下方逐个删除。"
-        if lang == "zh"
-        else f"🔒 Managing `sf_users` only. Deleting rows here does NOT remove Horse racing / portal Auth accounts."
+        t(
+            "admin_scope_info",
+            lang,
+            schema=supabase_client.schema,
+            app_id=supabase_client.app_id,
+        )
     )
     st.caption(
-        f"table=`{getattr(supabase_client, 'USER_TABLE', 'sf_users')}` · "
-        f"schema=`{supabase_client.schema}` · app_id=`{supabase_client.app_id}`"
+        t(
+            "admin_table_caption",
+            lang,
+            table=getattr(supabase_client, "USER_TABLE", "sf_users"),
+            schema=supabase_client.schema,
+            app_id=supabase_client.app_id,
+        )
     )
 
     purge_cols = st.columns(3)
     with purge_cols[0]:
-        if st.button(
-            "🧹 清理非本 App 脏数据" if lang == "zh" else "🧹 Purge foreign rows",
-            key="admin_purge_foreign",
-        ):
+        if st.button(t("admin_purge_foreign", lang), key="admin_purge_foreign"):
             n = supabase_client.purge_foreign_users()
-            st.success(f"已清理 {n} 条" if lang == "zh" else f"Purged {n} rows")
+            st.success(t("admin_purge_foreign_ok", lang, n=n))
             st.rerun()
     with purge_cols[1]:
-        if st.button(
-            "🧹 删除无邮箱匿名用户" if lang == "zh" else "🧹 Delete anonymous (no email)",
-            key="admin_purge_anon",
-        ):
+        if st.button(t("admin_purge_anon", lang), key="admin_purge_anon"):
             n = supabase_client.purge_anonymous_users()
-            st.success(f"已删除 {n} 条匿名用户" if lang == "zh" else f"Deleted {n} anon rows")
+            st.success(t("admin_purge_anon_ok", lang, n=n))
             st.rerun()
     with purge_cols[2]:
         if st.button(
-            "🗑 只保留有资料用户（删空行）" if lang == "zh" else "🗑 Keep profiled users only",
+            t("admin_purge_empty", lang),
             key="admin_purge_empty_profile",
             type="primary",
         ):
             n = supabase_client.purge_users_without_profile()
-            st.success(
-                f"已删除 {n} 个无姓名无生日的空用户，已排盘用户保留"
-                if lang == "zh"
-                else f"Deleted {n} empty-profile users"
-            )
+            st.success(t("admin_purge_empty_ok", lang, n=n))
             st.rerun()
 
     users: List[Dict] = supabase_client.list_users()
@@ -167,25 +161,15 @@ def render_admin_page(lang: str, supabase_client) -> None:
         if "已隔离丢弃" in str(err):
             st.warning(err)
         else:
-            st.error(f"读取用户失败：{err}")
-            st.info(
-                "请确认：1) 已执行 sql/001～006；2) Exposed schemas 含 app_sigma_fate；"
-                "3) Secrets 中 URL 与 service_role 属同一项目。"
-                if lang == "zh"
-                else "Check SQL, exposed schema, and matching Supabase URL/key."
-            )
+            st.error(t("admin_read_fail", lang, err=err))
+            st.info(t("admin_sql_hint", lang))
 
     empty_n = sum(
         1 for u in users
         if not str(u.get("display_name") or "").strip() and not u.get("birth_date")
     )
     if empty_n:
-        st.warning(
-            f"当前有 **{empty_n}** 个仅邮箱、无排盘资料的用户（例如测试邮箱）。"
-            f"点击上方「只保留有资料用户」可一次删掉；或在 Supabase 跑 `sql/006_purge_empty_profile_users.sql`。"
-            if lang == "zh"
-            else f"{empty_n} email-only empty profiles. Use Keep profiled users only."
-        )
+        st.warning(t("admin_empty_warn", lang, n=empty_n))
 
     paid = [
         u
@@ -202,22 +186,20 @@ def render_admin_page(lang: str, supabase_client) -> None:
     st.markdown(f"### 📊 {t('sys_stats', lang)}")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric(t("total_users", lang), len(users))
-    c2.metric("有资料" if lang == "zh" else "With profile", len(profiled))
+    c2.metric(t("admin_with_profile", lang), len(profiled))
     c3.metric(t("paid_users", lang), len(paid))
     c4.metric(t("free_users", lang), len(free))
     c5.metric(t("configured_users", lang), len(configured))
 
     show_all = st.checkbox(
-        "显示全部（含无资料空行）" if lang == "zh" else "Show all (incl. empty profiles)",
+        t("admin_show_all", lang),
         value=False,
         key="admin_show_all_users",
     )
     view_users = users if show_all else profiled
     if not show_all and len(profiled) < len(users):
         st.caption(
-            f"默认只显示有姓名/生日的用户（{len(profiled)}/{len(users)}）。勾选上方可看全部。"
-            if lang == "zh"
-            else f"Showing profiled users only ({len(profiled)}/{len(users)})."
+            t("admin_show_all_caption", lang, shown=len(profiled), total=len(users))
         )
 
     st.markdown("---")
@@ -227,7 +209,7 @@ def render_admin_page(lang: str, supabase_client) -> None:
         st.info(
             t("no_users", lang)
             if not users
-            else ("暂无已排盘用户；请勾选「显示全部」或先在 App 排盘。" if lang == "zh" else "No profiled users yet.")
+            else t("admin_no_profiled", lang)
         )
         if not users:
             return
@@ -239,10 +221,10 @@ def render_admin_page(lang: str, supabase_client) -> None:
         table_rows.append(
             {
                 t("email_col", lang): u.get("email") or "-",
-                ("姓名" if lang == "zh" else "Name"): u.get("display_name") or "-",
-                ("生日" if lang == "zh" else "Birthday"): _safe_date(u.get("birth_date")),
-                ("出生时间" if lang == "zh" else "Birth time"): _format_birth_time(u),
-                ("出生地点" if lang == "zh" else "Birth place"): _format_birth_location(u, lang),
+                t("admin_col_name", lang): u.get("display_name") or "-",
+                t("admin_col_birthday", lang): _safe_date(u.get("birth_date")),
+                t("admin_col_birth_time", lang): _format_birth_time(u),
+                t("admin_col_birth_place", lang): _format_birth_location(u, lang),
                 t("subscription_col", lang): u.get("subscription_tier", "free"),
                 t("trials_col", lang): u.get("free_trials_remaining", 5),
                 t("expires_col", lang): _safe_date(u.get("subscription_expires_at")),
@@ -273,15 +255,14 @@ def render_admin_page(lang: str, supabase_client) -> None:
 
     st.caption(f"{t('current_user', lang)}: {selected_user.get('email') or selected_user.get('user_id')}")
 
-    st.markdown("#### 📍 " + ("出生资料" if lang == "zh" else "Birth profile"))
+    st.markdown(f"#### 📍 {t('admin_birth_profile', lang)}")
     bc1, bc2, bc3, bc4 = st.columns(4)
-    bc1.metric("姓名" if lang == "zh" else "Name", selected_user.get("display_name") or "-")
-    bc2.metric("生日" if lang == "zh" else "Date", _safe_date(selected_user.get("birth_date")))
-    bc3.metric("时间" if lang == "zh" else "Time", _format_birth_time(selected_user))
-    bc4.metric("性别" if lang == "zh" else "Gender", selected_user.get("gender") or "-")
+    bc1.metric(t("admin_col_name", lang), selected_user.get("display_name") or "-")
+    bc2.metric(t("admin_col_birthday", lang), _safe_date(selected_user.get("birth_date")))
+    bc3.metric(t("admin_col_time", lang), _format_birth_time(selected_user))
+    bc4.metric(t("admin_col_gender", lang), selected_user.get("gender") or "-")
     st.caption(
-        ("出生地点：" if lang == "zh" else "Birth place: ")
-        + _format_birth_location(selected_user, lang)
+        t("admin_birth_place_label", lang) + _format_birth_location(selected_user, lang)
     )
 
     st.markdown("---")
@@ -344,18 +325,14 @@ def render_admin_page(lang: str, supabase_client) -> None:
             st.rerun()
 
     st.markdown("---")
-    st.markdown("### 📋 " + ("试用问卷回复（App 内）" if lang == "zh" else "In-app survey responses"))
+    st.markdown(f"### 📋 {t('admin_survey_responses', lang)}")
     surveys = supabase_client.list_survey_responses(limit=200) if supabase_client else []
     if not surveys:
-        st.caption(
-            "暂无问卷回复。请用户在 App「试用反馈」页填写；需先执行 sql/009_sf_survey_responses.sql。"
-            if lang == "zh"
-            else "No responses yet. Users fill in App → Feedback tab."
-        )
+        st.caption(t("admin_survey_empty", lang))
     else:
         srows = survey_rows_for_admin(surveys, lang)
         st.dataframe(srows, use_container_width=True, hide_index=True, height=280)
-        with st.expander("查看完整开放建议" if lang == "zh" else "Full open feedback", expanded=False):
+        with st.expander(t("admin_survey_full", lang), expanded=False):
             for r in surveys[:30]:
                 st.markdown(
                     f"**{str(r.get('created_at') or '')[:10]}** · "
@@ -364,21 +341,14 @@ def render_admin_page(lang: str, supabase_client) -> None:
                 st.write(r.get("open_feedback") or "—")
                 st.markdown("---")
 
-    with st.expander("导出问卷模板（可选）" if lang == "zh" else "Export questionnaire template", expanded=False):
-        st.markdown(
-            """
-用户可在 App **「试用反馈」** 页直接填写，无需微信。  
-15 题：5 专业 + 9 体验（1–10 分）+ 1 开放题。下方可下载离线模板备用。
-            """.strip()
-            if lang == "zh"
-            else "Users can fill in App → Feedback tab. Download offline template below if needed."
-        )
+    with st.expander(t("admin_export_template", lang), expanded=False):
+        st.markdown(t("admin_export_template_body", lang))
         doc_dir = Path(__file__).resolve().parent / "docs"
         qpath = doc_dir / "trial_questionnaire_zh_hant.md"
         csvpath = doc_dir / "trial_questionnaire_table.csv"
         if qpath.is_file():
             st.download_button(
-                "📥 下载问卷（含微信填写版 + 表格）" if lang == "zh" else "📥 Download questionnaire (MD)",
+                t("admin_download_md", lang),
                 data=qpath.read_text(encoding="utf-8"),
                 file_name="sigma_fate_trial_questionnaire.md",
                 mime="text/markdown",
@@ -386,7 +356,7 @@ def render_admin_page(lang: str, supabase_client) -> None:
             )
         if csvpath.is_file():
             st.download_button(
-                "📥 下载表格 CSV（Excel/腾讯文档）" if lang == "zh" else "📥 Download table CSV",
+                t("admin_download_csv", lang),
                 data=csvpath.read_text(encoding="utf-8-sig"),
                 file_name="sigma_fate_trial_questionnaire.csv",
                 mime="text/csv",
