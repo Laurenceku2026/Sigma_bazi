@@ -654,9 +654,7 @@ def _pick_important_tip(
 
     domain = max(weights, key=weights.get)
 
-    # —— 按年龄生成文案 ——
-    text = ""
-
+    # —— 按年龄生成文案（幼年/童年直接返回，杜绝事业/财运/感情）——
     if age <= 5:
         if flags.get("chong") or flags.get("tianke_dichong") or flags.get("xing"):
             text = f"健康：幼冲刑之年，留意感冒跌碰与{organ}，作息规律，家长多陪伴。"
@@ -668,9 +666,10 @@ def _pick_important_tip(
             text = f"健康：体质偏弱之年，慎风寒饮食，重点养护{organ}。"
         else:
             text = f"健康：幼儿长养年，均衡饮食、疫苗与体检按程，留意{organ}。"
+        return _maybe_trad(text, lang)
 
-    elif age <= 12:
-        if domain == "health" or flags.get("chong") or score <= 40:
+    if age <= 12:
+        if flags.get("chong") or flags.get("xing") or flags.get("tianke_dichong") or score <= 40:
             text = f"健康：学龄成长年，睡眠充足、户外运动，留意{organ}与近视防护。"
         elif ln_god in ("正印", "偏印", "正官"):
             text = "学业：启蒙/求学期，培养专注与习惯，忌过度报班施压。"
@@ -678,8 +677,11 @@ def _pick_important_tip(
             text = "学业：思维活跃，适合兴趣启发；防分心与顶撞师长。"
         else:
             text = "学业：打牢基础之年，劳逸结合，身心同步成长。"
+        return _maybe_trad(text, lang)
 
-    elif age <= 18:
+    text = ""
+
+    if age <= 18:
         if domain == "health" and (flags.get("chong") or score <= 38):
             text = f"健康：青春期注意作息与情绪，养护{organ}，避免熬夜透支。"
         elif domain == "love" and peach:

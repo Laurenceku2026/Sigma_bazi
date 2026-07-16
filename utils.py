@@ -565,8 +565,7 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
 def _resolve_pdf_cjk_font() -> tuple:
     """
     返回 (font_body_name, font_head_name)。
-    优先嵌入 TrueType/OTF 中文字体（避免 CID 在 Chrome/手机 PDF 里显示黑方块）；
-    找不到再回退 CID（依赖阅读器自带字形，兼容性差）。
+    必须嵌入 TrueType 中文字体；CID（STSong）在 Chrome/手机常显示黑方块。
     """
     import tempfile
     from pathlib import Path
@@ -575,10 +574,17 @@ def _resolve_pdf_cjk_font() -> tuple:
     from reportlab.pdfbase.ttfonts import TTFont
 
     here = Path(__file__).resolve().parent
+    cache_dir = Path(tempfile.gettempdir()) / "sigma_fate_fonts"
+    cache_ttf = cache_dir / "NotoSansSC-Regular.ttf"
+    cache_otf = cache_dir / "NotoSansSC-Regular.otf"
+
+    # 优先项目内字体（Streamlit Cloud 可靠）
     candidates = [
-        (here / "fonts" / "NotoSansSC-Regular.otf", None),
         (here / "fonts" / "NotoSansSC-Regular.ttf", None),
+        (here / "fonts" / "NotoSansSC-Regular.otf", None),
         (here / "fonts" / "SimHei.ttf", None),
+        (cache_ttf, None),
+        (cache_otf, None),
         (Path(r"C:\Windows\Fonts\simhei.ttf"), None),
         (Path(r"C:\Windows\Fonts\msyh.ttc"), 0),
         (Path(r"C:\Windows\Fonts\simsun.ttc"), 0),
@@ -588,16 +594,10 @@ def _resolve_pdf_cjk_font() -> tuple:
         (Path("/usr/share/fonts/truetype/arphic/uming.ttc"), 0),
     ]
 
-    cache_dir = Path(tempfile.gettempdir()) / "sigma_fate_fonts"
-    cache_font = cache_dir / "NotoSansSC-Regular.otf"
-    if cache_font.exists() and cache_font.stat().st_size > 500_000:
-        candidates.insert(0, (cache_font, None))
-
     def _try_register(path: Path, subfont_index):
-        if not path.is_file():
+        if not path or not path.is_file() or path.stat().st_size < 100_000:
             return None
         name = "SFCJK"
-        # 同进程内已注册过则直接复用
         try:
             if name in pdfmetrics.getRegisteredFontNames():
                 return name
@@ -624,36 +624,45 @@ def _resolve_pdf_cjk_font() -> tuple:
         if got:
             return got, got
 
-    # Streamlit Cloud 等环境：下载开源 Noto Sans SC 并缓存
     urls = (
-        "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf",
-        "https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf",
+        (
+            "https://cdn.jsdelivr.net/fontsource/fonts/noto-sans-sc@5.2.5/chinese-simplified-400-normal.ttf",
+            cache_ttf,
+        ),
+        (
+            "https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-sc@5.2.5/files/noto-sans-sc-chinese-simplified-400-normal.ttf",
+            cache_ttf,
+        ),
+        (
+            "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf",
+            cache_otf,
+        ),
     )
     try:
         import urllib.request
 
         cache_dir.mkdir(parents=True, exist_ok=True)
-        tmp = cache_dir / "NotoSansSC-Regular.otf.part"
-        for url in urls:
+        for url, dest in urls:
+            tmp = Path(str(dest) + ".part")
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "SigmaFateBaZi/1.0"})
-                with urllib.request.urlopen(req, timeout=90) as resp, open(tmp, "wb") as out:
+                with urllib.request.urlopen(req, timeout=120) as resp, open(tmp, "wb") as out:
                     while True:
                         chunk = resp.read(1024 * 256)
                         if not chunk:
                             break
                         out.write(chunk)
-                if tmp.stat().st_size > 500_000:
-                    tmp.replace(cache_font)
-                    got = _try_register(cache_font, None)
+                if tmp.stat().st_size > 100_000:
+                    tmp.replace(dest)
+                    got = _try_register(dest, None)
                     if got:
                         return got, got
             except Exception:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
                 continue
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
     except Exception:
         pass
 
