@@ -384,10 +384,12 @@ def render_admin_page(lang: str, supabase_client) -> None:
         srows = survey_rows_for_admin(surveys, lang)
         st.dataframe(srows, use_container_width=True, hide_index=True, height=280)
         with st.expander(t("admin_survey_full", lang), expanded=False):
+            from trial_survey import _bg_display
+
             for r in surveys[:30]:
                 st.markdown(
                     f"**{str(r.get('created_at') or '')[:10]}** · "
-                    f"{r.get('email') or '-'} · {r.get('background') or '-'}"
+                    f"{r.get('email') or '-'} · {_bg_display(r.get('background'), lang)}"
                 )
                 st.write(r.get("open_feedback") or "—")
                 st.markdown("---")
