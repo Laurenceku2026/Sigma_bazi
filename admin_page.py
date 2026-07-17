@@ -4,7 +4,7 @@ from __future__ import annotations
 import csv
 import hmac
 import io
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -28,15 +28,44 @@ def _to_beijing(dt: datetime) -> datetime:
 
         tz = ZoneInfo("Asia/Shanghai")
     except Exception:
-        from datetime import timezone, timedelta
-
         tz = timezone(timedelta(hours=8), name="CST")
     if dt.tzinfo is None:
         # 库内多为 UTC naive / 带 Z 解析后的 aware
-        from datetime import timezone as _tz
-
-        dt = dt.replace(tzinfo=_tz.utc)
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(tz)
+
+
+def _parse_expires_date(value: Any) -> Optional[date]:
+    """从用户 subscription_expires_at 解析出日期（按北京时间日历日）。"""
+    if not value:
+        return None
+    try:
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            s = str(value).strip().replace("Z", "+00:00")
+            dt = datetime.fromisoformat(s)
+        return _to_beijing(dt).date()
+    except Exception:
+        s = str(value)
+        if len(s) >= 10:
+            try:
+                return date.fromisoformat(s[:10])
+            except Exception:
+                return None
+        return None
+
+
+def _expires_end_of_day_utc_iso(d: date) -> str:
+    """到期日按北京时间当天 23:59:59，存 UTC ISO。"""
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("Asia/Shanghai")
+    except Exception:
+        tz = timezone(timedelta(hours=8))
+    local_end = datetime(d.year, d.month, d.day, 23, 59, 59, tzinfo=tz)
+    return local_end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _safe_datetime(value: Any) -> str:
@@ -321,6 +350,17 @@ def render_admin_page(lang: str, supabase_client) -> None:
     col_a, col_b = st.columns(2)
     tiers = ["free", "silver", "gold", "diamond", "monthly", "quarterly", "annual"]
     cur_tier = selected_user.get("subscription_tier", "free")
+    uid = selected_user["user_id"]
+    cur_exp_raw = selected_user.get("subscription_expires_at")
+    parsed_exp = _parse_expires_date(cur_exp_raw)
+    default_exp = parsed_exp or (date.today() + timedelta(days=365))
+    # 切换用户时刷新到期控件默认值（须在「更新订阅」读取 session 之前）
+    prev_uid = st.session_state.get("_admin_expires_uid")
+    if prev_uid != uid:
+        st.session_state["admin_no_expires"] = not bool(cur_exp_raw)
+        st.session_state["admin_expires_date"] = default_exp
+        st.session_state["_admin_expires_uid"] = uid
+
     with col_a:
         new_tier = st.selectbox(
             t("set_subscription", lang),
@@ -329,15 +369,21 @@ def render_admin_page(lang: str, supabase_client) -> None:
             key="admin_tier_select",
         )
         if st.button(t("update_subscription", lang), key="admin_update_tier", use_container_width=True):
-            expires = None
-            if new_tier in ("monthly", "quarterly", "annual"):
+            # 更新等级时：若下方勾了「无到期」则清空；否则写入所选到期日。
+            # 兼容旧逻辑：月/季/年卡若未改日期控件，仍可按套餐默认天数。
+            clear_exp = bool(st.session_state.get("admin_no_expires"))
+            exp_d = st.session_state.get("admin_expires_date")
+            kwargs: Dict[str, Any] = {"subscription_tier": new_tier}
+            if clear_exp:
+                kwargs["clear_subscription_expires"] = True
+            elif isinstance(exp_d, date):
+                kwargs["subscription_expires_at"] = _expires_end_of_day_utc_iso(exp_d)
+            elif new_tier in ("monthly", "quarterly", "annual"):
                 days = {"monthly": 30, "quarterly": 90, "annual": 365}[new_tier]
-                expires = (datetime.utcnow() + timedelta(days=days)).isoformat() + "Z"
-            ok = supabase_client.admin_update_user(
-                selected_user["user_id"],
-                subscription_tier=new_tier,
-                subscription_expires_at=expires,
-            )
+                kwargs["subscription_expires_at"] = (
+                    datetime.now(timezone.utc) + timedelta(days=days)
+                ).isoformat().replace("+00:00", "Z")
+            ok = supabase_client.admin_update_user(uid, **kwargs)
             st.success(t("update_ok", lang)) if ok else st.error(t("update_fail", lang))
             if ok:
                 st.rerun()
@@ -352,10 +398,58 @@ def render_admin_page(lang: str, supabase_client) -> None:
         )
         if st.button(t("reset_trials", lang), key="admin_reset_trials", use_container_width=True):
             ok = supabase_client.admin_update_user(
-                selected_user["user_id"],
+                uid,
                 free_trials_remaining=int(new_trials),
             )
             st.success(t("reset_ok", lang)) if ok else st.error(t("update_fail", lang))
+            if ok:
+                st.rerun()
+
+    # —— 到期时间（管理员可设置 / 清空）——
+    st.markdown(f"#### ⏳ {t('set_expires', lang)}")
+    st.caption(t("set_expires_hint", lang))
+    st.caption(f"{t('current_expires', lang)}：{_safe_datetime(cur_exp_raw)}")
+
+    no_expires = st.checkbox(
+        t("no_expires", lang),
+        key="admin_no_expires",
+    )
+    exp_date = st.date_input(
+        t("expires_date", lang),
+        value=st.session_state.get("admin_expires_date") or default_exp,
+        min_value=date(2020, 1, 1),
+        max_value=date(2100, 12, 31),
+        format="YYYY-MM-DD",
+        disabled=bool(no_expires),
+        key="admin_expires_date",
+    )
+
+    q1, q2, q3, q4 = st.columns(4)
+    with q1:
+        if st.button(t("expires_quick_30", lang), key="admin_exp_30", use_container_width=True, disabled=bool(no_expires)):
+            st.session_state["admin_expires_date"] = date.today() + timedelta(days=30)
+            st.rerun()
+    with q2:
+        if st.button(t("expires_quick_90", lang), key="admin_exp_90", use_container_width=True, disabled=bool(no_expires)):
+            st.session_state["admin_expires_date"] = date.today() + timedelta(days=90)
+            st.rerun()
+    with q3:
+        if st.button(t("expires_quick_365", lang), key="admin_exp_365", use_container_width=True, disabled=bool(no_expires)):
+            st.session_state["admin_expires_date"] = date.today() + timedelta(days=365)
+            st.rerun()
+    with q4:
+        if st.button(t("update_expires", lang), key="admin_update_expires", type="primary", use_container_width=True):
+            if no_expires:
+                ok = supabase_client.admin_update_user(
+                    uid, clear_subscription_expires=True
+                )
+            else:
+                d = exp_date if isinstance(exp_date, date) else default_exp
+                ok = supabase_client.admin_update_user(
+                    uid,
+                    subscription_expires_at=_expires_end_of_day_utc_iso(d),
+                )
+            st.success(t("update_ok", lang)) if ok else st.error(t("update_fail", lang))
             if ok:
                 st.rerun()
 
