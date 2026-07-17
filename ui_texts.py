@@ -47,16 +47,18 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "tab_survey": "📝 试用反馈",
         "hehun_heading": "💕 八字合婚",
         "hehun_disclaimer": "仅供娱乐与自我参考，非婚姻决定依据。",
-        "hehun_intro": "输入双方出生信息，先看本地契合度（分数·五维·白话）；钻石会员可无水印并可选 AI 深批。",
+        "hehun_intro": "默认本地规则打分（分数·五维·白话，金卡起无水印）；AI 深批仅钻石会员。",
         "hehun_person_a": "甲方",
         "hehun_person_b": "乙方",
         "hehun_reuse_chart": "甲方使用当前已排命盘",
         "hehun_reuse_need_chart": "请先在「输入信息」完成排盘，或取消勾选后手动填写甲方资料。",
-        "hehun_run": "开始合婚分析",
+        "hehun_run": "开始合婚分析（本地）",
         "hehun_login_required": "请先登录后再使用八字合婚。",
-        "hehun_diamond_only": "八字合婚为钻石会员专属（无水印 + 可选 AI 深批）。免费用户可预览 3 次（含水印）。",
+        "hehun_gold_local_only": "本地合婚（规则打分）为金卡、钻石会员权益。免费可预览 3 次（含水印）。",
+        "hehun_diamond_only": "AI 深批为钻石会员专属。",
+        "hehun_ai_diamond_only": "AI 深批仅钻石会员可用；您当前可查看本地合婚结果。",
         "hehun_free_quota": "免费合婚预览剩余 {left} / {total} 次（含水印）",
-        "hehun_free_exhausted": "免费合婚预览次数已用完，请升级钻石会员继续使用。",
+        "hehun_free_exhausted": "免费合婚预览次数已用完，请升级金卡查看无水印本地合婚。",
         "hehun_need_names": "请填写双方姓名。",
         "hehun_ai_btn": "✨ 生成 AI 深批（钻石）",
         "hehun_ai_heading": "AI 深批",
@@ -65,7 +67,8 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "hehun_ai_nurture": "宜经营处",
         "hehun_ai_caution": "需留意处",
         "hehun_ai_fail": "AI 深批失败：",
-        "hehun_upgrade_diamond": "升级钻石，解锁无水印合婚与 AI 深批",
+        "hehun_upgrade_gold": "升级金卡，解锁无水印本地合婚",
+        "hehun_upgrade_diamond": "升级钻石，解锁 AI 深批",
         "survey_heading": "试用问卷（约 3 分钟）",
         "survey_intro": "试用排盘与报告后，请按 1–10 分评价（10 分为最高）。",
         "survey_gold_hint": "首次提交反馈，即可自动升级为黄金会员",
@@ -138,8 +141,8 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "password_confirm": "🔑 确认密码",
         "membership_heading": "💎 升级会员 · 解锁完整报告",
         "btn_silver": "🥈 银卡会员\n\nHK$10 · 10次\n完整九页报告",
-        "btn_gold": "🥇 金卡会员\n\nHK$100 · 10次\n九页报告 + 独立流年报告",
-        "btn_diamond": "💎 钻石会员\n\nHK$999 · 一年无限\n九页+流年+八字合婚",
+        "btn_gold": "🥇 金卡会员\n\nHK$100 · 10次\n九页+流年+本地合婚",
+        "btn_diamond": "💎 钻石会员\n\nHK$999 · 一年无限\n九页+流年+合婚+AI深批",
         "outline_title": "📋 报告大纲预览",
         "pay_now": "💳 前往支付",
         "remaining_reports": "剩余报告次数",
@@ -165,8 +168,8 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "unlock_heading": "💎 订阅会员解锁完整报告",
         "unlock_body": (
             "**银卡**：10次完整九页报告（事业/财运/感情/健康均含 Part1+Part2）\n"
-            "**金卡**：10次九页报告 + 流年预测专章\n"
-            "**钻石**：一年次报告 + 流年 + 八字合婚（可选 AI 深批）\n\n"
+            "**金卡**：10次九页报告 + 流年 + 本地八字合婚\n"
+            "**钻石**：无限次报告 + 流年 + 合婚 + AI 深批\n\n"
             "排盘后在下方选择会员方案"
         ),
         "preview": "📄 报告预览（仅限会员）",
@@ -298,16 +301,18 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "tab_survey": "📝 Feedback",
         "hehun_heading": "💕 BaZi Marriage Match",
         "hehun_disclaimer": "For reflection only — not a marital decision.",
-        "hehun_intro": "Enter both birth details for a local compatibility score (5 dimensions + plain notes). Diamond unlocks clean view + optional AI deep read.",
+        "hehun_intro": "Default: local rule-based score (Gold+ clean). AI deep read is Diamond-only.",
         "hehun_person_a": "Person A",
         "hehun_person_b": "Person B",
         "hehun_reuse_chart": "Use my current chart for Person A",
         "hehun_reuse_need_chart": "Generate a chart on the Input tab first, or uncheck and fill Person A manually.",
-        "hehun_run": "Analyze match",
+        "hehun_run": "Analyze match (local)",
         "hehun_login_required": "Please sign in to use Marriage Match.",
-        "hehun_diamond_only": "Marriage Match is a Diamond feature (clean view + optional AI). Free users get 3 watermarked previews.",
+        "hehun_gold_local_only": "Local match (rule score) is for Gold/Diamond. Free users get 3 watermarked previews.",
+        "hehun_diamond_only": "AI deep read is Diamond-only.",
+        "hehun_ai_diamond_only": "AI deep read is Diamond-only. You can still view the local match result.",
         "hehun_free_quota": "Free match previews left: {left} / {total} (watermarked)",
-        "hehun_free_exhausted": "Free match previews used up. Upgrade to Diamond to continue.",
+        "hehun_free_exhausted": "Free match previews used up. Upgrade to Gold for clean local match.",
         "hehun_need_names": "Please enter both names.",
         "hehun_ai_btn": "✨ Generate AI deep read (Diamond)",
         "hehun_ai_heading": "AI deep read",
@@ -316,7 +321,8 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "hehun_ai_nurture": "What to nurture",
         "hehun_ai_caution": "What to watch",
         "hehun_ai_fail": "AI deep read failed: ",
-        "hehun_upgrade_diamond": "Upgrade to Diamond for clean match + AI deep read",
+        "hehun_upgrade_gold": "Upgrade to Gold for clean local match",
+        "hehun_upgrade_diamond": "Upgrade to Diamond for AI deep read",
         "survey_heading": "Trial survey (~3 min)",
         "survey_intro": "After trying the chart and report, please rate each item from 1–10 (10 = best).",
         "survey_gold_hint": "Submit feedback for the first time to unlock Gold membership automatically.",
@@ -388,8 +394,8 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "password_confirm": "🔑 Confirm password",
         "membership_heading": "💎 Upgrade · Unlock full reports",
         "btn_silver": "🥈 Silver\n\nHK$10 · 10 uses\nFull 9-page report",
-        "btn_gold": "🥇 Gold\n\nHK$100 · 10 uses\n9 pages + Annual Luck Report",
-        "btn_diamond": "💎 Diamond\n\nHK$999 · 1 year unlimited\n9 pages + Annual Luck + Marriage Match",
+        "btn_gold": "🥇 Gold\n\nHK$100 · 10 uses\n9 pages + Annual Luck + local match",
+        "btn_diamond": "💎 Diamond\n\nHK$999 · 1 year unlimited\nReports + match + AI deep read",
         "outline_title": "📋 Report outline",
         "pay_now": "💳 Pay now",
         "remaining_reports": "Reports remaining",
@@ -415,8 +421,8 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "unlock_heading": "💎 Subscribe to unlock",
         "unlock_body": (
             "**Silver**: 10 full 9-page reports (Career/Wealth/Relationship/Health each have Part1+Part2)\n"
-            "**Gold**: 10 reports + annual luck chapter\n"
-            "**Diamond**: unlimited reports + Annual Luck + Marriage Match (optional AI)\n\n"
+            "**Gold**: 10 reports + Annual Luck + local Marriage Match\n"
+            "**Diamond**: unlimited reports + match + AI deep read\n\n"
             "Choose a plan below after charting"
         ),
         "preview": "📄 Report preview (members only)",

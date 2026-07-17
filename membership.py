@@ -56,13 +56,14 @@ def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
                 "All Silver benefits (9-page report)",
                 "Independent chapter: Annual Luck Report",
                 "Four seasons + key months + action tips",
+                "BaZi Marriage Match — local rule score (clean)",
                 "10 uses of 9-page report + Annual Luck Report",
             ],
             "diamond": [
                 "All Gold benefits",
                 "Unlimited reports for 12 months",
                 "Annual Luck Report updated anytime",
-                "BaZi Marriage Match (local score + optional AI deep read)",
+                "Marriage Match AI deep read (Diamond-only)",
                 "Best value for frequent users",
             ],
         }
@@ -81,13 +82,14 @@ def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
             "银卡全部内容（完整九页报告）",
             "独立篇章：《流年报告》",
             "四季预测 + 每季关键月 + 行动建议",
+            "《八字合婚》本地规则打分（无水印）",
             "含 10 次九页报告 + 流年报告",
         ],
         "diamond": [
-            "金卡全部内容",
+            "金卡全部内容（含本地合婚）",
             "一年内无限次生成报告",
             "流年报告随用随更",
-            "专属《八字合婚》（本地契合度 + 可选 AI 深批）",
+            "合婚 AI 深批（钻石专属）",
             "适合高频使用者",
         ],
     }

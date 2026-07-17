@@ -1093,7 +1093,7 @@ def _hehun_person_form(prefix: str, *, defaults: Optional[Dict[str, Any]] = None
 
 
 def render_hehun_tab() -> None:
-    """八字合婚：双人表单 + 本地契合度；钻石 AI 深批；免费 3 次水印。"""
+    """八字合婚：默认本地打分（金卡+）；AI 深批仅钻石；免费 3 次水印预览。"""
     st.markdown(f"### {t('hehun_heading', lang)}")
     st.caption(t("hehun_disclaimer", lang))
     st.caption(t("hehun_intro", lang))
@@ -1107,6 +1107,7 @@ def render_hehun_tab() -> None:
 
     tier = st.session_state.subscription_tier
     is_diamond = tier == "diamond"
+    can_local_clean = tier in ("gold", "diamond")  # 金卡/钻石：本地无水印
     is_free = tier == "free"
     match_left = 0
     if is_free and supabase_client:
@@ -1121,18 +1122,18 @@ def render_hehun_tab() -> None:
             )
         )
 
-    if tier in ("silver", "gold"):
-        st.warning(t("hehun_diamond_only", lang))
-        st.info(t("hehun_upgrade_diamond", lang))
-        # 预填钻石方案
-        st.session_state.selected_plan = "diamond"
-        render_membership_plans("hehun_lock_sg")
+    # 银卡：本地合婚需金卡起
+    if tier == "silver":
+        st.warning(t("hehun_gold_local_only", lang))
+        st.info(t("hehun_upgrade_gold", lang))
+        st.session_state.selected_plan = "gold"
+        render_membership_plans("hehun_lock_silver")
         return
 
     if is_free and match_left <= 0:
         st.warning(t("hehun_free_exhausted", lang))
-        st.info(t("hehun_upgrade_diamond", lang))
-        st.session_state.selected_plan = "diamond"
+        st.info(t("hehun_upgrade_gold", lang))
+        st.session_state.selected_plan = "gold"
         render_membership_plans("hehun_lock_free")
         return
 
@@ -1181,19 +1182,21 @@ def render_hehun_tab() -> None:
             bazi_b = compute_bazi_from_form(form_b)
             name_b = form_b["name"]
 
-            # 权限：免费扣次；钻石直接算
+            # 权限：金/钻本地无水印；免费扣次并打水印
             watermarked = False
-            if is_free:
+            if can_local_clean:
+                watermarked = False
+            elif is_free:
                 if not supabase_client or not supabase_client.consume_match_preview_quota(
                     st.session_state.user_id
                 ):
                     st.warning(t("hehun_free_exhausted", lang))
-                    st.session_state.selected_plan = "diamond"
+                    st.session_state.selected_plan = "gold"
                     st.rerun()
                     return
                 watermarked = True
-            elif not is_diamond:
-                st.warning(t("hehun_diamond_only", lang))
+            else:
+                st.warning(t("hehun_gold_local_only", lang))
                 return
 
             result = analyze_hehun(bazi_a, bazi_b, lang)
@@ -1236,8 +1239,8 @@ def render_hehun_tab() -> None:
         html = _wrap_protected_html(html, mark)
     st.markdown(html, unsafe_allow_html=True)
 
+    st.markdown("---")
     if is_diamond and report_gen:
-        st.markdown("---")
         if st.button(t("hehun_ai_btn", lang), type="primary", use_container_width=True, key="hehun_ai_btn"):
             with st.spinner(t("generating", lang)):
                 try:
@@ -1267,10 +1270,17 @@ def render_hehun_tab() -> None:
                 if body:
                     st.markdown(f"**{t(label_key, lang)}**")
                     st.write(body)
-    elif is_free:
-        st.markdown("---")
-        st.info(t("hehun_upgrade_diamond", lang))
+    elif tier == "gold":
+        st.info(t("hehun_ai_diamond_only", lang))
         st.session_state.selected_plan = st.session_state.get("selected_plan") or "diamond"
+        if st.button(t("hehun_upgrade_diamond", lang), key="hehun_gold_to_diamond", use_container_width=True):
+            st.session_state.show_join_membership = True
+            st.session_state.selected_plan = "diamond"
+            st.rerun()
+    elif is_free:
+        st.info(t("hehun_upgrade_gold", lang))
+        st.caption(t("hehun_ai_diamond_only", lang))
+        st.session_state.selected_plan = st.session_state.get("selected_plan") or "gold"
         render_membership_plans("hehun_after_free")
 
 
