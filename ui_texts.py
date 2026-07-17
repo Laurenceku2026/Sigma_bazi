@@ -72,7 +72,7 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "hehun_upgrade_gold": "升级金卡，解锁无水印本地合婚",
         "hehun_upgrade_diamond": "升级钻石，解锁 AI 深批",
         "hehun_download_pdf": "📥 下载合婚 PDF 报告",
-        "hehun_pdf_caption": "独立合婚报告：封面 + 契合总览 + 八维详解；若已生成 AI 深批将一并收录。",
+        "hehun_pdf_caption": "独立合婚报告：封面 + 契合总览（合婚维度分析表，与网页一致）；若已生成 AI 深批将一并收录。",
         "survey_heading": "试用问卷（约 3 分钟）",
         "survey_intro": "试用排盘与报告后，请按 1–10 分评价（10 分为最高）。",
         "survey_gold_hint": "首次提交反馈，即可自动升级为黄金会员",

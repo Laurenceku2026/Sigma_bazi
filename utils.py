@@ -1299,13 +1299,20 @@ def _pillar_line_pdf(bazi: dict) -> str:
 
 
 def _pdf_hehun_dim_table(dimensions: list, *, font_path, page_width_pt: float, lang: str = "zh"):
-    """合婚维度得分一览表（PIL 图片）。"""
+    """
+    合婚维度分析表（与网页版一致）：
+    合婚维度分析 | 分 | 进度条 | 要点（术语+白话同格，不拆专业/白话）。
+    过长时拆成多张图（每页带表头）。
+    返回 Flowable 列表。
+    """
     import io
     from reportlab.platypus import Image as RLImage
     from PIL import Image, ImageDraw, ImageFont
 
     if not dimensions or not font_path:
-        return None
+        return []
+
+    en = lang == "en"
 
     def trad(s: str) -> str:
         if lang != "zh_hant":
@@ -1318,53 +1325,178 @@ def _pdf_hehun_dim_table(dimensions: list, *, font_path, page_width_pt: float, l
             return s
 
     scale = 2
-    font = ImageFont.truetype(str(font_path), 11 * scale)
-    font_b = ImageFont.truetype(str(font_path), 12 * scale)
+    font = ImageFont.truetype(str(font_path), 10 * scale)
+    font_sm = ImageFont.truetype(str(font_path), 9 * scale)
+    font_b = ImageFont.truetype(str(font_path), 10 * scale)
+    font_h = ImageFont.truetype(str(font_path), 10 * scale)
     w = int(page_width_pt * scale)
-    row_h = int(28 * scale)
-    pad = int(8 * scale)
-    header_h = int(32 * scale)
-    n = len(dimensions)
-    h = pad * 2 + header_h + row_h * n
-    img = Image.new("RGB", (w, h), "#FFFFFF")
-    draw = ImageDraw.Draw(img)
+    # 列宽比例贴近网页：18% / 10% / 22% / 50%
+    c_label, c_score, c_bar, c_tip = 0.16, 0.08, 0.18, 0.58
+    pad = int(6 * scale)
+    header_h = int(26 * scale)
+    line_h = int(14 * scale)
+    tip_gap = int(3 * scale)
+    cell_pad_y = int(6 * scale)
+    max_chunk_h = int(620 * scale)  # 约一页可用高度
 
-    # 表头底
-    draw.rectangle([0, pad, w, pad + header_h], fill="#F5F7FA")
-    cols = [
-        (trad("维度"), 0.04),
-        (trad("得分"), 0.42),
-        (trad("契合条"), 0.54),
-    ]
-    for label, x_ratio in cols:
-        draw.text((int(w * x_ratio), pad + int(8 * scale)), label, font=font_b, fill="#0B1F33")
+    def char_w(fnt, ch: str) -> int:
+        box = fnt.getbbox(ch)
+        return max(1, box[2] - box[0])
 
-    y = pad + header_h
-    for i, d in enumerate(dimensions):
-        if i % 2 == 1:
-            draw.rectangle([0, y, w, y + row_h], fill="#FAFBFC")
+    def wrap_text(text: str, fnt, max_w: int) -> list:
+        raw = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not raw:
+            return []
+        lines = []
+        for para in raw.split("\n"):
+            if not para:
+                lines.append("")
+                continue
+            cur, cur_w = "", 0
+            for ch in para:
+                cw = char_w(fnt, ch)
+                if cur and cur_w + cw > max_w:
+                    lines.append(cur)
+                    cur, cur_w = ch, cw
+                else:
+                    cur += ch
+                    cur_w += cw
+            lines.append(cur)
+        return lines
+
+    tip_max_w = int(w * c_tip) - pad * 2
+    label_max_w = int(w * c_label) - pad * 2
+
+    # 预计算每行高度与折行
+    prepared = []
+    for d in dimensions:
         lab = trad(str(d.get("label") or d.get("key") or ""))
+        if en:
+            lab = str(d.get("label") or d.get("key") or "")
         score = int(d.get("score") or 0)
-        draw.text((int(w * 0.04), y + int(7 * scale)), lab, font=font, fill="#222222")
-        draw.text((int(w * 0.42), y + int(7 * scale)), str(score), font=font_b, fill="#C62828")
-        # 进度条
-        bar_x0 = int(w * 0.54)
-        bar_x1 = int(w * 0.96)
-        bar_y0 = y + int(10 * scale)
-        bar_y1 = y + int(18 * scale)
-        draw.rounded_rectangle([bar_x0, bar_y0, bar_x1, bar_y1], radius=4, fill="#EEEEEE")
-        fill_w = bar_x0 + int((bar_x1 - bar_x0) * max(0, min(100, score)) / 100)
-        if fill_w > bar_x0 + 2:
-            draw.rounded_rectangle([bar_x0, bar_y0, fill_w, bar_y1], radius=4, fill="#C62828")
-        y += row_h
+        jargon = trad(str(d.get("jargon") or "").strip()) if not en else str(d.get("jargon") or "").strip()
+        plain = trad(str(d.get("plain") or "").strip()) if not en else str(d.get("plain") or "").strip()
+        lab_lines = wrap_text(lab, font_b, label_max_w) or [lab]
+        j_lines = wrap_text(jargon, font_sm, tip_max_w)
+        p_lines = wrap_text(plain, font_sm, tip_max_w)
+        tip_lines_h = 0
+        if j_lines:
+            tip_lines_h += line_h * len(j_lines)
+        if j_lines and p_lines:
+            tip_lines_h += tip_gap
+        if p_lines:
+            tip_lines_h += line_h * len(p_lines)
+        left_h = line_h * max(1, len(lab_lines))
+        row_h = max(int(32 * scale), left_h, tip_lines_h) + cell_pad_y * 2
+        prepared.append(
+            {
+                "lab_lines": lab_lines,
+                "score": score,
+                "j_lines": j_lines,
+                "p_lines": p_lines,
+                "row_h": row_h,
+            }
+        )
 
-    # 外框
-    draw.rectangle([0, pad, w - 1, h - pad], outline="#E0E0E0")
+    h_dim = "Match dimensions" if en else trad("合婚维度分析")
+    h_pts = "Pts" if en else trad("分")
+    h_tip = "Notes" if en else trad("要点")
 
-    bio = io.BytesIO()
-    img.save(bio, format="PNG")
-    bio.seek(0)
-    return RLImage(bio, width=page_width_pt, height=h / scale)
+    def render_chunk(rows: list, *, show_header: bool = True):
+        body_h = sum(r["row_h"] for r in rows)
+        h = pad + (header_h if show_header else 0) + body_h + pad
+        img = Image.new("RGB", (w, h), "#FFFFFF")
+        draw = ImageDraw.Draw(img)
+        y = pad
+        if show_header:
+            draw.rectangle([0, y, w, y + header_h], fill="#F5F5F5")
+            headers = [
+                (h_dim, 0.0, "left"),
+                (h_pts, c_label, "center"),
+                ("", c_label + c_score, "left"),
+                (h_tip, c_label + c_score + c_bar, "left"),
+            ]
+            for text, x0, align in headers:
+                if not text:
+                    continue
+                tx = int(w * x0) + pad
+                if align == "center":
+                    bb = font_h.getbbox(text)
+                    tw = bb[2] - bb[0]
+                    col_w = int(w * c_score)
+                    tx = int(w * x0) + max(pad, (col_w - tw) // 2)
+                draw.text((tx, y + int(7 * scale)), text, font=font_h, fill="#424242")
+            y += header_h
+
+        for i, r in enumerate(rows):
+            rh = r["row_h"]
+            if i % 2 == 1:
+                draw.rectangle([0, y, w, y + rh], fill="#FAFAFA")
+            # 底部分隔线
+            draw.line([(0, y + rh - 1), (w, y + rh - 1)], fill="#EEEEEE", width=1)
+
+            # 维度名
+            ly = y + cell_pad_y
+            for ln in r["lab_lines"]:
+                draw.text((pad, ly), ln, font=font_b, fill="#222222")
+                ly += line_h
+
+            # 分数（居中于分列）
+            sc = str(r["score"])
+            bb = font_b.getbbox(sc)
+            tw = bb[2] - bb[0]
+            col_x = int(w * c_label)
+            col_w = int(w * c_score)
+            sx = col_x + max(0, (col_w - tw) // 2)
+            draw.text((sx, y + cell_pad_y), sc, font=font_b, fill="#C62828")
+
+            # 进度条
+            bar_x0 = int(w * (c_label + c_score)) + pad
+            bar_x1 = int(w * (c_label + c_score + c_bar)) - pad
+            bar_y0 = y + max(cell_pad_y, (rh - int(8 * scale)) // 2)
+            bar_y1 = bar_y0 + int(8 * scale)
+            draw.rounded_rectangle([bar_x0, bar_y0, bar_x1, bar_y1], radius=3, fill="#EEEEEE")
+            fill_w = bar_x0 + int((bar_x1 - bar_x0) * max(0, min(100, r["score"])) / 100)
+            if fill_w > bar_x0 + 2:
+                draw.rounded_rectangle([bar_x0, bar_y0, fill_w, bar_y1], radius=3, fill="#C62828")
+
+            # 要点：术语（深褐）+ 白话（灰），同格
+            tip_x = int(w * (c_label + c_score + c_bar)) + pad
+            ty = y + cell_pad_y
+            for ln in r["j_lines"]:
+                draw.text((tip_x, ty), ln, font=font_sm, fill="#4E342E")
+                ty += line_h
+            if r["j_lines"] and r["p_lines"]:
+                ty += tip_gap
+            for ln in r["p_lines"]:
+                draw.text((tip_x, ty), ln, font=font_sm, fill="#555555")
+                ty += line_h
+
+            y += rh
+
+        draw.rectangle([0, pad, w - 1, h - pad], outline="#E0E0E0")
+        bio = io.BytesIO()
+        img.save(bio, format="PNG")
+        bio.seek(0)
+        return RLImage(bio, width=page_width_pt, height=h / scale)
+
+    # 按高度拆页
+    chunks: list = []
+    cur: list = []
+    cur_h = header_h
+    for row in prepared:
+        need = row["row_h"]
+        if cur and cur_h + need > max_chunk_h:
+            chunks.append(cur)
+            cur = [row]
+            cur_h = header_h + need
+        else:
+            cur.append(row)
+            cur_h += need
+    if cur:
+        chunks.append(cur)
+
+    return [render_chunk(ch, show_header=True) for ch in chunks if ch]
 
 
 def generate_hehun_pdf_report(
@@ -1378,7 +1510,7 @@ def generate_hehun_pdf_report(
     lang: str = "zh",
 ):
     """
-    八字合婚独立 PDF：封面 + 契合总览 + 维度详解 +（可选）AI 深批两章。
+    八字合婚独立 PDF：封面 + 契合总览（含合婚维度分析表，与网页一致）+（可选）AI 深批。
     版式对齐八字命理报告（ReportLab + PIL 中文）。
     """
     import io
@@ -1532,8 +1664,7 @@ def generate_hehun_pdf_report(
         "disc": "本报告仅供参考，请理性看待，非婚姻决定依据。" if not en else "For reflection only — not a marital decision.",
         "toc": "目录" if not en else "Contents",
         "overview": "契合总览" if not en else "Match Overview",
-        "dim_table": "合婚维度得分" if not en else "Dimension Scores",
-        "dim_detail": "合婚维度详解" if not en else "Dimension Details",
+        "dim_table": "合婚维度分析" if not en else "Match dimensions",
         "pro": "专业解读" if not en else "Professional",
         "plain": "白话说明" if not en else "In plain words",
         "one_line": "一句话" if not en else "In one line",
@@ -1602,7 +1733,7 @@ def generate_hehun_pdf_report(
     story.append(P(L["disc"], style_meta))
 
     # 目录
-    toc = [L["overview"], L["dim_detail"]]
+    toc = [L["overview"], L["dim_table"]]
     ai_chapters = []
     if isinstance(ai_deep, dict):
         for key, title in (("pattern", L["ai_pattern"]), ("resolve", L["ai_resolve"])):
@@ -1651,20 +1782,25 @@ def generate_hehun_pdf_report(
         p = P(summary, style_body)
         if p:
             story.append(p)
-    story.append(Spacer(1, 0.2 * cm))
+    story.append(Spacer(1, 0.25 * cm))
     story.append(P(L["dim_table"], style_h2))
+    story.append(Spacer(1, 0.12 * cm))
     if cjk_path and dims:
-        table = _pdf_hehun_dim_table(
+        tables = _pdf_hehun_dim_table(
             dims, font_path=cjk_path, page_width_pt=float(content_width), lang=lang
         )
-        if table:
+        for i, table in enumerate(tables or []):
+            if i > 0:
+                story.append(PageBreak())
+                story.append(P(L["dim_table"], style_h2))
+                story.append(Spacer(1, 0.12 * cm))
             story.append(table)
     else:
         for d in dims:
+            tip = f"{d.get('jargon') or ''} {d.get('plain') or ''}".strip()
             story.append(
-                P(f"{d.get('label', '')}  {d.get('score', 0)}", style_body)
+                P(f"{d.get('label', '')}  {d.get('score', 0)}  {tip}", style_body)
             )
-    story.append(PageBreak())
 
     def _para_gap():
         """段落之间空一行。"""
@@ -1676,26 +1812,10 @@ def generate_hehun_pdf_report(
             story.append(p)
             _para_gap()
 
-    # ---------- 维度详解 ----------
-    story.append(P(L["dim_detail"], style_h1))
-    _para_gap()
-    for d in dims:
-        lab = str(d.get("label") or "")
-        sc = int(d.get("score") or 0)
-        story.append(P(f"{lab}（{sc}）", style_h2))
-        jargon = str(d.get("jargon") or "").strip()
-        plain_txt = str(d.get("plain") or "").strip()
-        # 与八字报告一致：独立「专业解读 / 白话说明」小标题
-        if jargon:
-            story.append(P(L["pro"], style_h2))
-            _append_body(jargon)
-        if plain_txt:
-            story.append(P(L["plain"], style_h2))
-            _append_body(plain_txt)
-        story.append(Spacer(1, 0.2 * cm))
-    story.append(PageBreak())
-
     # ---------- AI 深批：章内不分页，隔行衔接 ----------
+    if ai_chapters:
+        story.append(PageBreak())
+
     def add_ai_chapter(page: dict, fallback_title: str):
         title = str(page.get("title") or fallback_title)
         pro = page.get("professional")
