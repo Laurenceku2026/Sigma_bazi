@@ -743,68 +743,59 @@ class SupabaseClient:
             print(f"Admin update user error: {e}")
             return False
 
-    def admin_set_password(self, user_id: str, new_password: str) -> bool:
-        """管理员重置用户本 App 密码（本地 password_hash）。"""
-        from auth_local import hash_password
-
-        pwd = (new_password or "").strip()
-        if len(pwd) < 6:
-            self.last_error = "password_too_short"
-            return False
-        ok = self.admin_update_user(
-            user_id,
-            password_hash=hash_password(pwd),
-            metadata={
-                "password_reset_at": self._now(),
-                "password_reset_by": "admin",
-            },
-        )
-        if ok:
-            try:
-                self.log_action(
-                    user_id,
-                    "admin_password_reset",
-                    metadata={"by": "admin"},
-                )
-            except Exception:
-                pass
-        return ok
-
-    def request_password_reset(self, email: str) -> bool:
-        """用户忘记密码：登记申请（无邮件通道时由管理员处理）。"""
+    def clear_password_for_reregister(self, email: str) -> bool:
+        """
+        忘记密码（无邮件通道时的自助流程）：
+        清空本 App password_hash，用户用同一邮箱走「注册」设置新密码。
+        会员等级、次数、资料均保留（同一 user_id）。
+        不暴露邮箱是否存在：未知邮箱也返回 True。
+        """
         email = (email or "").strip().lower()
         if not email or "@" not in email:
             self.last_error = "invalid_email"
             return False
         profile = self.get_user_by_email(email)
         if not profile:
-            # 不暴露账号是否存在：仍返回 True，但只记匿名日志
             try:
                 self.log_action(
                     "anonymous",
-                    "password_reset_request_unknown",
+                    "password_reset_unknown_email",
                     metadata={"email": email},
                 )
             except Exception:
                 pass
             return True
         uid = profile["user_id"]
-        meta_ok = self.admin_update_user(
-            uid,
-            metadata={
-                "password_reset_requested_at": self._now(),
-                "password_reset_requested_email": email,
-            },
-        )
+        try:
+            existing_meta = profile.get("metadata") if isinstance(profile.get("metadata"), dict) else {}
+            self._table(self.USER_TABLE).update(
+                {
+                    "password_hash": None,
+                    "updated_at": self._now(),
+                    "metadata": {
+                        **existing_meta,
+                        "password_cleared_for_reregister_at": self._now(),
+                        "password_reset_requested_at": None,
+                        "auth_mode": "local_password_pending",
+                    },
+                }
+            ).eq("user_id", uid).eq("app_id", self.app_id).execute()
+        except Exception as e:
+            self._set_error("clear_password_for_reregister", e)
+            return False
         try:
             self.log_action(
                 uid,
-                "password_reset_request",
+                "password_cleared_for_reregister",
                 metadata={"email": email},
             )
         except Exception:
             pass
-        return bool(meta_ok)
+        return True
+
+    # 兼容旧名
+    def request_password_reset(self, email: str) -> bool:
+        return self.clear_password_for_reregister(email)
 
     def grant_survey_gold_reward(self, user_id: str) -> bool:
         """首次提交试用问卷：免费用户一次性升级金卡。"""
