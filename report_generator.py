@@ -1600,6 +1600,88 @@ Hard rules:
             .replace('"', "&quot;")
         )
 
+    def generate_hehun_deep(
+        self,
+        *,
+        name_a: str,
+        name_b: str,
+        bazi_a: dict,
+        bazi_b: dict,
+        local_result: dict,
+        lang: str = "zh",
+    ) -> Dict[str, Any]:
+        """钻石合婚可选 AI 深批：缘分格局 / 相处模式 / 宜经营 / 需留意。"""
+        def pillars_line(bd: dict) -> str:
+            parts = []
+            for name in ("年柱", "月柱", "日柱", "时柱"):
+                p = (bd.get("pillars") or {}).get(name) or {}
+                parts.append(f"{p.get('gan', '—')}{p.get('zhi', '—')}")
+            return " ".join(parts)
+
+        dims = local_result.get("dimensions") or []
+        dim_txt = "\n".join(
+            f"- {d.get('label')}: {d.get('score')} | {d.get('jargon')} | {d.get('plain')}"
+            for d in dims
+        )
+        en = lang == "en"
+        if en:
+            prompt = f"""Write a BaZi marriage-match deep reading as JSON only:
+{{
+  "pattern": "...",
+  "dynamics": "...",
+  "nurture": "...",
+  "caution": "..."
+}}
+Rules: reflective advice, not fortune guarantees; emphasize balance (avoid extremes).
+Person A ({name_a}): Day Master {bazi_a.get('day_master')}, pillars {pillars_line(bazi_a)}, gender {bazi_a.get('gender')}
+Person B ({name_b}): Day Master {bazi_b.get('day_master')}, pillars {pillars_line(bazi_b)}, gender {bazi_b.get('gender')}
+Local score {local_result.get('total')}: {local_result.get('headline')}
+Dimensions:
+{dim_txt}
+Each field 80–160 English words. No markdown fences."""
+        else:
+            prompt = f"""请输出八字合婚 AI 深批 JSON（不要代码块）：
+{{
+  "pattern": "缘分格局……",
+  "dynamics": "相处模式……",
+  "nurture": "宜经营处……",
+  "caution": "需留意处……"
+}}
+要求：理性参考、勿宿命断言；强调「互补守中、冲突勿极」。
+甲方（{name_a}）：日主{bazi_a.get('day_master')}，四柱{pillars_line(bazi_a)}，性别{bazi_a.get('gender')}
+乙方（{name_b}）：日主{bazi_b.get('day_master')}，四柱{pillars_line(bazi_b)}，性别{bazi_b.get('gender')}
+本地契合度 {local_result.get('total')}：{local_result.get('headline')}
+五维：
+{dim_txt}
+每段 120–220 字中文。"""
+
+        raw = self._call_deepseek(prompt)
+        data = self._parse_json_loose(raw)
+        if not isinstance(data, dict):
+            data = {}
+        # 兼容包在某一键里
+        for key in ("hehun", "result", "content"):
+            if key in data and isinstance(data[key], dict):
+                data = data[key]
+                break
+        out = {
+            "pattern": str(data.get("pattern") or "").strip(),
+            "dynamics": str(data.get("dynamics") or "").strip(),
+            "nurture": str(data.get("nurture") or "").strip(),
+            "caution": str(data.get("caution") or "").strip(),
+        }
+        if not any(out.values()):
+            # 退化：整段原文
+            out["pattern"] = (raw or "").strip()[:1200]
+        if lang == "zh_hant":
+            try:
+                from zh_convert import to_traditional
+
+                out = {k: to_traditional(v) if v else v for k, v in out.items()}
+            except Exception:
+                pass
+        return out
+
     def _call_deepseek(self, prompt: str) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",

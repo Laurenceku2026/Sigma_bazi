@@ -44,24 +44,27 @@ def can_free_preview(trials_remaining: int) -> bool:
 def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
     if lang == "en":
         outlines = {
-            "silver": [
-                "Page 1: BaZi chart & basics",
-                "Pages 2–3: Career (Part1 situation / Part2 direction & remedy)",
-                "Pages 4–5: Wealth (Part1 / Part2)",
-                "Pages 6–7: Relationship (Part1 / Part2)",
-                "Pages 8–9: Health (Part1 / Part2)",
-                "10 full 9-page reports (no Annual Luck Report)",
-            ],
+        "silver": [
+            "Page 1: BaZi chart & basics",
+            "Pages 2–3: Career (Part1 situation / Part2 direction & remedy)",
+            "Pages 4–5: Wealth (Part1 / Part2)",
+            "Pages 6–7: Relationship (Part1 / Part2)",
+            "Pages 8–9: Health (Part1 / Part2)",
+            "10 full 9-page reports (no Annual Luck Report)",
+            "Marriage Match: 3 watermarked local previews",
+        ],
             "gold": [
                 "All Silver benefits (9-page report)",
                 "Independent chapter: Annual Luck Report",
                 "Four seasons + key months + action tips",
+                "BaZi Marriage Match — local rule score (clean)",
                 "10 uses of 9-page report + Annual Luck Report",
             ],
             "diamond": [
                 "All Gold benefits",
                 "Unlimited reports for 12 months",
                 "Annual Luck Report updated anytime",
+                "Marriage Match AI deep read (Diamond-only)",
                 "Best value for frequent users",
             ],
         }
@@ -75,17 +78,20 @@ def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
             "页六～七：感情详批（Part1 / Part2）",
             "页八～九：健康详批（Part1 / Part2）",
             "含 10 次完整九页报告（不含流年报告）",
+            "八字合婚：3 次本地水印预览",
         ],
         "gold": [
             "银卡全部内容（完整九页报告）",
             "独立篇章：《流年报告》",
             "四季预测 + 每季关键月 + 行动建议",
+            "《八字合婚》本地规则打分（无水印）",
             "含 10 次九页报告 + 流年报告",
         ],
         "diamond": [
-            "金卡全部内容",
+            "金卡全部内容（含本地合婚）",
             "一年内无限次生成报告",
             "流年报告随用随更",
+            "合婚 AI 深批（钻石专属）",
             "适合高频使用者",
         ],
     }

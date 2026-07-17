@@ -578,6 +578,51 @@ class SupabaseClient:
             return False
         return self.admin_update_user(user_id, free_trials_remaining=remaining - 1)
 
+    MATCH_PREVIEW_DEFAULT = 3
+
+    def get_match_preview_remaining(self, user_id: str) -> int:
+        """免费/银卡八字合婚水印预览剩余次数（metadata，默认 3）。"""
+        user = self.get_user(user_id)
+        if not user:
+            return 0
+        tier = user.get("subscription_tier", "free")
+        if tier not in ("free", "silver"):
+            return 0
+        meta = user.get("metadata") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        if "match_preview_remaining" not in meta:
+            return self.MATCH_PREVIEW_DEFAULT
+        try:
+            return max(0, int(meta.get("match_preview_remaining")))
+        except Exception:
+            return 0
+
+    def consume_match_preview_quota(self, user_id: str) -> bool:
+        """免费/银卡成功算出合婚结果时扣 1 次水印预览。"""
+        user = self.get_user(user_id)
+        if not user:
+            return False
+        tier = user.get("subscription_tier", "free")
+        if tier not in ("free", "silver"):
+            return True
+        meta = user.get("metadata") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        if "match_preview_remaining" not in meta:
+            remaining = self.MATCH_PREVIEW_DEFAULT
+        else:
+            try:
+                remaining = int(meta.get("match_preview_remaining"))
+            except Exception:
+                remaining = 0
+        if remaining <= 0:
+            return False
+        return self.admin_update_user(
+            user_id,
+            metadata={"match_preview_remaining": remaining - 1},
+        )
+
     # ---------- 管理员：用户列表 / 订阅 / 次数 ----------
 
     def list_users(self, limit: int = 500) -> List[Dict]:
