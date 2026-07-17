@@ -109,6 +109,14 @@ PWA_MANIFEST_URL = _cfg(
     "PWA_MANIFEST_URL",
     "https://raw.githubusercontent.com/Laurenceku2026/Sigma_bazi/main/static/manifest.webmanifest",
 )
+# Gmail SMTP（忘记密码发信）：需在 Secrets 配置 SMTP_PASSWORD=应用专用密码
+SMTP_HOST = _cfg("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(_cfg("SMTP_PORT", "587") or "587")
+SMTP_USER = _cfg("SMTP_USER", "Techlife2027@gmail.com")
+# Gmail 应用专用密码常显示为带空格的 4 组；SMTP 使用时去掉空格
+SMTP_PASSWORD = _cfg("SMTP_PASSWORD").replace(" ", "").replace("\u00a0", "")
+SMTP_FROM = _cfg("SMTP_FROM", SMTP_USER or "Techlife2027@gmail.com")
+SMTP_USE_TLS = _cfg("SMTP_USE_TLS", "1") not in ("0", "false", "False", "")
 
 
 def _resolve_app_base_url() -> str:
@@ -649,7 +657,12 @@ def render_login_panel(key_prefix: str = "main") -> None:
             st.rerun()
 
     with st.expander(t("forgot_password", lang), expanded=False):
-        st.caption(t("forgot_password_hint", lang))
+        smtp_ok = bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD)
+        st.caption(
+            t("forgot_password_hint_email", lang)
+            if smtp_ok
+            else t("forgot_password_hint", lang)
+        )
         with st.form(f"{key_prefix}_forgot_form", clear_on_submit=False):
             forgot_email = st.text_input(
                 t("forgot_password_email", lang),
@@ -661,18 +674,22 @@ def render_login_panel(key_prefix: str = "main") -> None:
                 key=f"{key_prefix}_forgot_confirm",
             )
             forgot_go = st.form_submit_button(
-                t("forgot_password_submit", lang),
+                t("forgot_password_submit_email", lang)
+                if smtp_ok
+                else t("forgot_password_submit", lang),
                 type="primary",
                 use_container_width=True,
             )
         if forgot_go:
-            em = (forgot_email or "").strip()
+            em = (forgot_email or "").strip().lower()
             if not em or "@" not in em:
                 st.warning(t("forgot_password_need_email", lang))
             elif not forgot_confirm:
                 st.warning(t("forgot_password_need_confirm", lang))
             elif not supabase_client:
                 st.error(t("forgot_password_fail", lang))
+            elif smtp_ok:
+                _handle_forgot_password_email(em)
             else:
                 try:
                     ok = supabase_client.clear_password_for_reregister(em)
@@ -680,13 +697,123 @@ def render_login_panel(key_prefix: str = "main") -> None:
                     ok = False
                 if ok:
                     st.success(t("forgot_password_ok", lang))
-                    # 引导同一邮箱去注册设新密码
                     st.session_state[f"{key_prefix}_reg_email"] = em
                     st.session_state.show_register = True
                     st.session_state.show_login = False
                     st.rerun()
                 else:
                     st.error(t("forgot_password_fail", lang))
+
+
+def _handle_forgot_password_email(email: str) -> None:
+    """发重置邮件（Gmail SMTP）。无论账号是否存在都显示统一成功文案。"""
+    from urllib.parse import quote
+
+    from email_smtp import build_password_reset_email, send_email
+
+    token = supabase_client.create_password_reset_token(email)
+    if token == "":
+        st.warning(t("forgot_password_cooldown", lang))
+        return
+    # 未知邮箱：不发信，仍提示已发送，避免枚举账号
+    if token:
+        base = (_resolve_app_base_url() or APP_BASE_URL or "").rstrip("/")
+        if not base:
+            st.error(t("forgot_password_no_base_url", lang))
+            return
+        reset_url = (
+            f"{base}/?pwd_reset=1&email={quote(email, safe='')}&token={quote(token, safe='')}"
+        )
+        app_name = "六西格玛命理 · 八字" if _is_zh() else "Sigma Fate BaZi"
+        subject, text_body, html_body = build_password_reset_email(
+            reset_url=reset_url, lang=lang, app_name=app_name
+        )
+        if lang == "zh_hant":
+            try:
+                from zh_convert import to_traditional
+
+                subject = to_traditional(subject)
+                text_body = to_traditional(text_body)
+                html_body = to_traditional(html_body)
+            except Exception:
+                pass
+        ok, err = send_email(
+            host=SMTP_HOST,
+            port=SMTP_PORT,
+            user=SMTP_USER,
+            password=SMTP_PASSWORD,
+            mail_from=SMTP_FROM,
+            to_addr=email,
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body,
+            use_tls=SMTP_USE_TLS,
+        )
+        if not ok:
+            st.error(f"{t('forgot_password_fail', lang)} ({err})")
+            return
+    st.success(t("forgot_password_email_sent", lang))
+
+
+def render_password_reset_panel() -> bool:
+    """
+    处理邮件重置链接 ?pwd_reset=1&email=&token=
+    返回 True 表示已展示重置面板（调用方应 st.stop()）。
+    """
+    try:
+        qp = st.query_params
+        flag = qp.get("pwd_reset")
+        email = (qp.get("email") or "").strip().lower()
+        token = (qp.get("token") or "").strip()
+    except Exception:
+        return False
+    if flag not in ("1", "true", "yes") or not email or not token:
+        return False
+
+    st.markdown(f"### {t('reset_password_heading', lang)}")
+    st.caption(t("reset_password_caption", lang).format(email=email))
+    with st.form("pwd_reset_form", clear_on_submit=False):
+        p1 = st.text_input(t("password", lang), type="password", key="pwd_reset_p1")
+        p2 = st.text_input(t("password_confirm", lang), type="password", key="pwd_reset_p2")
+        go = st.form_submit_button(
+            t("reset_password_submit", lang), type="primary", use_container_width=True
+        )
+    if go:
+        if not p1 or len(p1) < 6:
+            st.warning(t("password_too_short", lang))
+        elif p1 != p2:
+            st.warning(t("password_mismatch", lang))
+        elif not supabase_client:
+            st.error(t("forgot_password_fail", lang))
+        else:
+            ok = supabase_client.reset_password_with_token(email, token, p1)
+            if ok:
+                st.success(t("reset_password_ok", lang))
+                st.info(t("reset_password_ok_hint", lang))
+                try:
+                    for k in ("pwd_reset", "email", "token"):
+                        if k in st.query_params:
+                            del st.query_params[k]
+                except Exception:
+                    pass
+                st.session_state.show_login = True
+                st.session_state.show_register = False
+            else:
+                err = getattr(supabase_client, "last_error", "") or ""
+                if err == "token_expired":
+                    st.error(t("reset_password_expired", lang))
+                else:
+                    st.error(t("reset_password_fail", lang))
+    if st.button(t("login_btn", lang), key="pwd_reset_to_login"):
+        try:
+            for k in ("pwd_reset", "email", "token"):
+                if k in st.query_params:
+                    del st.query_params[k]
+        except Exception:
+            pass
+        st.session_state.show_login = True
+        st.rerun()
+    return True
 
 
 def render_register_panel(key_prefix: str = "main", after_ok=None) -> None:
@@ -1816,6 +1943,10 @@ if st.session_state.show_admin:
         render_admin_login(lang, ADMIN_USERNAME, ADMIN_PASSWORD)
     else:
         render_admin_page(lang, supabase_client)
+    st.stop()
+
+# --- 邮件重置密码链接（优先于主界面）---
+if render_password_reset_panel():
     st.stop()
 
 # --- 侧边栏 ---

@@ -745,10 +745,8 @@ class SupabaseClient:
 
     def clear_password_for_reregister(self, email: str) -> bool:
         """
-        忘记密码（无邮件通道时的自助流程）：
+        忘记密码备用流程（无 SMTP 时）：
         清空本 App password_hash，用户用同一邮箱走「注册」设置新密码。
-        会员等级、次数、资料均保留（同一 user_id）。
-        不暴露邮箱是否存在：未知邮箱也返回 True。
         """
         email = (email or "").strip().lower()
         if not email or "@" not in email:
@@ -776,6 +774,8 @@ class SupabaseClient:
                         **existing_meta,
                         "password_cleared_for_reregister_at": self._now(),
                         "password_reset_requested_at": None,
+                        "pwd_reset_token_hash": None,
+                        "pwd_reset_expires_at": None,
                         "auth_mode": "local_password_pending",
                     },
                 }
@@ -789,6 +789,135 @@ class SupabaseClient:
                 "password_cleared_for_reregister",
                 metadata={"email": email},
             )
+        except Exception:
+            pass
+        return True
+
+    def create_password_reset_token(
+        self, email: str, *, ttl_minutes: int = 60, cooldown_seconds: int = 120
+    ) -> Optional[str]:
+        """
+        生成一次性重置 token（明文仅返回一次），hash 写入 metadata。
+        未知邮箱返回伪 token 路径由调用方统一成功文案；此处返回 None 表示「无此账号」。
+        冷却中返回 ''（空字符串）表示请稍后再试。
+        """
+        import hashlib
+        import secrets
+        from datetime import datetime, timedelta, timezone
+
+        email = (email or "").strip().lower()
+        if not email or "@" not in email:
+            self.last_error = "invalid_email"
+            return None
+        profile = self.get_user_by_email(email)
+        if not profile:
+            try:
+                self.log_action(
+                    "anonymous",
+                    "password_reset_email_unknown",
+                    metadata={"email": email},
+                )
+            except Exception:
+                pass
+            return None
+
+        meta = profile.get("metadata") if isinstance(profile.get("metadata"), dict) else {}
+        last = str(meta.get("pwd_reset_sent_at") or "")
+        if last and cooldown_seconds > 0:
+            try:
+                prev = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                if datetime.now(timezone.utc) - prev < timedelta(seconds=cooldown_seconds):
+                    self.last_error = "cooldown"
+                    return ""
+            except Exception:
+                pass
+
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        expires = (
+            datetime.now(timezone.utc) + timedelta(minutes=max(5, int(ttl_minutes)))
+        ).isoformat().replace("+00:00", "Z")
+        uid = profile["user_id"]
+        try:
+            self._table(self.USER_TABLE).update(
+                {
+                    "updated_at": self._now(),
+                    "metadata": {
+                        **meta,
+                        "pwd_reset_token_hash": token_hash,
+                        "pwd_reset_expires_at": expires,
+                        "pwd_reset_sent_at": self._now(),
+                    },
+                }
+            ).eq("user_id", uid).eq("app_id", self.app_id).execute()
+        except Exception as e:
+            self._set_error("create_password_reset_token", e)
+            return None
+        try:
+            self.log_action(uid, "password_reset_token_created", metadata={"email": email})
+        except Exception:
+            pass
+        return token
+
+    def reset_password_with_token(
+        self, email: str, token: str, new_password: str
+    ) -> bool:
+        """校验邮件链接 token 并写入新 password_hash。"""
+        import hashlib
+        from datetime import datetime, timezone
+
+        from auth_local import hash_password
+
+        email = (email or "").strip().lower()
+        token = (token or "").strip()
+        pwd = (new_password or "").strip()
+        if not email or not token or len(pwd) < 6:
+            self.last_error = "invalid_input"
+            return False
+        profile = self.get_user_by_email(email)
+        if not profile:
+            self.last_error = "account_not_found"
+            return False
+        meta = profile.get("metadata") if isinstance(profile.get("metadata"), dict) else {}
+        expected = str(meta.get("pwd_reset_token_hash") or "")
+        exp_s = str(meta.get("pwd_reset_expires_at") or "")
+        if not expected:
+            self.last_error = "token_missing"
+            return False
+        got = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        if got != expected:
+            self.last_error = "token_invalid"
+            return False
+        if exp_s:
+            try:
+                exp = datetime.fromisoformat(exp_s.replace("Z", "+00:00"))
+                if datetime.now(timezone.utc) > exp:
+                    self.last_error = "token_expired"
+                    return False
+            except Exception:
+                pass
+        uid = profile["user_id"]
+        try:
+            self._table(self.USER_TABLE).update(
+                {
+                    "password_hash": hash_password(pwd),
+                    "email_confirmed": True,
+                    "updated_at": self._now(),
+                    "metadata": {
+                        **meta,
+                        "pwd_reset_token_hash": None,
+                        "pwd_reset_expires_at": None,
+                        "password_reset_at": self._now(),
+                        "password_reset_by": "email_link",
+                        "auth_mode": "local_password",
+                    },
+                }
+            ).eq("user_id", uid).eq("app_id", self.app_id).execute()
+        except Exception as e:
+            self._set_error("reset_password_with_token", e)
+            return False
+        try:
+            self.log_action(uid, "password_reset_via_email", metadata={"email": email})
         except Exception:
             pass
         return True
