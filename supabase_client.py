@@ -699,16 +699,24 @@ class SupabaseClient:
         subscription_tier: Optional[str] = None,
         free_trials_remaining: Optional[int] = None,
         subscription_expires_at: Optional[str] = None,
+        clear_subscription_expires: bool = False,
         email_confirmed: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> bool:
+        """
+        更新用户订阅等字段。
+        clear_subscription_expires=True 时将到期时间置空（无限期）；
+        否则仅当 subscription_expires_at 非 None 时写入到期时间。
+        """
         try:
             data: Dict[str, Any] = {"updated_at": self._now()}
             if subscription_tier is not None:
                 data["subscription_tier"] = subscription_tier
             if free_trials_remaining is not None:
                 data["free_trials_remaining"] = int(free_trials_remaining)
-            if subscription_expires_at is not None:
+            if clear_subscription_expires:
+                data["subscription_expires_at"] = None
+            elif subscription_expires_at is not None:
                 data["subscription_expires_at"] = subscription_expires_at
             if email_confirmed is not None:
                 data["email_confirmed"] = email_confirmed
