@@ -526,7 +526,6 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "delete_fail": "Delete failed",
         "reset_ok": "Quota reset",
         "reset_all_ok": "All free-user quotas reset",
-        "reset_email_na": "Password reset email needs Supabase Auth; contact the user manually",
         "init_errors": "External service init notes",
         "init_hint": "Charting still works offline; check Secrets / .env API keys.",
         "admin_scope_info": (
