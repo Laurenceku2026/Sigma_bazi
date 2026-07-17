@@ -1,6 +1,9 @@
 """
-八字合婚：本地结构化合婚分析（分数 + 五维 + 术语/白话）。
+八字合婚：本地结构化合婚分析（分数 + 多维 + 术语/白话）。
 不调用 API；AI 深批由 report_generator 另做。
+
+维度兼顾传统合婚（日主/夫妻宫/五行/十神/刑冲）与白话对照：
+性格气质、门第气场（年柱）、价值取向（印官食伤结构）。
 """
 from __future__ import annotations
 
@@ -10,6 +13,7 @@ from bazi_analysis import (
     BRANCH_CHONG,
     BRANCH_HAI,
     BRANCH_HE,
+    DAY_STEM_TRAITS,
     KE,
     SELF_XING,
     SHENG,
@@ -20,13 +24,25 @@ from bazi_analysis import (
 )
 from zh_convert import to_traditional
 
-DIM_KEYS = ("day_master", "spouse_palace", "wuxing", "shishen", "stability")
+DIM_KEYS = (
+    "day_master",
+    "spouse_palace",
+    "wuxing",
+    "shishen",
+    "temperament",
+    "family",
+    "values",
+    "stability",
+)
 
 DIM_LABELS_ZH = {
     "day_master": "日主关系",
     "spouse_palace": "夫妻宫",
     "wuxing": "五行补益",
     "shishen": "十神意象",
+    "temperament": "性格气质",
+    "family": "门第气场",
+    "values": "价值取向",
     "stability": "整体稳定",
 }
 DIM_LABELS_EN = {
@@ -34,8 +50,21 @@ DIM_LABELS_EN = {
     "spouse_palace": "Spouse Palace",
     "wuxing": "Five-Element Support",
     "shishen": "Ten-God Imagery",
+    "temperament": "Temperament",
+    "family": "Family Atmosphere",
+    "values": "Value Orientation",
     "stability": "Overall Stability",
 }
+
+STRENGTH_ZH = {"strong": "身强", "weak": "身弱", "balanced": "中和"}
+STRENGTH_EN = {"strong": "strong", "weak": "weak", "balanced": "balanced"}
+
+
+def _strength_label(level: str, lang: str) -> str:
+    level = (level or "balanced").lower()
+    if lang == "en":
+        return STRENGTH_EN.get(level, level)
+    return STRENGTH_ZH.get(level, "中和")
 
 
 def _maybe_trad(text: str, lang: str) -> str:
@@ -237,9 +266,10 @@ def _score_wuxing(a: dict, b: dict, lang: str) -> dict:
     score = int(round(_clamp(score)))
 
     la, lb = sa.get("level", "balanced"), sb.get("level", "balanced")
+    la_lab, lb_lab = _strength_label(la, lang), _strength_label(lb, lang)
     if lang == "en":
         jargon = (
-            f"Day strength A={la}, B={lb}; "
+            f"Day strength A={la_lab}, B={lb_lab}; "
             f"mutual favor hit {a_gain:.0%}/{b_gain:.0%}, avoid hit {a_hurt:.0%}/{b_hurt:.0%}."
         )
         if score >= 70:
@@ -264,7 +294,7 @@ def _score_wuxing(a: dict, b: dict, lang: str) -> dict:
         }
 
     jargon = (
-        f"身强弱：甲{la}/乙{lb}；"
+        f"身强弱：甲{la_lab}/乙{lb_lab}；"
         f"互为喜用占比约{a_gain:.0%}/{b_gain:.0%}，忌神占比约{a_hurt:.0%}/{b_hurt:.0%}。"
     )
     if score >= 70:
@@ -356,6 +386,226 @@ def _score_shishen(a: dict, b: dict, lang: str) -> dict:
     }
 
 
+def _score_temperament(a: dict, b: dict, lang: str) -> dict:
+    """性格气质：日主五行生克 + 日主性情摘要对照（白话「性格合不合」）。"""
+    dm_a, dm_b = a.get("day_master") or "", b.get("day_master") or ""
+    wa, wb = WUXING_MAP.get(dm_a, ""), WUXING_MAP.get(dm_b, "")
+    rel, base = _dm_relation(dm_a, dm_b)
+    score = base
+    # 同气略降（易顶牛），生多克少偏加
+    if rel == "same":
+        score -= 6
+    elif rel in ("a_sheng_b", "b_sheng_a"):
+        score += 4
+    elif rel in ("a_ke_b", "b_ke_a"):
+        score -= 4
+    score = int(round(_clamp(score)))
+
+    ta = (DAY_STEM_TRAITS.get(dm_a) or {}).get("summary") or ""
+    tb = (DAY_STEM_TRAITS.get(dm_b) or {}).get("summary") or ""
+
+    if lang == "en":
+        jargon = f"Temperament via Day Masters {dm_a}({wa}) / {dm_b}({wb})."
+        plain = (
+            f"A: {ta} B: {tb} Learn each other's pace; don't force one style."
+            if ta and tb
+            else "Compare pacing and conflict style early."
+        )
+        return {
+            "key": "temperament",
+            "score": score,
+            "jargon": jargon,
+            "plain": plain,
+            "meta": {"relation": rel, "dm_a": dm_a, "dm_b": dm_b},
+        }
+
+    jargon = f"日主性情对照：{dm_a}（{wa or '—'}）与 {dm_b}（{wb or '—'}）。"
+    if ta and tb:
+        plain = f"甲偏「{ta}」乙偏「{tb}」——节奏不同很正常，先对齐相处步调。"
+    else:
+        plain = "先观察彼此脾气与冲突习惯，比争论谁对更有用。"
+    if rel == "same":
+        plain += "同气易共鸣，也易互相较劲。"
+    elif rel in ("a_sheng_b", "b_sheng_a"):
+        plain += "一付出一承接时，记得轮流被照顾。"
+    return {
+        "key": "temperament",
+        "score": score,
+        "jargon": _maybe_trad(jargon, lang),
+        "plain": _maybe_trad(plain, lang),
+        "meta": {"relation": rel, "dm_a": dm_a, "dm_b": dm_b},
+    }
+
+
+def _score_family(a: dict, b: dict, lang: str) -> dict:
+    """门第气场：年柱（祖上/家世象）干支冲合刑害，白话对照「门当户对感」。"""
+    ya = _pillar(a, "年柱")
+    yb = _pillar(b, "年柱")
+    ga, za = ya.get("gan") or "", ya.get("zhi") or ""
+    gb, zb = yb.get("gan") or "", yb.get("zhi") or ""
+    flags = _branch_pair_flags(za, zb)
+    score = 60.0
+    bits_zh, bits_en = [], []
+    if flags["he"]:
+        score += 18
+        bits_zh.append("年支相合")
+        bits_en.append("year-branch harmony")
+    if flags["chong"]:
+        score -= 22
+        bits_zh.append("年支相冲")
+        bits_en.append("year-branch clash")
+    if flags["xing"]:
+        score -= 12
+        bits_zh.append("年支相刑")
+        bits_en.append("year-branch punishment")
+    if flags["hai"]:
+        score -= 8
+        bits_zh.append("年支相害")
+        bits_en.append("year-branch harm")
+    # 年干合
+    if frozenset([ga, gb]) in {
+        frozenset(["甲", "己"]),
+        frozenset(["乙", "庚"]),
+        frozenset(["丙", "辛"]),
+        frozenset(["丁", "壬"]),
+        frozenset(["戊", "癸"]),
+    }:
+        score += 8
+        bits_zh.append("年干相合")
+        bits_en.append("year-stem combine")
+    if ga and gb and WUXING_MAP.get(ga) == WUXING_MAP.get(gb):
+        score += 4
+    score = int(round(_clamp(score)))
+
+    if lang == "en":
+        jargon = f"Year pillars {ga}{za}/{gb}{zb}: " + (
+            ", ".join(bits_en) if bits_en else "no major clash/combine"
+        )
+        plain = (
+            "Family atmospheres look easier to blend — still respect both households."
+            if score >= 70
+            else (
+                "Family-side friction may surface — align expectations with parents early."
+                if score <= 45
+                else "Neither especially matched nor opposed — courtesy across families helps."
+            )
+        )
+        return {
+            "key": "family",
+            "score": score,
+            "jargon": jargon + ".",
+            "plain": plain,
+            "meta": {"year_a": f"{ga}{za}", "year_b": f"{gb}{zb}", **flags},
+        }
+
+    jargon = f"年柱（家世气场）{ga}{za}/{gb}{zb}" + (
+        "：" + "、".join(bits_zh) if bits_zh else "：无明显冲合"
+    )
+    if score >= 70:
+        plain = "两边家庭气场较易靠近，仍要互相尊重长辈与习惯。"
+    elif score <= 45:
+        plain = "家庭侧摩擦信号偏多——婚前把礼数、边界谈清楚更稳。"
+    else:
+        plain = "谈不上门当户对或不合——礼数到位，关系会顺很多。"
+    return {
+        "key": "family",
+        "score": score,
+        "jargon": _maybe_trad(jargon + "。", lang),
+        "plain": _maybe_trad(plain, lang),
+        "meta": {"year_a": f"{ga}{za}", "year_b": f"{gb}{zb}", **flags},
+    }
+
+
+def _ten_god_counts(bazi: dict) -> Dict[str, int]:
+    """统计四柱天干十神（不含日主本身）。"""
+    dm = bazi.get("day_master") or ""
+    counts: Dict[str, int] = {}
+    for name in ("年柱", "月柱", "日柱", "时柱"):
+        gan = _pillar(bazi, name).get("gan") or ""
+        if not gan or gan == dm:
+            continue
+        g = shishen_of(dm, gan)
+        if g:
+            counts[g] = counts.get(g, 0) + 1
+    return counts
+
+
+def _score_values(a: dict, b: dict, lang: str) -> dict:
+    """
+    价值取向（白话「三观」近似）：
+    印（规范/学习）、官杀（秩序/责任）、食伤（表达/自我）结构是否同向。
+    """
+    ca, cb = _ten_god_counts(a), _ten_god_counts(b)
+
+    def bucket(c: dict) -> Dict[str, int]:
+        return {
+            "yin": int(c.get("正印", 0) + c.get("偏印", 0)),
+            "guan": int(c.get("正官", 0) + c.get("七杀", 0)),
+            "shi": int(c.get("食神", 0) + c.get("伤官", 0)),
+            "cai": int(c.get("正财", 0) + c.get("偏财", 0)),
+        }
+
+    ba, bb = bucket(ca), bucket(cb)
+
+    def dominant(bkt: dict) -> str:
+        return max(bkt, key=bkt.get) if any(bkt.values()) else "mix"
+
+    da, db = dominant(ba), dominant(bb)
+    # 同向加分；印↔官较合；食伤↔官易张力
+    score = 58.0
+    if da == db and da != "mix":
+        score += 16
+    elif {da, db} <= {"yin", "guan"}:
+        score += 10
+    elif {da, db} == {"shi", "guan"}:
+        score -= 12
+    elif {da, db} == {"shi", "yin"}:
+        score -= 4
+    else:
+        score += 2
+    # 财星都显，生活目标较易对齐
+    if ba["cai"] > 0 and bb["cai"] > 0:
+        score += 6
+    score = int(round(_clamp(score)))
+
+    name_zh = {"yin": "印星（规范/学习）", "guan": "官杀（责任/秩序）", "shi": "食伤（表达/自我）", "cai": "财星（实利/生活）", "mix": "混杂"}
+    name_en = {"yin": "Resource", "guan": "Officer", "shi": "Output", "cai": "Wealth", "mix": "mixed"}
+
+    if lang == "en":
+        jargon = f"Value tilt A≈{name_en.get(da)}, B≈{name_en.get(db)} (from stem Ten Gods)."
+        plain = (
+            "Priorities look aligned — still name money/family/career explicitly."
+            if score >= 70
+            else (
+                "Priority clash risk (freedom vs rules) — write down non‑negotiables."
+                if score <= 45
+                else "Values overlap partly — weekly check‑ins beat assuming sameness."
+            )
+        )
+        return {
+            "key": "values",
+            "score": score,
+            "jargon": jargon,
+            "plain": plain,
+            "meta": {"dom_a": da, "dom_b": db, "bucket_a": ba, "bucket_b": bb},
+        }
+
+    jargon = f"十神结构取向：甲偏{name_zh.get(da)}，乙偏{name_zh.get(db)}。"
+    if score >= 70:
+        plain = "做事优先级较同向——钱、家庭、事业仍建议明说，别靠猜。"
+    elif score <= 45:
+        plain = "自由与规则可能拉扯——把「不能让步」的几条写下来。"
+    else:
+        plain = "三观有重叠也有差——定期对齐期待，比假设「应该懂我」管用。"
+    return {
+        "key": "values",
+        "score": score,
+        "jargon": _maybe_trad(jargon, lang),
+        "plain": _maybe_trad(plain, lang),
+        "meta": {"dom_a": da, "dom_b": db, "bucket_a": ba, "bucket_b": bb},
+    }
+
+
 def _collect_cross_branch_stress(a: dict, b: dict) -> int:
     """双方四支两两刑冲害计数（越高越不稳）。"""
     zhis_a = []
@@ -428,22 +678,28 @@ def _score_stability(a: dict, b: dict, dims: List[dict], lang: str) -> dict:
 
 def analyze_hehun(a: dict, b: dict, lang: str = "zh") -> Dict[str, Any]:
     """
-    输入两份 get_summary() 命盘，输出总分与五维。
+    输入两份 get_summary() 命盘，输出总分与多维分析。
     """
     d1 = _score_day_master(a, b, lang)
     d2 = _score_spouse_palace(a, b, lang)
     d3 = _score_wuxing(a, b, lang)
     d4 = _score_shishen(a, b, lang)
-    partial = [d1, d2, d3, d4]
-    d5 = _score_stability(a, b, partial, lang)
-    dims = [d1, d2, d3, d4, d5]
+    d5 = _score_temperament(a, b, lang)
+    d6 = _score_family(a, b, lang)
+    d7 = _score_values(a, b, lang)
+    partial = [d1, d2, d3, d4, d5, d6, d7]
+    d8 = _score_stability(a, b, partial, lang)
+    dims = [d1, d2, d3, d4, d5, d6, d7, d8]
 
     weights = {
-        "day_master": 0.28,
-        "spouse_palace": 0.24,
-        "wuxing": 0.22,
-        "shishen": 0.14,
-        "stability": 0.12,
+        "day_master": 0.18,
+        "spouse_palace": 0.16,
+        "wuxing": 0.14,
+        "shishen": 0.10,
+        "temperament": 0.12,
+        "family": 0.10,
+        "values": 0.10,
+        "stability": 0.10,
     }
     total = sum(d["score"] * weights[d["key"]] for d in dims)
     total = int(round(_clamp(total)))
@@ -525,14 +781,14 @@ def render_hehun_html(
     if lang == "en":
         title = "BaZi Marriage Match"
         score_lab = "Compatibility"
-        dim_h = "Dimensions"
+        dim_h = "Match dimensions"
         tip_h = "Notes"
         pa, pb = "Person A", "Person B"
         disc = "For reflection only — not a marital decision."
     else:
         title = _maybe_trad("八字合婚", lang)
         score_lab = _maybe_trad("契合度", lang)
-        dim_h = _maybe_trad("五维分析", lang)
+        dim_h = _maybe_trad("合婚维度分析", lang)
         tip_h = _maybe_trad("要点", lang)
         pa = _maybe_trad("甲方", lang)
         pb = _maybe_trad("乙方", lang)
