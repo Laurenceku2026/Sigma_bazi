@@ -1651,7 +1651,7 @@ Each field 80–160 English words. No markdown fences."""
 甲方（{name_a}）：日主{bazi_a.get('day_master')}，四柱{pillars_line(bazi_a)}，性别{bazi_a.get('gender')}
 乙方（{name_b}）：日主{bazi_b.get('day_master')}，四柱{pillars_line(bazi_b)}，性别{bazi_b.get('gender')}
 本地契合度 {local_result.get('total')}：{local_result.get('headline')}
-五维：
+合婚维度：
 {dim_txt}
 每段 120–220 字中文。"""
 
