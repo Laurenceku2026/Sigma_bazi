@@ -648,6 +648,34 @@ def render_login_panel(key_prefix: str = "main") -> None:
             st.session_state.show_login = False
             st.rerun()
 
+    with st.expander(t("forgot_password", lang), expanded=False):
+        st.caption(t("forgot_password_hint", lang))
+        with st.form(f"{key_prefix}_forgot_form", clear_on_submit=False):
+            forgot_email = st.text_input(
+                t("forgot_password_email", lang),
+                value=st.session_state.get(f"{key_prefix}_login_email") or "",
+                key=f"{key_prefix}_forgot_email",
+            )
+            forgot_go = st.form_submit_button(
+                t("forgot_password_submit", lang),
+                use_container_width=True,
+            )
+        if forgot_go:
+            em = (forgot_email or "").strip()
+            if not em or "@" not in em:
+                st.warning(t("forgot_password_need_email", lang))
+            elif not supabase_client:
+                st.error(t("forgot_password_fail", lang))
+            else:
+                try:
+                    ok = supabase_client.request_password_reset(em)
+                except Exception:
+                    ok = False
+                if ok:
+                    st.success(t("forgot_password_ok", lang))
+                else:
+                    st.error(t("forgot_password_fail", lang))
+
 
 def render_register_panel(key_prefix: str = "main", after_ok=None) -> None:
     st.markdown(f"### {t('register_heading', lang)}")

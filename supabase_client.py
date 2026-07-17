@@ -701,12 +701,14 @@ class SupabaseClient:
         subscription_expires_at: Optional[str] = None,
         clear_subscription_expires: bool = False,
         email_confirmed: Optional[bool] = None,
+        password_hash: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         更新用户订阅等字段。
         clear_subscription_expires=True 时将到期时间置空（无限期）；
         否则仅当 subscription_expires_at 非 None 时写入到期时间。
+        password_hash 非空时重置本 App 独立密码。
         """
         try:
             data: Dict[str, Any] = {"updated_at": self._now()}
@@ -720,6 +722,8 @@ class SupabaseClient:
                 data["subscription_expires_at"] = subscription_expires_at
             if email_confirmed is not None:
                 data["email_confirmed"] = email_confirmed
+            if password_hash is not None:
+                data["password_hash"] = password_hash
             if metadata is not None:
                 user = self.get_user(user_id) or {}
                 existing = user.get("metadata") or {}
@@ -738,6 +742,69 @@ class SupabaseClient:
         except Exception as e:
             print(f"Admin update user error: {e}")
             return False
+
+    def admin_set_password(self, user_id: str, new_password: str) -> bool:
+        """管理员重置用户本 App 密码（本地 password_hash）。"""
+        from auth_local import hash_password
+
+        pwd = (new_password or "").strip()
+        if len(pwd) < 6:
+            self.last_error = "password_too_short"
+            return False
+        ok = self.admin_update_user(
+            user_id,
+            password_hash=hash_password(pwd),
+            metadata={
+                "password_reset_at": self._now(),
+                "password_reset_by": "admin",
+            },
+        )
+        if ok:
+            try:
+                self.log_action(
+                    user_id,
+                    "admin_password_reset",
+                    metadata={"by": "admin"},
+                )
+            except Exception:
+                pass
+        return ok
+
+    def request_password_reset(self, email: str) -> bool:
+        """用户忘记密码：登记申请（无邮件通道时由管理员处理）。"""
+        email = (email or "").strip().lower()
+        if not email or "@" not in email:
+            self.last_error = "invalid_email"
+            return False
+        profile = self.get_user_by_email(email)
+        if not profile:
+            # 不暴露账号是否存在：仍返回 True，但只记匿名日志
+            try:
+                self.log_action(
+                    "anonymous",
+                    "password_reset_request_unknown",
+                    metadata={"email": email},
+                )
+            except Exception:
+                pass
+            return True
+        uid = profile["user_id"]
+        meta_ok = self.admin_update_user(
+            uid,
+            metadata={
+                "password_reset_requested_at": self._now(),
+                "password_reset_requested_email": email,
+            },
+        )
+        try:
+            self.log_action(
+                uid,
+                "password_reset_request",
+                metadata={"email": email},
+            )
+        except Exception:
+            pass
+        return bool(meta_ok)
 
     def grant_survey_gold_reward(self, user_id: str) -> bool:
         """首次提交试用问卷：免费用户一次性升级金卡。"""

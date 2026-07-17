@@ -454,11 +454,68 @@ def render_admin_page(lang: str, supabase_client) -> None:
                 st.rerun()
 
     st.markdown("---")
+    st.markdown(f"### 🔑 {t('admin_reset_password', lang)}")
+    st.caption(t("admin_reset_password_hint", lang))
+    meta = selected_user.get("metadata") if isinstance(selected_user.get("metadata"), dict) else {}
+    if meta.get("password_reset_requested_at"):
+        st.warning(
+            f"{t('admin_reset_requested', lang)}：{_safe_datetime(meta.get('password_reset_requested_at'))}"
+        )
+    # 切换用户时清掉上一用户的「刚生成密码」提示
+    if st.session_state.get("_admin_pwd_flash_uid") not in (None, uid):
+        st.session_state.pop("admin_pwd_flash", None)
+        st.session_state.pop("_admin_pwd_flash_uid", None)
+    flash_pwd = st.session_state.get("admin_pwd_flash")
+    if flash_pwd and st.session_state.get("_admin_pwd_flash_uid") == uid:
+        st.success(t("admin_password_saved", lang))
+        st.code(flash_pwd, language=None)
+
+    pw_col1, pw_col2 = st.columns([3, 1])
+    with pw_col1:
+        new_pwd = st.text_input(
+            t("admin_new_password", lang),
+            type="default",
+            key="admin_new_password_input",
+            autocomplete="off",
+        )
+    with pw_col2:
+        st.write("")  # 对齐按钮
+        if st.button(t("admin_gen_password", lang), key="admin_gen_pwd", use_container_width=True):
+            import secrets
+            import string
+
+            alphabet = string.ascii_letters + string.digits
+            st.session_state["admin_new_password_input"] = "".join(
+                secrets.choice(alphabet) for _ in range(10)
+            )
+            st.rerun()
+    if st.button(t("admin_save_password", lang), key="admin_save_pwd", type="primary", use_container_width=True):
+        pwd = (st.session_state.get("admin_new_password_input") or new_pwd or "").strip()
+        if len(pwd) < 6:
+            st.error(t("admin_password_too_short", lang) if pwd else t("admin_password_need", lang))
+        else:
+            ok = supabase_client.admin_set_password(uid, pwd)
+            if ok:
+                st.session_state["admin_pwd_flash"] = pwd
+                st.session_state["_admin_pwd_flash_uid"] = uid
+                # 清掉申请标记时间以外的提示依赖：写入 metadata 覆盖 requested
+                try:
+                    supabase_client.admin_update_user(
+                        uid,
+                        metadata={
+                            "password_reset_requested_at": None,
+                            "password_reset_requested_email": None,
+                        },
+                    )
+                except Exception:
+                    pass
+                st.rerun()
+            else:
+                st.error(t("update_fail", lang))
+
+    st.markdown("---")
     st.markdown(f"### ⚙️ {t('actions', lang)}")
-    b1, b2, b3 = st.columns(3)
-    with b1:
-        if st.button(f"📧 {t('send_reset_email', lang)}", key="admin_send_reset", use_container_width=True):
-            st.info(t("reset_email_na", lang))
+    b2, b3 = st.columns(2)
     with b2:
         if st.button(f"🗑 {t('delete_user', lang)}", key="admin_delete_user", use_container_width=True):
             ok = supabase_client.admin_delete_user(selected_user["user_id"])
