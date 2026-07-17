@@ -656,23 +656,35 @@ def render_login_panel(key_prefix: str = "main") -> None:
                 value=st.session_state.get(f"{key_prefix}_login_email") or "",
                 key=f"{key_prefix}_forgot_email",
             )
+            forgot_confirm = st.checkbox(
+                t("forgot_password_confirm", lang),
+                key=f"{key_prefix}_forgot_confirm",
+            )
             forgot_go = st.form_submit_button(
                 t("forgot_password_submit", lang),
+                type="primary",
                 use_container_width=True,
             )
         if forgot_go:
             em = (forgot_email or "").strip()
             if not em or "@" not in em:
                 st.warning(t("forgot_password_need_email", lang))
+            elif not forgot_confirm:
+                st.warning(t("forgot_password_need_confirm", lang))
             elif not supabase_client:
                 st.error(t("forgot_password_fail", lang))
             else:
                 try:
-                    ok = supabase_client.request_password_reset(em)
+                    ok = supabase_client.clear_password_for_reregister(em)
                 except Exception:
                     ok = False
                 if ok:
                     st.success(t("forgot_password_ok", lang))
+                    # 引导同一邮箱去注册设新密码
+                    st.session_state[f"{key_prefix}_reg_email"] = em
+                    st.session_state.show_register = True
+                    st.session_state.show_login = False
+                    st.rerun()
                 else:
                     st.error(t("forgot_password_fail", lang))
 
