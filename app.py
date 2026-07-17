@@ -1253,16 +1253,40 @@ def render_hehun_tab() -> None:
         ai = st.session_state.get("hehun_ai")
         if isinstance(ai, dict) and any(ai.values()):
             st.markdown(f"### {t('hehun_ai_heading', lang)}")
+            # 两章：缘分格局 / 相处化解；每章专业解读 + 白话说明（与九页报告同款分段）
+            chapters = []
             for key, label_key in (
                 ("pattern", "hehun_ai_pattern"),
-                ("dynamics", "hehun_ai_dynamics"),
-                ("nurture", "hehun_ai_nurture"),
-                ("caution", "hehun_ai_caution"),
+                ("resolve", "hehun_ai_resolve"),
             ):
-                body = (ai.get(key) or "").strip()
-                if body:
-                    st.markdown(f"**{t(label_key, lang)}**")
-                    st.write(body)
+                sec = ai.get(key)
+                if isinstance(sec, dict) and (
+                    sec.get("professional") or sec.get("plain") or sec.get("content")
+                ):
+                    chapters.append((key, label_key, sec))
+                elif isinstance(sec, str) and sec.strip():
+                    chapters.append((key, label_key, {"content": sec.strip()}))
+            # 兼容旧版四段扁平字符串
+            if not chapters:
+                for key, label_key in (
+                    ("pattern", "hehun_ai_pattern"),
+                    ("dynamics", "hehun_ai_dynamics"),
+                    ("nurture", "hehun_ai_nurture"),
+                    ("caution", "hehun_ai_caution"),
+                ):
+                    body = (ai.get(key) or "").strip() if isinstance(ai.get(key), str) else ""
+                    if body:
+                        chapters.append((key, label_key, {"content": body}))
+            for _key, label_key, sec in chapters:
+                title = t(label_key, lang)
+                if report_gen:
+                    page = report_gen._normalize_hehun_chapter(sec, title, "")
+                else:
+                    page = dict(sec) if isinstance(sec, dict) else {"content": str(sec)}
+                    page["title"] = title
+                html = ReportGenerator.render_page_html(page, lang)
+                st.markdown(html, unsafe_allow_html=True)
+                st.markdown("")
     elif tier == "gold":
         st.info(t("hehun_ai_diamond_only", lang))
         st.session_state.selected_plan = st.session_state.get("selected_plan") or "diamond"

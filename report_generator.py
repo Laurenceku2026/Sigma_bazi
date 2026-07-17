@@ -972,7 +972,7 @@ Hard rules:
         pro_list = [str(p).strip() for p in (page.get("professional") or []) if str(p).strip()]
         pro_text = "\n".join(pro_list)
         first = re.split(r"[。！？.!?]", pro_text)[0].strip() if pro_text else ""
-        if self.lang == "en":
+        if getattr(self, "lang", "zh") == "en":
             filled = {
                 "summary": (
                     ((first[:70] + "…") if len(first) > 70 else first)
@@ -1610,7 +1610,11 @@ Hard rules:
         local_result: dict,
         lang: str = "zh",
     ) -> Dict[str, Any]:
-        """钻石合婚可选 AI 深批：缘分格局 / 相处模式 / 宜经营 / 需留意。"""
+        """钻石合婚 AI 深批：两章（缘分格局 / 相处化解），每章专业解读 + 白话说明。"""
+        prev_lang = getattr(self, "lang", "zh")
+        # 白话补写用简体/英文；繁体在章末统一转换
+        self.lang = "en" if lang == "en" else "zh"
+
         def pillars_line(bd: dict) -> str:
             parts = []
             for name in ("年柱", "月柱", "日柱", "时柱"):
@@ -1625,83 +1629,170 @@ Hard rules:
         )
         en = lang == "en"
         if en:
-            prompt = f"""Write a BaZi marriage-match deep reading as JSON only:
-{{
-  "pattern": "...",
-  "dynamics": "...",
-  "nurture": "...",
-  "caution": "..."
-}}
-Rules: reflective advice, not fortune guarantees; emphasize balance (avoid extremes).
+            title_pattern, title_resolve = "Bond Pattern", "Relating & Repair"
+            system = (
+                "You are a BaZi marriage counselor. Output JSON only with this exact shape:\n"
+                "{\n"
+                '  "pattern": {"professional": ["p1","p2","p3"], '
+                '"plain": {"summary":"...","points":["...","...","..."],"detail":"..."}},\n'
+                '  "resolve": {"professional": ["p1","p2","p3"], '
+                '"plain": {"summary":"...","points":["...","...","..."],"detail":"..."}}\n'
+                "}\n"
+                "professional MUST be an array of 3 separate paragraphs (not one blob). "
+                "plain forbids BaZi jargon. No markdown fences."
+            )
+            prompt = f"""BaZi marriage deep read for two people.
+pattern = overall bond / chart chemistry (Day Master, spouse palace, five elements, ten gods).
+resolve = how they clash and how to repair (communication, boundaries, family, money).
 Person A ({name_a}): Day Master {bazi_a.get('day_master')}, pillars {pillars_line(bazi_a)}, gender {bazi_a.get('gender')}
 Person B ({name_b}): Day Master {bazi_b.get('day_master')}, pillars {pillars_line(bazi_b)}, gender {bazi_b.get('gender')}
 Local score {local_result.get('total')}: {local_result.get('headline')}
 Dimensions:
 {dim_txt}
-Each field 80–160 English words. No markdown fences."""
+Reflective advice only — not destiny. Emphasize balance (avoid extremes)."""
         else:
-            prompt = f"""请输出八字合婚 AI 深批 JSON（不要代码块）：
-{{
-  "pattern": "缘分格局……",
-  "dynamics": "相处模式……",
-  "nurture": "宜经营处……",
-  "caution": "需留意处……"
-}}
+            title_pattern, title_resolve = "缘分格局", "相处化解"
+            system = (
+                "你是命理合婚顾问。只输出 JSON，结构必须如下：\n"
+                "{\n"
+                '  "pattern": {"professional": ["段1","段2","段3"], '
+                '"plain": {"summary":"一句话","points":["建议1","建议2","建议3"],"detail":"白话说明"}},\n'
+                '  "resolve": {"professional": ["段1","段2","段3"], '
+                '"plain": {"summary":"一句话","points":["建议1","建议2","建议3"],"detail":"白话说明"}}\n'
+                "}\n"
+                "professional 必须是恰好 3 个字符串的数组（各自成段，禁止全文塞进一条）；"
+                "plain 零术语（禁止日主、十神、刑冲、喜用等）。不要代码块。"
+            )
+            prompt = f"""请写八字合婚 AI 深批两章：
+1) pattern「缘分格局」：双方日主/夫妻宫/五行喜忌/十神如何构成缘分与互补象；
+2) resolve「相处化解」：相处张力从何来、宜怎么经营、摩擦如何降温与修补（含家庭/钱/边界）。
 要求：理性参考、勿宿命断言；强调「互补守中、冲突勿极」。
 甲方（{name_a}）：日主{bazi_a.get('day_master')}，四柱{pillars_line(bazi_a)}，性别{bazi_a.get('gender')}
 乙方（{name_b}）：日主{bazi_b.get('day_master')}，四柱{pillars_line(bazi_b)}，性别{bazi_b.get('gender')}
 本地契合度 {local_result.get('total')}：{local_result.get('headline')}
 合婚维度：
 {dim_txt}
-每段 120–220 字中文。"""
+专业每段 80–140 字；白话 summary≤40 字，detail 80–120 字。"""
 
-        raw = self._call_deepseek(prompt)
+        raw = self._call_deepseek(prompt, system=system, max_tokens=5200)
         data = self._parse_json_loose(raw)
         if not isinstance(data, dict):
             data = {}
-        # 兼容包在某一键里
-        for key in ("hehun", "result", "content"):
+        for key in ("hehun", "result", "content", "data"):
             if key in data and isinstance(data[key], dict):
                 data = data[key]
                 break
-        out = {
-            "pattern": str(data.get("pattern") or "").strip(),
-            "dynamics": str(data.get("dynamics") or "").strip(),
-            "nurture": str(data.get("nurture") or "").strip(),
-            "caution": str(data.get("caution") or "").strip(),
-        }
-        if not any(out.values()):
-            # 退化：整段原文
-            out["pattern"] = (raw or "").strip()[:1200]
-        if lang == "zh_hant":
-            try:
-                from zh_convert import to_traditional
 
-                out = {k: to_traditional(v) if v else v for k, v in out.items()}
-            except Exception:
-                pass
+        pattern_raw = self._pick_hehun_chapter(
+            data,
+            primary=("pattern", "缘分格局", "bond_pattern", "格局"),
+            fallback_keys=(),
+        )
+        resolve_raw = self._pick_hehun_chapter(
+            data,
+            primary=("resolve", "相处化解", "矛盾化解", "摩擦化解", "repair"),
+            fallback_keys=("dynamics", "nurture", "caution", "相处模式", "宜经营处", "需留意处"),
+        )
+        # 模型仍只回顶层 professional/plain 时：整份归入缘分格局
+        if pattern_raw is None and (
+            data.get("professional") is not None or data.get("plain") is not None
+        ):
+            pattern_raw = data
+        if pattern_raw is None and raw:
+            pattern_raw = raw.strip()[:2000]
+
+        pattern = self._normalize_hehun_chapter(pattern_raw, title_pattern, raw)
+        resolve = self._normalize_hehun_chapter(resolve_raw, title_resolve, raw)
+        out = {"pattern": pattern, "resolve": resolve}
+        if lang == "zh_hant":
+            out = {
+                "pattern": self._to_traditional_page(pattern),
+                "resolve": self._to_traditional_page(resolve),
+            }
+            out["pattern"]["title"] = "緣分格局"
+            out["resolve"]["title"] = "相處化解"
+        self.lang = prev_lang
         return out
 
-    def _call_deepseek(self, prompt: str) -> str:
+    @staticmethod
+    def _pick_hehun_chapter(
+        data: dict,
+        *,
+        primary: tuple,
+        fallback_keys: tuple,
+    ) -> Any:
+        if not isinstance(data, dict):
+            return None
+        for k in primary:
+            if k in data and data.get(k) not in (None, "", [], {}):
+                return data.get(k)
+        # 旧四段扁平字段：合并进相处化解
+        bits = []
+        for k in fallback_keys:
+            v = data.get(k)
+            if isinstance(v, str) and v.strip():
+                bits.append(v.strip())
+            elif isinstance(v, dict) and (v.get("professional") or v.get("plain") or v.get("detail")):
+                return v
+        if bits:
+            return "\n\n".join(bits)
+        return None
+
+    def _normalize_hehun_chapter(self, raw_sec: Any, title: str, fallback_raw: str = "") -> Dict[str, Any]:
+        """把一章规范成 professional[] + plain{{summary,points,detail}}。"""
+        if isinstance(raw_sec, str) and raw_sec.strip():
+            # 字符串里若仍是 JSON，先松解析
+            maybe = self._parse_json_loose(raw_sec)
+            if isinstance(maybe, dict) and (
+                maybe.get("professional") is not None or maybe.get("plain") is not None
+            ):
+                raw_sec = maybe
+        page = self._coerce_page(raw_sec, title, fallback_raw=fallback_raw or "")
+        page = self._ensure_plain_section(page, title)
+        # 智能分段：不足 2 段时按句号切开，避免挤成一团 / 被 sanitize 判不完整
+        pro = [str(p).strip() for p in (page.get("professional") or []) if str(p).strip()]
+        if len(pro) < 2 and pro:
+            pro = ReportGenerator._split_paragraphs(pro[0]) or pro
+        if len(pro) < 2:
+            pro = [p for p in pro if p] or [f"（{title}专业解读缺失，请重新生成）"]
+            if len(pro) == 1 and len(pro[0]) > 60:
+                # 硬切两段，保证展示分段
+                s = pro[0]
+                mid = max(40, len(s) // 2)
+                cut = s.rfind("。", 0, mid + 40)
+                if cut < 20:
+                    cut = mid
+                pro = [s[: cut + 1].strip(), s[cut + 1 :].strip()]
+                pro = [x for x in pro if x] or [s]
+        page["professional"] = pro[:6]
+        page["title"] = title
+        page["content"] = ReportGenerator.build_content_markdown(page)
+        return page
+
+    def _call_deepseek(
+        self,
+        prompt: str,
+        *,
+        system: Optional[str] = None,
+        max_tokens: int = 4096,
+    ) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        system_content = system or (
+            "你是命理顾问。必须输出结构化 JSON："
+            "professional 为段落数组，plain 含 summary/points/detail。"
+            "禁止把整页挤进一个长字符串。不要代码块标记。"
+        )
         payload = {
             "model": self.model,
             "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "你是命理顾问。必须输出结构化 JSON："
-                        "professional 为段落数组，plain 含 summary/points/detail。"
-                        "禁止把整页挤进一个长字符串。不要代码块标记。"
-                    ),
-                },
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.55,
-            "max_tokens": 4096,
+            "max_tokens": max_tokens,
         }
         url = f"{self.base_url}/v1/chat/completions"
         response = requests.post(url, headers=headers, json=payload, timeout=75)
