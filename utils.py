@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Optional
 
 import streamlit as st
 
@@ -1274,3 +1275,483 @@ def pdf_filename(birth_info) -> str:
     raw = str((birth_info or {}).get("name") or "user").strip()
     safe = re.sub(r'[\\/:*?"<>|\s]+', "_", raw).strip("_") or "user"
     return f"bazi_{safe[:40]}_{datetime.now():%Y%m%d}.pdf"
+
+
+def hehun_pdf_filename(name_a: str = "", name_b: str = "") -> str:
+    """合婚 PDF 文件名。"""
+    import re
+    from datetime import datetime
+
+    def _safe(n: str) -> str:
+        s = re.sub(r'[\\/:*?"<>|\s]+', "_", str(n or "").strip()).strip("_")
+        return (s[:20] or "user")
+
+    return f"hehun_{_safe(name_a)}_{_safe(name_b)}_{datetime.now():%Y%m%d}.pdf"
+
+
+def _pillar_line_pdf(bazi: dict) -> str:
+    parts = []
+    for name in ("年柱", "月柱", "日柱", "时柱"):
+        p = ((bazi or {}).get("pillars") or {}).get(name) or {}
+        g, z = p.get("gan") or "—", p.get("zhi") or "—"
+        parts.append(f"{g}{z}")
+    return " ".join(parts)
+
+
+def _pdf_hehun_dim_table(dimensions: list, *, font_path, page_width_pt: float, lang: str = "zh"):
+    """合婚维度得分一览表（PIL 图片）。"""
+    import io
+    from reportlab.platypus import Image as RLImage
+    from PIL import Image, ImageDraw, ImageFont
+
+    if not dimensions or not font_path:
+        return None
+
+    def trad(s: str) -> str:
+        if lang != "zh_hant":
+            return s
+        try:
+            from zh_convert import to_traditional
+
+            return to_traditional(s)
+        except Exception:
+            return s
+
+    scale = 2
+    font = ImageFont.truetype(str(font_path), 11 * scale)
+    font_b = ImageFont.truetype(str(font_path), 12 * scale)
+    w = int(page_width_pt * scale)
+    row_h = int(28 * scale)
+    pad = int(8 * scale)
+    header_h = int(32 * scale)
+    n = len(dimensions)
+    h = pad * 2 + header_h + row_h * n
+    img = Image.new("RGB", (w, h), "#FFFFFF")
+    draw = ImageDraw.Draw(img)
+
+    # 表头底
+    draw.rectangle([0, pad, w, pad + header_h], fill="#F5F7FA")
+    cols = [
+        (trad("维度"), 0.04),
+        (trad("得分"), 0.42),
+        (trad("契合条"), 0.54),
+    ]
+    for label, x_ratio in cols:
+        draw.text((int(w * x_ratio), pad + int(8 * scale)), label, font=font_b, fill="#0B1F33")
+
+    y = pad + header_h
+    for i, d in enumerate(dimensions):
+        if i % 2 == 1:
+            draw.rectangle([0, y, w, y + row_h], fill="#FAFBFC")
+        lab = trad(str(d.get("label") or d.get("key") or ""))
+        score = int(d.get("score") or 0)
+        draw.text((int(w * 0.04), y + int(7 * scale)), lab, font=font, fill="#222222")
+        draw.text((int(w * 0.42), y + int(7 * scale)), str(score), font=font_b, fill="#C62828")
+        # 进度条
+        bar_x0 = int(w * 0.54)
+        bar_x1 = int(w * 0.96)
+        bar_y0 = y + int(10 * scale)
+        bar_y1 = y + int(18 * scale)
+        draw.rounded_rectangle([bar_x0, bar_y0, bar_x1, bar_y1], radius=4, fill="#EEEEEE")
+        fill_w = bar_x0 + int((bar_x1 - bar_x0) * max(0, min(100, score)) / 100)
+        if fill_w > bar_x0 + 2:
+            draw.rounded_rectangle([bar_x0, bar_y0, fill_w, bar_y1], radius=4, fill="#C62828")
+        y += row_h
+
+    # 外框
+    draw.rectangle([0, pad, w - 1, h - pad], outline="#E0E0E0")
+
+    bio = io.BytesIO()
+    img.save(bio, format="PNG")
+    bio.seek(0)
+    return RLImage(bio, width=page_width_pt, height=h / scale)
+
+
+def generate_hehun_pdf_report(
+    result: dict,
+    *,
+    name_a: str,
+    name_b: str,
+    bazi_a: dict,
+    bazi_b: dict,
+    ai_deep: Optional[dict] = None,
+    lang: str = "zh",
+):
+    """
+    八字合婚独立 PDF：封面 + 契合总览 + 维度详解 +（可选）AI 深批两章。
+    版式对齐八字命理报告（ReportLab + PIL 中文）。
+    """
+    import io
+    import re
+    from xml.sax.saxutils import escape
+
+    from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
+
+    from report_generator import ReportGenerator
+
+    en = lang == "en"
+
+    def T(s: str) -> str:
+        if lang == "zh_hant":
+            try:
+                from zh_convert import to_traditional
+
+                return to_traditional(s)
+            except Exception:
+                return s
+        return s
+
+    font_body, font_head = _resolve_pdf_cjk_font()
+    cjk_path = _cjk_font_file()
+    use_pil = cjk_path is not None
+
+    buffer = io.BytesIO()
+    cover_title = "Sigma Fate Marriage Match" if en else T("六西格玛命理 · 八字合婚报告")
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=1.8 * cm,
+        rightMargin=1.8 * cm,
+        topMargin=1.8 * cm,
+        bottomMargin=1.8 * cm,
+        title=cover_title,
+        author=f"{name_a or 'A'} & {name_b or 'B'}",
+    )
+
+    styles = getSampleStyleSheet()
+    style_cover_sub = ParagraphStyle(
+        "HehunCoverSub",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=11,
+        leading=16,
+        alignment=TA_CENTER,
+        spaceAfter=10,
+        textColor="#455A64",
+    )
+    style_h1 = ParagraphStyle(
+        "HehunH1", parent=styles["Normal"], fontName=font_head, fontSize=18, leading=26,
+        spaceBefore=6, spaceAfter=10, alignment=TA_LEFT, textColor="#0B1F33",
+    )
+    style_h2 = ParagraphStyle(
+        "HehunH2", parent=styles["Normal"], fontName=font_head, fontSize=13, leading=20,
+        spaceBefore=12, spaceAfter=6, textColor="#1565C0",
+    )
+    style_body = ParagraphStyle(
+        "HehunBody", parent=styles["Normal"], fontName=font_body, fontSize=10.5, leading=17,
+        alignment=TA_JUSTIFY, spaceAfter=8,
+    )
+    style_meta = ParagraphStyle(
+        "HehunMeta", parent=styles["Normal"], fontName=font_body, fontSize=11, leading=18,
+        alignment=TA_CENTER, spaceAfter=6,
+    )
+    style_toc = ParagraphStyle(
+        "HehunToc", parent=styles["Normal"], fontName=font_body, fontSize=11, leading=18,
+        alignment=TA_LEFT, leftIndent=12, spaceAfter=4,
+    )
+    style_bullet = ParagraphStyle(
+        "HehunBullet", parent=styles["Normal"], fontName=font_body, fontSize=10.5, leading=17,
+        leftIndent=14, spaceAfter=4,
+    )
+    style_score = ParagraphStyle(
+        "HehunScore", parent=styles["Normal"], fontName=font_head, fontSize=28, leading=34,
+        alignment=TA_CENTER, textColor="#C62828", spaceAfter=8,
+    )
+
+    content_width = A4[0] - 3.6 * cm
+
+    def _pdf_safe(text: str) -> str:
+        if not text:
+            return ""
+        return (
+            str(text)
+            .replace("⚠️", "")
+            .replace("⚠", "")
+            .replace("★", "*")
+            .replace("☆", "*")
+            .replace("●", "-")
+            .replace("○", "-")
+        )
+
+    def P(text: str, style=style_body, bold: bool = False):
+        raw = _pdf_safe(str(text or "").strip())
+        if not en:
+            raw = T(raw)
+        if not raw:
+            return None
+        if use_pil:
+            size = 11
+            fill = "#222222"
+            align = "left"
+            if style is style_h1:
+                size, fill = 18, "#0B1F33"
+            elif style is style_h2:
+                size, fill = 13, "#1565C0"
+            elif style is style_meta:
+                size, fill, align = 12, "#333333", "center"
+            elif style is style_toc:
+                size = 11
+            elif style is style_bullet:
+                size = 10
+                raw = "  " + raw
+            elif style is style_score:
+                size, fill, align = 32, "#C62828", "center"
+            if bold and size < 16:
+                size += 1
+            img = _pdf_text_image(
+                raw,
+                font_path=cjk_path,
+                font_size=size,
+                max_width_pt=float(content_width),
+                fill=fill,
+                align=align,
+            )
+            if img is not None:
+                return img
+        t = escape(raw).replace("\n", "<br/>")
+        return Paragraph(t, style)
+
+    result = result or {}
+    total = int(result.get("total") or 0)
+    headline = str(result.get("headline") or "")
+    summary = str(result.get("summary") or "")
+    dims = list(result.get("dimensions") or [])
+
+    L = {
+        "brand": "六西格玛命理 · 八字合婚报告" if not en else "Sigma Fate · Marriage Match Report",
+        "sub": "Sigma Fate Marriage Match Report",
+        "person_a": "甲方" if not en else "Person A",
+        "person_b": "乙方" if not en else "Person B",
+        "dm": "日主" if not en else "Day Master",
+        "pillars": "四柱" if not en else "Pillars",
+        "score": "契合度" if not en else "Compatibility",
+        "disc": "本报告仅供参考，请理性看待，非婚姻决定依据。" if not en else "For reflection only — not a marital decision.",
+        "toc": "目录" if not en else "Contents",
+        "overview": "契合总览" if not en else "Match Overview",
+        "dim_table": "合婚维度得分" if not en else "Dimension Scores",
+        "dim_detail": "合婚维度详解" if not en else "Dimension Details",
+        "pro": "专业解读" if not en else "Professional",
+        "plain": "白话说明" if not en else "In plain words",
+        "one_line": "一句话" if not en else "In one line",
+        "how": "怎么做" if not en else "What to do",
+        "ai_pattern": "缘分格局" if not en else "Bond Pattern",
+        "ai_resolve": "相处化解" if not en else "Relating & Repair",
+        "ai_sec": "AI 深批" if not en else "AI Deep Read",
+        "gender": "性别" if not en else "Gender",
+        "name": "姓名" if not en else "Name",
+    }
+
+    story = []
+
+    # ---------- 封面 ----------
+    story.append(Spacer(1, 1.6 * cm))
+    if use_pil:
+        brand_txt = L["brand"] if en else T(_pdf_safe(L["brand"]))
+        cover = _pdf_text_image(
+            brand_txt,
+            font_path=cjk_path,
+            font_size=22,
+            max_width_pt=float(content_width),
+            fill="#0B1F33",
+            align="center",
+        )
+        if cover:
+            story.append(cover)
+    else:
+        c = P(L["brand"], style_meta, bold=True)
+        if c:
+            story.append(c)
+    story.append(Paragraph(escape(L["sub"] if not en else "BaZi Compatibility Analysis"), style_cover_sub))
+    story.append(Spacer(1, 0.45 * cm))
+
+    na = name_a or L["person_a"]
+    nb = name_b or L["person_b"]
+    ga = str((bazi_a or {}).get("gender") or "")
+    gb = str((bazi_b or {}).get("gender") or "")
+    dma = str((bazi_a or {}).get("day_master") or "—")
+    dmb = str((bazi_b or {}).get("day_master") or "—")
+    pa = _pillar_line_pdf(bazi_a)
+    pb = _pillar_line_pdf(bazi_b)
+    if lang == "zh_hant":
+        pa, pb = T(pa), T(pb)
+
+    story.append(P(f"{L['person_a']} · {na}", style_meta, bold=True))
+    if ga:
+        story.append(P(f"{L['gender']}：{ga}　{L['dm']}：{dma}", style_meta))
+    else:
+        story.append(P(f"{L['dm']}：{dma}", style_meta))
+    story.append(P(f"{L['pillars']}：{pa}", style_meta))
+    story.append(Spacer(1, 0.25 * cm))
+    story.append(P(f"{L['person_b']} · {nb}", style_meta, bold=True))
+    if gb:
+        story.append(P(f"{L['gender']}：{gb}　{L['dm']}：{dmb}", style_meta))
+    else:
+        story.append(P(f"{L['dm']}：{dmb}", style_meta))
+    story.append(P(f"{L['pillars']}：{pb}", style_meta))
+
+    story.append(Spacer(1, 0.7 * cm))
+    story.append(P(L["score"], style_meta))
+    story.append(P(str(total), style_score))
+    if headline:
+        story.append(P(headline, style_meta, bold=True))
+    story.append(Spacer(1, 0.5 * cm))
+    story.append(P(L["disc"], style_meta))
+
+    # 目录
+    toc = [L["overview"], L["dim_detail"]]
+    ai_chapters = []
+    if isinstance(ai_deep, dict):
+        for key, title in (("pattern", L["ai_pattern"]), ("resolve", L["ai_resolve"])):
+            sec = ai_deep.get(key)
+            if isinstance(sec, dict) and (
+                sec.get("professional") or sec.get("plain") or sec.get("content")
+            ):
+                ai_chapters.append((title, sec))
+            elif isinstance(sec, str) and sec.strip():
+                ai_chapters.append((title, {"content": sec.strip(), "title": title}))
+        # 旧四段
+        if not ai_chapters:
+            for key, title in (
+                ("pattern", L["ai_pattern"]),
+                ("dynamics", "相处模式" if not en else "Dynamics"),
+                ("nurture", "宜经营处" if not en else "What to nurture"),
+                ("caution", "需留意处" if not en else "What to watch"),
+            ):
+                body = ai_deep.get(key)
+                if isinstance(body, str) and body.strip():
+                    ai_chapters.append((title, {"content": body.strip(), "title": title}))
+        if ai_chapters:
+            toc.append(L["ai_sec"])
+            for tit, _ in ai_chapters:
+                toc.append(f"  · {tit}")
+
+    story.append(Spacer(1, 0.7 * cm))
+    story.append(P(L["toc"], style_h2))
+    for idx, tit in enumerate([t for t in toc if not t.startswith("  ")], 1):
+        story.append(P(f"{idx}. {tit}", style_toc))
+    for tit in toc:
+        if tit.startswith("  "):
+            story.append(P(tit.strip(), style_toc))
+
+    story.append(PageBreak())
+
+    # ---------- 契合总览 ----------
+    story.append(P(L["overview"], style_h1))
+    story.append(Spacer(1, 0.1 * cm))
+    story.append(P(f"{L['score']}：{total}", style_h2))
+    if headline:
+        p = P(headline, style_body, bold=True)
+        if p:
+            story.append(p)
+    if summary:
+        p = P(summary, style_body)
+        if p:
+            story.append(p)
+    story.append(Spacer(1, 0.2 * cm))
+    story.append(P(L["dim_table"], style_h2))
+    if cjk_path and dims:
+        table = _pdf_hehun_dim_table(
+            dims, font_path=cjk_path, page_width_pt=float(content_width), lang=lang
+        )
+        if table:
+            story.append(table)
+    else:
+        for d in dims:
+            story.append(
+                P(f"{d.get('label', '')}  {d.get('score', 0)}", style_body)
+            )
+    story.append(PageBreak())
+
+    # ---------- 维度详解 ----------
+    story.append(P(L["dim_detail"], style_h1))
+    for d in dims:
+        lab = str(d.get("label") or "")
+        sc = int(d.get("score") or 0)
+        story.append(P(f"{lab}（{sc}）", style_h2))
+        jargon = str(d.get("jargon") or "").strip()
+        plain = str(d.get("plain") or "").strip()
+        if jargon:
+            story.append(P(f"{L['pro']}：{jargon}", style_body))
+        if plain:
+            story.append(P(f"{L['plain']}：{plain}", style_body))
+        story.append(Spacer(1, 0.08 * cm))
+    story.append(PageBreak())
+
+    # ---------- AI 深批（宽松展示，避免 sanitize 的「四段不完整」占位）----------
+    def add_ai_chapter(page: dict, fallback_title: str):
+        title = str(page.get("title") or fallback_title)
+        pro = page.get("professional")
+        if isinstance(pro, str) and pro.strip():
+            pro = ReportGenerator._split_paragraphs(pro) or [pro.strip()]
+        elif isinstance(pro, list):
+            pro = [str(x).strip() for x in pro if str(x).strip()]
+        else:
+            pro = []
+        if not pro and page.get("content"):
+            content = ReportGenerator._strip_json_artifacts(str(page.get("content") or ""))
+            if content and not ReportGenerator._looks_like_json_blob(content):
+                pro = ReportGenerator._split_paragraphs(content) or [content]
+        plain = page.get("plain") if isinstance(page.get("plain"), dict) else {}
+
+        story.append(P(title, style_h1))
+        story.append(Spacer(1, 0.12 * cm))
+        if pro:
+            story.append(P(L["pro"], style_h2))
+            for para in pro:
+                if "不完整" in str(para) and ("重新生成" in str(para) or "regenerate" in str(para).lower()):
+                    continue
+                p = P(para, style_body)
+                if p:
+                    story.append(p)
+        if plain and (plain.get("summary") or plain.get("points") or plain.get("detail")):
+            story.append(P(L["plain"], style_h2))
+            if plain.get("summary"):
+                p = P(f"{L['one_line']}：{plain['summary']}", style_body)
+                if p:
+                    story.append(p)
+            pts = plain.get("points") or []
+            if pts:
+                story.append(P(f"{L['how']}：", style_body))
+                for i, pt in enumerate(pts, 1):
+                    p = P(f"{i}. {pt}", style_bullet)
+                    if p:
+                        story.append(p)
+            if plain.get("detail"):
+                p = P(plain["detail"], style_body)
+                if p:
+                    story.append(p)
+        elif not pro and page.get("content"):
+            content = re.sub(r"[#*`]+", "", str(page.get("content") or ""))
+            if not ReportGenerator._looks_like_json_blob(content):
+                for block in re.split(r"\n\s*\n+", content):
+                    p = P(block, style_body)
+                    if p:
+                        story.append(p)
+        story.append(PageBreak())
+
+    if ai_chapters:
+        story.append(P(L["ai_sec"], style_h1))
+        story.append(
+            P(
+                "以下为 AI 深批，理性参考，勿作宿命断言。"
+                if not en
+                else "AI deep read for reflection — not destiny.",
+                style_body,
+            )
+        )
+        story.append(PageBreak())
+        for tit, sec in ai_chapters:
+            page = dict(sec) if isinstance(sec, dict) else {"content": str(sec)}
+            page["title"] = tit
+            add_ai_chapter(page, tit)
+
+    if story and isinstance(story[-1], PageBreak):
+        story.pop()
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
