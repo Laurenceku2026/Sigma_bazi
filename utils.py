@@ -713,6 +713,61 @@ def _cjk_font_file():
     return None
 
 
+# PDF 所用 Noto Sans SC 等简体字体缺字时的替补（如繁体「相克」→「相剋」）
+_PDF_GLYPH_FALLBACKS = str.maketrans(
+    {
+        "剋": "克",  # U+524B 不在 NotoSansSC；用「克」避免方框 X
+    }
+)
+_pdf_cmap_cache: dict = {}
+
+
+def _pdf_font_has_char(font_path, ch: str) -> bool:
+    """检查字体 cmap 是否含该字；查不到时假定可用（避免误删）。"""
+    if not font_path or not ch:
+        return True
+    if ord(ch) < 128:
+        return True
+    key = str(font_path)
+    cmap = _pdf_cmap_cache.get(key)
+    if cmap is None:
+        try:
+            from fontTools.ttLib import TTFont
+
+            cmap = TTFont(str(font_path)).getBestCmap() or {}
+        except Exception:
+            cmap = {}
+        _pdf_cmap_cache[key] = cmap
+    if not cmap:
+        return True
+    return ord(ch) in cmap
+
+
+def _pdf_fix_glyphs(text: str, font_path=None) -> str:
+    """
+    PDF 出字前替换字体缺失字形，避免「方框里带 X」。
+    优先静态替补表；其余缺字若存在兼容简体/常见异体再换，否则保留。
+    """
+    if not text:
+        return text
+    s = str(text).translate(_PDF_GLYPH_FALLBACKS)
+    # 短语级：OpenCC 常把「相克」转成「相剋」
+    s = s.replace("相剋", "相克")
+    if not font_path:
+        return s
+    out = []
+    for ch in s:
+        if _pdf_font_has_char(font_path, ch):
+            out.append(ch)
+            continue
+        # 再试一次静态表（已处理）后的兜底：略过极少见控制符
+        if ch in ("\u200b", "\ufeff"):
+            continue
+        # 缺字且无替补：用「克」类已覆盖；其它保留原字（避免误伤）
+        out.append(ch)
+    return "".join(out)
+
+
 def _pdf_text_image(
     text: str,
     *,
@@ -728,6 +783,7 @@ def _pdf_text_image(
     from PIL import Image, ImageDraw, ImageFont
 
     raw = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    raw = _pdf_fix_glyphs(raw, font_path)
     if not raw:
         return None
 
@@ -803,13 +859,13 @@ def _pdf_lifetime_fortune_pages(bazi_data: dict, lang: str, font_path, page_widt
 
     def trad(s: str) -> str:
         if lang != "zh_hant":
-            return s
+            return _pdf_fix_glyphs(s, font_path)
         try:
             from zh_convert import to_traditional
 
-            return to_traditional(s)
+            return _pdf_fix_glyphs(to_traditional(s), font_path)
         except Exception:
-            return s
+            return _pdf_fix_glyphs(s, font_path)
 
     title = trad("一生流年运势分析")
     headers = [trad(x) for x in ("西元", "实岁", "大运", "流年", "合化", "运势", "重要提示")]
@@ -839,7 +895,7 @@ def _pdf_lifetime_fortune_pages(bazi_data: dict, lang: str, font_path, page_widt
     span = max(max_score - min_score, 1)
 
     def wrap_tip(text: str, max_px: int) -> list:
-        t = (text or "—").replace("\n", " ")
+        t = _pdf_fix_glyphs((text or "—").replace("\n", " "), font_path)
         lines, cur, cw = [], "", 0
         for ch in t:
             box = font_tip.getbbox(ch)
@@ -1376,6 +1432,9 @@ def _pdf_hehun_dim_table(dimensions: list, *, font_path, page_width_pt: float, l
         score = int(d.get("score") or 0)
         jargon = trad(str(d.get("jargon") or "").strip()) if not en else str(d.get("jargon") or "").strip()
         plain = trad(str(d.get("plain") or "").strip()) if not en else str(d.get("plain") or "").strip()
+        lab = _pdf_fix_glyphs(lab, font_path)
+        jargon = _pdf_fix_glyphs(jargon, font_path)
+        plain = _pdf_fix_glyphs(plain, font_path)
         lab_lines = wrap_text(lab, font_b, label_max_w) or [lab]
         j_lines = wrap_text(jargon, font_sm, tip_max_w)
         p_lines = wrap_text(plain, font_sm, tip_max_w)
