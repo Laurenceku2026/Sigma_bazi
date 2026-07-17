@@ -1018,6 +1018,18 @@ def render_report_tab_bottom_nav(report: dict, *, key_prefix: str = "report_bott
             st.rerun()
 
 
+def _hehun_normalize_gender(g: Any) -> str:
+    """归一为「男」/「女」。"""
+    s = str(g or "").strip()
+    if s.startswith("女") or s.lower() in ("female", "f", "woman"):
+        return "女"
+    return "男"
+
+
+def _hehun_opposite_gender(g: Any) -> str:
+    return "女" if _hehun_normalize_gender(g) == "男" else "男"
+
+
 def _hehun_person_form(prefix: str, *, defaults: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """合婚单人出生信息表单。"""
     defaults = defaults or {}
@@ -1029,14 +1041,17 @@ def _hehun_person_form(prefix: str, *, defaults: Optional[Dict[str, Any]] = None
             key=f"hehun_{prefix}_name",
         )
         gender_opts = [t("male", lang), t("female", lang)]
-        g_default = defaults.get("gender") or "男"
-        g_idx = 0 if g_default.startswith("男") or g_default in ("male", "Male") else 1
+        g_default = _hehun_normalize_gender(defaults.get("gender") or "男")
+        g_idx = 0 if g_default == "男" else 1
+        gender_key = f"hehun_{prefix}_gender"
+        # 若外部已写入 session（如乙方随甲方取反），沿用；否则用 defaults
+        if gender_key not in st.session_state:
+            st.session_state[gender_key] = gender_opts[g_idx]
         gender_ui = st.radio(
             t("gender", lang),
             options=gender_opts,
             horizontal=True,
-            index=g_idx,
-            key=f"hehun_{prefix}_gender",
+            key=gender_key,
         )
         gender = "男" if gender_ui == t("male", lang) else "女"
         try:
@@ -1147,19 +1162,34 @@ def render_hehun_tab() -> None:
 
     st.markdown(f"#### {t('hehun_person_a', lang)}")
     form_a = None
+    gender_a = "男"
     if reuse:
         info = st.session_state.birth_info or {}
         st.caption(
             f"{info.get('name') or '—'} · {info.get('birth_date') or '—'} "
             f"{info.get('birth_hour', '—')}:{int(info.get('birth_minute') or 0):02d}"
         )
+        gender_a = _hehun_normalize_gender(
+            info.get("gender")
+            or (st.session_state.get("bazi_data") or {}).get("gender")
+            or "男"
+        )
         if not st.session_state.get("bazi_data"):
             st.warning(t("hehun_reuse_need_chart", lang))
     else:
         form_a = _hehun_person_form("a", defaults=st.session_state.get("birth_info") or {})
+        gender_a = _hehun_normalize_gender((form_a or {}).get("gender") or "男")
+
+    # 乙方性别默认取甲方相反；甲方变更时同步，用户仍可手动改乙方
+    gender_b_default = _hehun_opposite_gender(gender_a)
+    if st.session_state.get("_hehun_sync_a_gender") != gender_a:
+        st.session_state["hehun_b_gender"] = (
+            t("male", lang) if gender_b_default == "男" else t("female", lang)
+        )
+        st.session_state["_hehun_sync_a_gender"] = gender_a
 
     st.markdown(f"#### {t('hehun_person_b', lang)}")
-    form_b = _hehun_person_form("b")
+    form_b = _hehun_person_form("b", defaults={"gender": gender_b_default})
 
     if st.button(t("hehun_run", lang), type="primary", use_container_width=True, key="hehun_run_btn"):
         try:
