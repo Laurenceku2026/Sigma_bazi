@@ -23,6 +23,7 @@ from mobile_meta import app_icon_path, inject_mobile_app_meta
 from report_generator import ReportGenerator
 from stripe_payment import StripeClient
 from supabase_client import AppAccessDenied, SupabaseClient
+from hehun import analyze_hehun, render_hehun_html
 from trial_survey import render_trial_survey
 from utils import format_bazi_display, generate_pdf_report, pdf_filename, render_bazi_chart
 
@@ -53,6 +54,12 @@ for key, default in [
     ("selected_plan", None),
     ("show_join_membership", False),
     ("ui_tab", 0),
+    ("hehun_result", None),
+    ("hehun_bazi_a", None),
+    ("hehun_bazi_b", None),
+    ("hehun_names", None),
+    ("hehun_ai", None),
+    ("hehun_watermarked", False),
 ]:
     if key == "user_id":
         if "user_id" not in st.session_state:
@@ -728,19 +735,27 @@ def birth_data_unchanged(form: Dict[str, Any], info: Dict[str, Any] | None) -> b
     return _form_birth_fingerprint(form) == saved
 
 
-def run_bazi(form: Dict[str, Any]):
+def compute_bazi_from_form(form: Dict[str, Any]) -> dict:
+    """按表单排盘，不写入 session（合婚乙方/甲方手动填写用）。"""
+    bd = form["birth_date"]
+    if isinstance(bd, str):
+        bd = date.fromisoformat(bd[:10])
     lon = region_longitude(form["region_id"])
     engine = BaziEngine(
-        year=form["birth_date"].year,
-        month=form["birth_date"].month,
-        day=form["birth_date"].day,
+        year=bd.year,
+        month=bd.month,
+        day=bd.day,
         hour=int(form["birth_hour"]),
-        minute=int(form["birth_minute"]),
+        minute=int(form.get("birth_minute") or 0),
         gender=form["gender"],
-        true_solar_time=form["use_true_solar"],
+        true_solar_time=bool(form.get("use_true_solar", True)),
         longitude=lon,
     )
-    bazi_data = engine.calculate().get_summary()
+    return engine.calculate().get_summary()
+
+
+def run_bazi(form: Dict[str, Any]):
+    bazi_data = compute_bazi_from_form(form)
     st.session_state.bazi_data = bazi_data
     st.session_state.birth_info = {
         "name": form["name"],
@@ -994,6 +1009,269 @@ def render_report_tab_bottom_nav(report: dict, *, key_prefix: str = "report_bott
         ):
             go_liunian_tab()
             st.rerun()
+
+
+def _hehun_person_form(prefix: str, *, defaults: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """合婚单人出生信息表单。"""
+    defaults = defaults or {}
+    c1, c2 = st.columns(2)
+    with c1:
+        name = st.text_input(
+            t("name", lang),
+            value=str(defaults.get("name") or ""),
+            key=f"hehun_{prefix}_name",
+        )
+        gender_opts = [t("male", lang), t("female", lang)]
+        g_default = defaults.get("gender") or "男"
+        g_idx = 0 if g_default.startswith("男") or g_default in ("male", "Male") else 1
+        gender_ui = st.radio(
+            t("gender", lang),
+            options=gender_opts,
+            horizontal=True,
+            index=g_idx,
+            key=f"hehun_{prefix}_gender",
+        )
+        gender = "男" if gender_ui == t("male", lang) else "女"
+        try:
+            bd_default = defaults.get("birth_date")
+            if isinstance(bd_default, str):
+                bd_default = date.fromisoformat(bd_default[:10])
+            if not isinstance(bd_default, date):
+                bd_default = date(1990, 1, 1)
+        except Exception:
+            bd_default = date(1990, 1, 1)
+        birth_date = st.date_input(
+            t("birth_date", lang),
+            value=bd_default,
+            min_value=date(1, 1, 1),
+            max_value=date.today(),
+            format="YYYY-MM-DD",
+            key=f"hehun_{prefix}_date",
+        )
+    with c2:
+        birth_hour = st.number_input(
+            t("birth_hour", lang),
+            0,
+            23,
+            int(defaults.get("birth_hour") or 12),
+            key=f"hehun_{prefix}_hour",
+        )
+        birth_minute = st.number_input(
+            t("birth_minute", lang),
+            0,
+            59,
+            int(defaults.get("birth_minute") or 0),
+            key=f"hehun_{prefix}_minute",
+        )
+        reg_labels, reg_ids, _ = region_options(lang)
+        try:
+            reg_default = reg_ids.index(defaults.get("region_id")) if defaults.get("region_id") in reg_ids else 2
+        except Exception:
+            reg_default = 2
+        reg_idx = st.selectbox(
+            t("region", lang),
+            options=list(range(len(reg_ids))),
+            format_func=lambda i: reg_labels[i],
+            index=reg_default,
+            key=f"hehun_{prefix}_region",
+        )
+        region_id = reg_ids[reg_idx]
+    use_true_solar = st.checkbox(
+        t("true_solar", lang),
+        value=bool(defaults.get("use_true_solar", True)),
+        key=f"hehun_{prefix}_solar",
+    )
+    return {
+        "name": (name or "").strip(),
+        "gender": gender,
+        "birth_date": birth_date,
+        "birth_hour": int(birth_hour),
+        "birth_minute": int(birth_minute),
+        "region_id": region_id,
+        "use_true_solar": use_true_solar,
+    }
+
+
+def render_hehun_tab() -> None:
+    """八字合婚：双人表单 + 本地契合度；钻石 AI 深批；免费 3 次水印。"""
+    st.markdown(f"### {t('hehun_heading', lang)}")
+    st.caption(t("hehun_disclaimer", lang))
+    st.caption(t("hehun_intro", lang))
+
+    if not is_registered():
+        st.info(t("hehun_login_required", lang))
+        if st.button(t("login_btn", lang), key="hehun_login", type="primary"):
+            st.session_state.show_login = True
+            st.rerun()
+        return
+
+    tier = st.session_state.subscription_tier
+    is_diamond = tier == "diamond"
+    is_free = tier == "free"
+    match_left = 0
+    if is_free and supabase_client:
+        try:
+            match_left = supabase_client.get_match_preview_remaining(st.session_state.user_id)
+        except Exception:
+            match_left = 3
+        st.caption(
+            t("hehun_free_quota", lang).format(
+                left=match_left,
+                total=getattr(supabase_client, "MATCH_PREVIEW_DEFAULT", 3),
+            )
+        )
+
+    if tier in ("silver", "gold"):
+        st.warning(t("hehun_diamond_only", lang))
+        st.info(t("hehun_upgrade_diamond", lang))
+        # 预填钻石方案
+        st.session_state.selected_plan = "diamond"
+        render_membership_plans("hehun_lock_sg")
+        return
+
+    if is_free and match_left <= 0:
+        st.warning(t("hehun_free_exhausted", lang))
+        st.info(t("hehun_upgrade_diamond", lang))
+        st.session_state.selected_plan = "diamond"
+        render_membership_plans("hehun_lock_free")
+        return
+
+    reuse = False
+    if st.session_state.get("bazi_data") and st.session_state.get("birth_info"):
+        reuse = st.checkbox(
+            t("hehun_reuse_chart", lang),
+            value=True,
+            key="hehun_reuse_a",
+        )
+
+    st.markdown(f"#### {t('hehun_person_a', lang)}")
+    form_a = None
+    if reuse:
+        info = st.session_state.birth_info or {}
+        st.caption(
+            f"{info.get('name') or '—'} · {info.get('birth_date') or '—'} "
+            f"{info.get('birth_hour', '—')}:{int(info.get('birth_minute') or 0):02d}"
+        )
+        if not st.session_state.get("bazi_data"):
+            st.warning(t("hehun_reuse_need_chart", lang))
+    else:
+        form_a = _hehun_person_form("a", defaults=st.session_state.get("birth_info") or {})
+
+    st.markdown(f"#### {t('hehun_person_b', lang)}")
+    form_b = _hehun_person_form("b")
+
+    if st.button(t("hehun_run", lang), type="primary", use_container_width=True, key="hehun_run_btn"):
+        try:
+            if reuse:
+                bazi_a = st.session_state.bazi_data
+                name_a = (st.session_state.birth_info or {}).get("name") or t("hehun_person_a", lang)
+                if not bazi_a:
+                    st.warning(t("hehun_reuse_need_chart", lang))
+                    return
+            else:
+                if not form_a or not form_a.get("name"):
+                    st.warning(t("hehun_need_names", lang))
+                    return
+                bazi_a = compute_bazi_from_form(form_a)
+                name_a = form_a["name"]
+
+            if not form_b.get("name"):
+                st.warning(t("hehun_need_names", lang))
+                return
+            bazi_b = compute_bazi_from_form(form_b)
+            name_b = form_b["name"]
+
+            # 权限：免费扣次；钻石直接算
+            watermarked = False
+            if is_free:
+                if not supabase_client or not supabase_client.consume_match_preview_quota(
+                    st.session_state.user_id
+                ):
+                    st.warning(t("hehun_free_exhausted", lang))
+                    st.session_state.selected_plan = "diamond"
+                    st.rerun()
+                    return
+                watermarked = True
+            elif not is_diamond:
+                st.warning(t("hehun_diamond_only", lang))
+                return
+
+            result = analyze_hehun(bazi_a, bazi_b, lang)
+            st.session_state.hehun_result = result
+            st.session_state.hehun_bazi_a = bazi_a
+            st.session_state.hehun_bazi_b = bazi_b
+            st.session_state.hehun_names = {"a": name_a, "b": name_b}
+            st.session_state.hehun_ai = None
+            st.session_state.hehun_watermarked = watermarked
+            try:
+                if supabase_client:
+                    supabase_client.log_action(
+                        st.session_state.user_id,
+                        "hehun_local",
+                        {"total": result.get("total"), "watermarked": watermarked},
+                    )
+            except Exception:
+                pass
+            st.rerun()
+        except Exception as e:
+            st.error(f"{t('report_fail', lang)}{e}")
+
+    result = st.session_state.get("hehun_result")
+    if not result:
+        return
+
+    names = st.session_state.get("hehun_names") or {}
+    bazi_a = st.session_state.get("hehun_bazi_a") or {}
+    bazi_b = st.session_state.get("hehun_bazi_b") or {}
+    html = render_hehun_html(
+        result,
+        name_a=names.get("a") or "",
+        name_b=names.get("b") or "",
+        bazi_a=bazi_a,
+        bazi_b=bazi_b,
+        lang=lang,
+    )
+    if st.session_state.get("hehun_watermarked"):
+        mark = f"SigmaFate/{st.session_state.get('user_email') or 'preview'}"
+        html = _wrap_protected_html(html, mark)
+    st.markdown(html, unsafe_allow_html=True)
+
+    if is_diamond and report_gen:
+        st.markdown("---")
+        if st.button(t("hehun_ai_btn", lang), type="primary", use_container_width=True, key="hehun_ai_btn"):
+            with st.spinner(t("generating", lang)):
+                try:
+                    ai = report_gen.generate_hehun_deep(
+                        name_a=names.get("a") or "",
+                        name_b=names.get("b") or "",
+                        bazi_a=bazi_a,
+                        bazi_b=bazi_b,
+                        local_result=result,
+                        lang=lang,
+                    )
+                    st.session_state.hehun_ai = ai
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"{t('hehun_ai_fail', lang)}{e}")
+
+        ai = st.session_state.get("hehun_ai")
+        if isinstance(ai, dict) and any(ai.values()):
+            st.markdown(f"### {t('hehun_ai_heading', lang)}")
+            for key, label_key in (
+                ("pattern", "hehun_ai_pattern"),
+                ("dynamics", "hehun_ai_dynamics"),
+                ("nurture", "hehun_ai_nurture"),
+                ("caution", "hehun_ai_caution"),
+            ):
+                body = (ai.get(key) or "").strip()
+                if body:
+                    st.markdown(f"**{t(label_key, lang)}**")
+                    st.write(body)
+    elif is_free:
+        st.markdown("---")
+        st.info(t("hehun_upgrade_diamond", lang))
+        st.session_state.selected_plan = st.session_state.get("selected_plan") or "diamond"
+        render_membership_plans("hehun_after_free")
 
 
 def apply_scroll_top_if_needed():
@@ -1511,15 +1789,16 @@ if st.session_state.get("show_join_membership"):
                 st.session_state.show_join_membership = False
                 st.rerun()
 
-# --- 主导航（可用按钮跳到「完整报告」）---
+# --- 主导航 ---
 _nav = [
     t("tab_input", lang),
     t("tab_chart", lang),
     t("tab_report", lang),
     t("tab_liunian", lang),
+    t("tab_hehun", lang),
     t("tab_survey", lang),
 ]
-nav_cols = st.columns(5)
+nav_cols = st.columns(6)
 for i, lab in enumerate(_nav):
     with nav_cols[i]:
         is_on = int(st.session_state.get("ui_tab", 0)) == i
@@ -1533,7 +1812,7 @@ for i, lab in enumerate(_nav):
             st.session_state["_scroll_top"] = True
             st.rerun()
         # 试用反馈按钮下显示黄金会员提示
-        if i == 4:
+        if i == 5:
             st.caption(t("survey_gold_hint", lang))
 
 _tab = int(st.session_state.get("ui_tab", 0))
@@ -1773,8 +2052,12 @@ elif _tab == 3:
                     go_report_tab()
                     st.rerun()
 
-# ========== Tab 5：试用问卷 ==========
+# ========== Tab 5：八字合婚 ==========
 elif _tab == 4:
+    render_hehun_tab()
+
+# ========== Tab 6：试用问卷 ==========
+elif _tab == 5:
     if not is_registered():
         st.info(t("survey_login_required", lang))
         if st.button(t("login_btn", lang), key="survey_tab_login", type="primary"):

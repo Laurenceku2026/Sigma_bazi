@@ -62,6 +62,7 @@ def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
                 "All Gold benefits",
                 "Unlimited reports for 12 months",
                 "Annual Luck Report updated anytime",
+                "BaZi Marriage Match (local score + optional AI deep read)",
                 "Best value for frequent users",
             ],
         }
@@ -86,6 +87,7 @@ def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
             "金卡全部内容",
             "一年内无限次生成报告",
             "流年报告随用随更",
+            "专属《八字合婚》（本地契合度 + 可选 AI 深批）",
             "适合高频使用者",
         ],
     }
