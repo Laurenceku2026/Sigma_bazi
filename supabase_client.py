@@ -581,11 +581,12 @@ class SupabaseClient:
     MATCH_PREVIEW_DEFAULT = 3
 
     def get_match_preview_remaining(self, user_id: str) -> int:
-        """免费用户八字合婚预览剩余次数（metadata，默认 3）。"""
+        """免费/银卡八字合婚水印预览剩余次数（metadata，默认 3）。"""
         user = self.get_user(user_id)
         if not user:
             return 0
-        if user.get("subscription_tier", "free") != "free":
+        tier = user.get("subscription_tier", "free")
+        if tier not in ("free", "silver"):
             return 0
         meta = user.get("metadata") or {}
         if not isinstance(meta, dict):
@@ -598,11 +599,12 @@ class SupabaseClient:
             return 0
 
     def consume_match_preview_quota(self, user_id: str) -> bool:
-        """免费用户成功算出合婚结果时扣 1 次水印预览。"""
+        """免费/银卡成功算出合婚结果时扣 1 次水印预览。"""
         user = self.get_user(user_id)
         if not user:
             return False
-        if user.get("subscription_tier", "free") != "free":
+        tier = user.get("subscription_tier", "free")
+        if tier not in ("free", "silver"):
             return True
         meta = user.get("metadata") or {}
         if not isinstance(meta, dict):

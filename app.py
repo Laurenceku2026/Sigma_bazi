@@ -1093,7 +1093,7 @@ def _hehun_person_form(prefix: str, *, defaults: Optional[Dict[str, Any]] = None
 
 
 def render_hehun_tab() -> None:
-    """八字合婚：默认本地打分（金卡+）；AI 深批仅钻石；免费 3 次水印预览。"""
+    """八字合婚：默认本地打分；金/钻无水印；免费/银卡 3 次水印；AI 仅钻石。"""
     st.markdown(f"### {t('hehun_heading', lang)}")
     st.caption(t("hehun_disclaimer", lang))
     st.caption(t("hehun_intro", lang))
@@ -1108,33 +1108,26 @@ def render_hehun_tab() -> None:
     tier = st.session_state.subscription_tier
     is_diamond = tier == "diamond"
     can_local_clean = tier in ("gold", "diamond")  # 金卡/钻石：本地无水印
-    is_free = tier == "free"
+    needs_watermark_quota = tier in ("free", "silver")
     match_left = 0
-    if is_free and supabase_client:
+    if needs_watermark_quota and supabase_client:
         try:
             match_left = supabase_client.get_match_preview_remaining(st.session_state.user_id)
         except Exception:
             match_left = 3
         st.caption(
-            t("hehun_free_quota", lang).format(
+            t("hehun_preview_quota", lang).format(
                 left=match_left,
                 total=getattr(supabase_client, "MATCH_PREVIEW_DEFAULT", 3),
             )
         )
 
-    # 银卡：本地合婚需金卡起
-    if tier == "silver":
-        st.warning(t("hehun_gold_local_only", lang))
-        st.info(t("hehun_upgrade_gold", lang))
-        st.session_state.selected_plan = "gold"
-        render_membership_plans("hehun_lock_silver")
-        return
-
-    if is_free and match_left <= 0:
+    if needs_watermark_quota and match_left <= 0:
         st.warning(t("hehun_free_exhausted", lang))
         st.info(t("hehun_upgrade_gold", lang))
+        st.caption(t("hehun_ai_diamond_only", lang))
         st.session_state.selected_plan = "gold"
-        render_membership_plans("hehun_lock_free")
+        render_membership_plans("hehun_lock_preview")
         return
 
     reuse = False
@@ -1182,11 +1175,11 @@ def render_hehun_tab() -> None:
             bazi_b = compute_bazi_from_form(form_b)
             name_b = form_b["name"]
 
-            # 权限：金/钻本地无水印；免费扣次并打水印
+            # 权限：金/钻无水印；免费/银卡扣次并打水印
             watermarked = False
             if can_local_clean:
                 watermarked = False
-            elif is_free:
+            elif needs_watermark_quota:
                 if not supabase_client or not supabase_client.consume_match_preview_quota(
                     st.session_state.user_id
                 ):
@@ -1277,11 +1270,16 @@ def render_hehun_tab() -> None:
             st.session_state.show_join_membership = True
             st.session_state.selected_plan = "diamond"
             st.rerun()
-    elif is_free:
+    elif needs_watermark_quota:
+        # 免费/银卡：水印本地结果后，提示升金（无水印）与升钻（AI）
         st.info(t("hehun_upgrade_gold", lang))
         st.caption(t("hehun_ai_diamond_only", lang))
+        if st.button(t("hehun_upgrade_diamond", lang), key="hehun_preview_to_diamond", use_container_width=True):
+            st.session_state.show_join_membership = True
+            st.session_state.selected_plan = "diamond"
+            st.rerun()
         st.session_state.selected_plan = st.session_state.get("selected_plan") or "gold"
-        render_membership_plans("hehun_after_free")
+        render_membership_plans("hehun_after_preview")
 
 
 def apply_scroll_top_if_needed():

@@ -44,14 +44,15 @@ def can_free_preview(trials_remaining: int) -> bool:
 def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
     if lang == "en":
         outlines = {
-            "silver": [
-                "Page 1: BaZi chart & basics",
-                "Pages 2–3: Career (Part1 situation / Part2 direction & remedy)",
-                "Pages 4–5: Wealth (Part1 / Part2)",
-                "Pages 6–7: Relationship (Part1 / Part2)",
-                "Pages 8–9: Health (Part1 / Part2)",
-                "10 full 9-page reports (no Annual Luck Report)",
-            ],
+        "silver": [
+            "Page 1: BaZi chart & basics",
+            "Pages 2–3: Career (Part1 situation / Part2 direction & remedy)",
+            "Pages 4–5: Wealth (Part1 / Part2)",
+            "Pages 6–7: Relationship (Part1 / Part2)",
+            "Pages 8–9: Health (Part1 / Part2)",
+            "10 full 9-page reports (no Annual Luck Report)",
+            "Marriage Match: 3 watermarked local previews",
+        ],
             "gold": [
                 "All Silver benefits (9-page report)",
                 "Independent chapter: Annual Luck Report",
@@ -77,6 +78,7 @@ def tier_outline(tier_id: str, lang: str = "zh") -> List[str]:
             "页六～七：感情详批（Part1 / Part2）",
             "页八～九：健康详批（Part1 / Part2）",
             "含 10 次完整九页报告（不含流年报告）",
+            "八字合婚：3 次本地水印预览",
         ],
         "gold": [
             "银卡全部内容（完整九页报告）",
