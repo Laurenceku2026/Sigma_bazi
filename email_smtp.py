@@ -106,7 +106,10 @@ def env_smtp_settings(getenv=os.getenv) -> dict:
         "host": (getenv("SMTP_HOST") or "smtp.gmail.com").strip(),
         "port": int(getenv("SMTP_PORT") or "587"),
         "user": (getenv("SMTP_USER") or getenv("SMTP_FROM") or "").strip(),
-        "password": (getenv("SMTP_PASSWORD") or "").strip(),
+        "password": (getenv("SMTP_PASSWORD") or "")
+        .strip()
+        .replace(" ", "")
+        .replace("\u00a0", ""),
         "mail_from": (
             getenv("SMTP_FROM") or getenv("SMTP_USER") or "Techlife2027@gmail.com"
         ).strip(),

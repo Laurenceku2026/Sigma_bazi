@@ -113,7 +113,8 @@ PWA_MANIFEST_URL = _cfg(
 SMTP_HOST = _cfg("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(_cfg("SMTP_PORT", "587") or "587")
 SMTP_USER = _cfg("SMTP_USER", "Techlife2027@gmail.com")
-SMTP_PASSWORD = _cfg("SMTP_PASSWORD")  # Gmail 应用专用密码，不是登录密码
+# Gmail 应用专用密码常显示为带空格的 4 组；SMTP 使用时去掉空格
+SMTP_PASSWORD = _cfg("SMTP_PASSWORD").replace(" ", "").replace("\u00a0", "")
 SMTP_FROM = _cfg("SMTP_FROM", SMTP_USER or "Techlife2027@gmail.com")
 SMTP_USE_TLS = _cfg("SMTP_USE_TLS", "1") not in ("0", "false", "False", "")
 
