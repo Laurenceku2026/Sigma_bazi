@@ -25,7 +25,14 @@ from stripe_payment import StripeClient
 from supabase_client import AppAccessDenied, SupabaseClient
 from hehun import analyze_hehun, render_hehun_html
 from trial_survey import render_trial_survey
-from utils import format_bazi_display, generate_pdf_report, pdf_filename, render_bazi_chart
+from utils import (
+    format_bazi_display,
+    generate_hehun_pdf_report,
+    generate_pdf_report,
+    hehun_pdf_filename,
+    pdf_filename,
+    render_bazi_chart,
+)
 
 st.set_page_config(
     page_title="六西格玛命理 - 八字",
@@ -1227,7 +1234,8 @@ def render_hehun_tab() -> None:
         bazi_b=bazi_b,
         lang=lang,
     )
-    if st.session_state.get("hehun_watermarked"):
+    watermarked = bool(st.session_state.get("hehun_watermarked"))
+    if watermarked:
         mark = f"SigmaFate/{st.session_state.get('user_email') or 'preview'}"
         html = _wrap_protected_html(html, mark)
     st.markdown(html, unsafe_allow_html=True)
@@ -1294,7 +1302,34 @@ def render_hehun_tab() -> None:
             st.session_state.show_join_membership = True
             st.session_state.selected_plan = "diamond"
             st.rerun()
-    elif needs_watermark_quota:
+
+    # 金卡/钻石：独立合婚 PDF（封面+总览+维度；钻石若已生成 AI 深批一并收录）
+    if not watermarked and tier in ("gold", "diamond"):
+        st.markdown("---")
+        try:
+            ai_for_pdf = st.session_state.get("hehun_ai") if is_diamond else None
+            pdf_buf = generate_hehun_pdf_report(
+                result,
+                name_a=names.get("a") or "",
+                name_b=names.get("b") or "",
+                bazi_a=bazi_a,
+                bazi_b=bazi_b,
+                ai_deep=ai_for_pdf if isinstance(ai_for_pdf, dict) else None,
+                lang=lang,
+            )
+            st.caption(t("hehun_pdf_caption", lang))
+            st.download_button(
+                t("hehun_download_pdf", lang),
+                pdf_buf,
+                hehun_pdf_filename(names.get("a") or "", names.get("b") or ""),
+                "application/pdf",
+                key="hehun_dl_pdf",
+                use_container_width=True,
+            )
+        except Exception:
+            st.warning(t("pdf_warn", lang))
+
+    if needs_watermark_quota and not (tier in ("gold", "diamond")):
         # 免费/银卡：水印本地结果后，提示升金（无水印）与升钻（AI）
         st.info(t("hehun_upgrade_gold", lang))
         st.caption(t("hehun_ai_diamond_only", lang))
