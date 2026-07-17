@@ -1308,6 +1308,20 @@ def render_hehun_tab() -> None:
         st.markdown("---")
         try:
             ai_for_pdf = st.session_state.get("hehun_ai") if is_diamond else None
+            # 写入 PDF 前再规范化，保证 professional / 白话说明 齐全
+            if isinstance(ai_for_pdf, dict) and report_gen:
+                norm_ai = {}
+                for key, label_key in (
+                    ("pattern", "hehun_ai_pattern"),
+                    ("resolve", "hehun_ai_resolve"),
+                ):
+                    sec = ai_for_pdf.get(key)
+                    if sec:
+                        norm_ai[key] = report_gen._normalize_hehun_chapter(
+                            sec, t(label_key, lang), ""
+                        )
+                if norm_ai:
+                    ai_for_pdf = norm_ai
             pdf_buf = generate_hehun_pdf_report(
                 result,
                 name_a=names.get("a") or "",

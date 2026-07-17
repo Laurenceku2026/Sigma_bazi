@@ -1268,17 +1268,17 @@ def generate_pdf_report(report_content, birth_info, bazi_data, *, include_liunia
     return buffer
 
 def pdf_filename(birth_info) -> str:
-    """下载文件名：含姓名。"""
+    """下载文件名：BaZi_姓名_日期.pdf（汉字音节首字母大写）。"""
     import re
     from datetime import datetime
 
     raw = str((birth_info or {}).get("name") or "user").strip()
     safe = re.sub(r'[\\/:*?"<>|\s]+', "_", raw).strip("_") or "user"
-    return f"bazi_{safe[:40]}_{datetime.now():%Y%m%d}.pdf"
+    return f"BaZi_{safe[:40]}_{datetime.now():%Y%m%d}.pdf"
 
 
 def hehun_pdf_filename(name_a: str = "", name_b: str = "") -> str:
-    """合婚 PDF 文件名。"""
+    """合婚 PDF 文件名：HeHun_甲_乙_日期.pdf。"""
     import re
     from datetime import datetime
 
@@ -1286,7 +1286,7 @@ def hehun_pdf_filename(name_a: str = "", name_b: str = "") -> str:
         s = re.sub(r'[\\/:*?"<>|\s]+', "_", str(n or "").strip()).strip("_")
         return (s[:20] or "user")
 
-    return f"hehun_{_safe(name_a)}_{_safe(name_b)}_{datetime.now():%Y%m%d}.pdf"
+    return f"HeHun_{_safe(name_a)}_{_safe(name_b)}_{datetime.now():%Y%m%d}.pdf"
 
 
 def _pillar_line_pdf(bazi: dict) -> str:
@@ -1666,22 +1666,36 @@ def generate_hehun_pdf_report(
             )
     story.append(PageBreak())
 
+    def _para_gap():
+        """段落之间空一行。"""
+        story.append(Spacer(1, 0.28 * cm))
+
+    def _append_body(text: str, *, bullet: bool = False):
+        p = P(text, style_bullet if bullet else style_body)
+        if p:
+            story.append(p)
+            _para_gap()
+
     # ---------- 维度详解 ----------
     story.append(P(L["dim_detail"], style_h1))
+    _para_gap()
     for d in dims:
         lab = str(d.get("label") or "")
         sc = int(d.get("score") or 0)
         story.append(P(f"{lab}（{sc}）", style_h2))
         jargon = str(d.get("jargon") or "").strip()
-        plain = str(d.get("plain") or "").strip()
+        plain_txt = str(d.get("plain") or "").strip()
+        # 与八字报告一致：独立「专业解读 / 白话说明」小标题
         if jargon:
-            story.append(P(f"{L['pro']}：{jargon}", style_body))
-        if plain:
-            story.append(P(f"{L['plain']}：{plain}", style_body))
-        story.append(Spacer(1, 0.08 * cm))
+            story.append(P(L["pro"], style_h2))
+            _append_body(jargon)
+        if plain_txt:
+            story.append(P(L["plain"], style_h2))
+            _append_body(plain_txt)
+        story.append(Spacer(1, 0.2 * cm))
     story.append(PageBreak())
 
-    # ---------- AI 深批（宽松展示，避免 sanitize 的「四段不完整」占位）----------
+    # ---------- AI 深批：章内不分页，隔行衔接 ----------
     def add_ai_chapter(page: dict, fallback_title: str):
         title = str(page.get("title") or fallback_title)
         pro = page.get("professional")
@@ -1695,55 +1709,66 @@ def generate_hehun_pdf_report(
             content = ReportGenerator._strip_json_artifacts(str(page.get("content") or ""))
             if content and not ReportGenerator._looks_like_json_blob(content):
                 pro = ReportGenerator._split_paragraphs(content) or [content]
-        plain = page.get("plain") if isinstance(page.get("plain"), dict) else {}
+
+        plain_raw = page.get("plain")
+        if isinstance(plain_raw, str) and plain_raw.strip():
+            plain = {"summary": "", "points": [], "detail": plain_raw.strip()}
+        elif isinstance(plain_raw, dict):
+            plain = plain_raw
+        else:
+            plain = {}
+        # 兼容中文键
+        summary = str(
+            plain.get("summary") or plain.get("一句话") or plain.get("总结") or ""
+        ).strip()
+        detail = str(
+            plain.get("detail") or plain.get("说明") or plain.get("解释") or ""
+        ).strip()
+        pts = plain.get("points") or plain.get("建议") or plain.get("怎么做") or []
+        if isinstance(pts, str):
+            pts = [p.strip() for p in re.split(r"[；;\n]+", pts) if p.strip()]
+        else:
+            pts = [str(p).strip() for p in pts if str(p).strip()]
 
         story.append(P(title, style_h1))
-        story.append(Spacer(1, 0.12 * cm))
+        _para_gap()
         if pro:
             story.append(P(L["pro"], style_h2))
             for para in pro:
-                if "不完整" in str(para) and ("重新生成" in str(para) or "regenerate" in str(para).lower()):
+                if "不完整" in str(para) and (
+                    "重新生成" in str(para) or "regenerate" in str(para).lower()
+                ):
                     continue
-                p = P(para, style_body)
-                if p:
-                    story.append(p)
-        if plain and (plain.get("summary") or plain.get("points") or plain.get("detail")):
+                _append_body(para)
+        # 白话说明：只要有任一块就出标题（与屏幕/八字报告一致）
+        if summary or pts or detail:
             story.append(P(L["plain"], style_h2))
-            if plain.get("summary"):
-                p = P(f"{L['one_line']}：{plain['summary']}", style_body)
-                if p:
-                    story.append(p)
-            pts = plain.get("points") or []
+            if summary:
+                _append_body(f"{L['one_line']}：{summary}")
             if pts:
-                story.append(P(f"{L['how']}：", style_body))
+                _append_body(f"{L['how']}：")
                 for i, pt in enumerate(pts, 1):
-                    p = P(f"{i}. {pt}", style_bullet)
-                    if p:
-                        story.append(p)
-            if plain.get("detail"):
-                p = P(plain["detail"], style_body)
-                if p:
-                    story.append(p)
+                    _append_body(f"{i}. {pt}", bullet=True)
+            if detail:
+                _append_body(detail)
         elif not pro and page.get("content"):
             content = re.sub(r"[#*`]+", "", str(page.get("content") or ""))
             if not ReportGenerator._looks_like_json_blob(content):
+                story.append(P(L["plain"], style_h2))
                 for block in re.split(r"\n\s*\n+", content):
-                    p = P(block, style_body)
-                    if p:
-                        story.append(p)
-        story.append(PageBreak())
+                    if block.strip():
+                        _append_body(block.strip())
+        # 章与章之间隔行，不分页
+        story.append(Spacer(1, 0.45 * cm))
 
     if ai_chapters:
         story.append(P(L["ai_sec"], style_h1))
-        story.append(
-            P(
-                "以下为 AI 深批，理性参考，勿作宿命断言。"
-                if not en
-                else "AI deep read for reflection — not destiny.",
-                style_body,
-            )
+        _para_gap()
+        _append_body(
+            "以下为 AI 深批，理性参考，勿作宿命断言。"
+            if not en
+            else "AI deep read for reflection — not destiny."
         )
-        story.append(PageBreak())
         for tit, sec in ai_chapters:
             page = dict(sec) if isinstance(sec, dict) else {"content": str(sec)}
             page["title"] = tit
