@@ -1119,6 +1119,13 @@ class SupabaseClient:
             raise
         except Exception as e:
             self._set_error("save_report", e)
+            err_s = str(e)
+            if "23503" in err_s or "reports_user_id_fkey" in err_s:
+                self.last_error = (
+                    f"{self.last_error} | 请在 Supabase SQL Editor 执行 "
+                    f"sql/010_fix_reports_fk_to_sf_users.sql"
+                    f"（reports 外键仍指向旧 users，需改挂 sf_users）"
+                )
             return None
 
     def get_reports(self, user_id: str, limit: int = 10) -> List[Dict]:
