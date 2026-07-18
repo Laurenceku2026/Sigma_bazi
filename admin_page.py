@@ -167,7 +167,7 @@ def _admin_birth_info(user: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _admin_recompute_bazi(birth_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """无存档命盘时，按出生资料现算（只读预览，不写库）。"""
+    """按出生资料现算命盘。"""
     if not birth_info or not birth_info.get("birth_date"):
         return None
     try:
@@ -177,6 +177,8 @@ def _admin_recompute_bazi(birth_info: Dict[str, Any]) -> Optional[Dict[str, Any]
         bd = birth_info.get("birth_date")
         if isinstance(bd, str):
             bd = date.fromisoformat(bd[:10])
+        elif not isinstance(bd, date):
+            return None
         region_id = birth_info.get("region_id") or "huabei"
         engine = BaziEngine(
             year=bd.year,
@@ -191,6 +193,68 @@ def _admin_recompute_bazi(birth_info: Dict[str, Any]) -> Optional[Dict[str, Any]
         return engine.calculate().get_summary()
     except Exception:
         return None
+
+
+def _admin_serialize_birth_info(birth_info: Dict[str, Any]) -> Dict[str, Any]:
+    """写入数据库前规范化 birth_info。"""
+    bi = dict(birth_info or {})
+    bd = bi.get("birth_date")
+    if isinstance(bd, date):
+        bi["birth_date"] = bd.isoformat()
+    elif bd is not None:
+        bi["birth_date"] = str(bd)[:10]
+    for key in ("birth_hour", "birth_minute"):
+        if bi.get(key) is not None:
+            try:
+                bi[key] = int(bi[key])
+            except (TypeError, ValueError):
+                pass
+    return bi
+
+
+def _admin_build_local_report(
+    bazi_data: Dict[str, Any],
+    birth_info: Dict[str, Any],
+    *,
+    tier: str,
+    lang: str,
+) -> Dict[str, Any]:
+    from report_local import build_local_report
+
+    return build_local_report(
+        bazi_data,
+        _admin_serialize_birth_info(birth_info),
+        include_liunian=(tier or "free") != "silver",
+        lang=lang,
+    )
+
+
+def _admin_save_chart_and_report(
+    supabase_client: Any,
+    *,
+    user_id: str,
+    birth_info: Dict[str, Any],
+    bazi_data: Dict[str, Any],
+    report_content: Dict[str, Any],
+    tier: str,
+) -> bool:
+    """管理员保存现算命盘 + 本地报告到 reports，并同步出生资料。"""
+    bi = _admin_serialize_birth_info(birth_info)
+    try:
+        supabase_client.save_user_profile(user_id, bi)
+    except Exception:
+        pass
+    try:
+        saved = supabase_client.save_report(
+            user_id,
+            bi,
+            bazi_data,
+            report_content,
+            payment_tier=tier or "free",
+        )
+        return bool(saved)
+    except Exception:
+        return False
 
 
 def _admin_maybe_json_dict(value: Any) -> Optional[Dict[str, Any]]:
@@ -493,25 +557,83 @@ def render_admin_user_results(
         report_content = _admin_maybe_json_dict(selected_report.get("report_content"))
 
     override_key = f"admin_bazi_override_{uid}"
+    report_override_key = f"admin_report_override_{uid}"
+    view_key = f"admin_view_mode_{uid}"
+    tier = str(selected_user.get("subscription_tier") or "free")
     can_recompute = bool(birth_info.get("birth_date"))
-    btn_col, tip_col = st.columns([1, 2])
-    with btn_col:
+
+    c_recompute, c_save, c_tip = st.columns([1, 1, 2])
+    with c_recompute:
         if st.button(
             t("admin_recompute_chart", lang),
             key=f"admin_recompute_btn_{uid}",
             use_container_width=True,
             disabled=not can_recompute,
-            type="secondary",
+            type="primary",
         ):
             computed = _admin_recompute_bazi(birth_info)
             if computed:
+                try:
+                    local_report = _admin_build_local_report(
+                        computed, birth_info, tier=tier, lang=lang
+                    )
+                except Exception:
+                    local_report = None
                 st.session_state[override_key] = computed
+                if local_report:
+                    st.session_state[report_override_key] = local_report
+                st.session_state[view_key] = "chart"
                 st.session_state["_admin_recompute_flash"] = uid
                 st.rerun()
             else:
                 st.error(t("admin_recompute_fail", lang))
-    with tip_col:
-        if st.session_state.get("_admin_recompute_flash") == uid:
+
+    # 优先用现算覆盖
+    if override_key in st.session_state:
+        bazi_data = st.session_state[override_key]
+    elif bazi_data is None and can_recompute:
+        bazi_data = _admin_recompute_bazi(birth_info)
+
+    if report_override_key in st.session_state:
+        report_content = st.session_state[report_override_key]
+
+    with c_save:
+        can_save = bool(bazi_data and can_recompute)
+        if st.button(
+            t("admin_save_chart", lang),
+            key=f"admin_save_chart_btn_{uid}",
+            use_container_width=True,
+            disabled=not can_save,
+            type="secondary",
+        ):
+            try:
+                to_save_report = report_content or _admin_build_local_report(
+                    bazi_data, birth_info, tier=tier, lang=lang
+                )
+            except Exception as e:
+                st.error(t("admin_render_fail", lang, err=str(e)))
+                to_save_report = None
+            if to_save_report and _admin_save_chart_and_report(
+                supabase_client,
+                user_id=uid,
+                birth_info=birth_info,
+                bazi_data=bazi_data,
+                report_content=to_save_report,
+                tier=tier,
+            ):
+                st.session_state.pop(override_key, None)
+                st.session_state.pop(report_override_key, None)
+                st.session_state[view_key] = "chart"
+                st.session_state["_admin_save_flash"] = uid
+                st.rerun()
+            else:
+                st.error(t("admin_save_chart_fail", lang))
+
+    with c_tip:
+        if st.session_state.get("_admin_save_flash") == uid:
+            st.session_state.pop("_admin_save_flash", None)
+            st.success(t("admin_save_chart_ok", lang))
+        elif st.session_state.get("_admin_recompute_flash") == uid:
             st.session_state.pop("_admin_recompute_flash", None)
             st.success(t("admin_recompute_ok", lang))
         elif not can_recompute:
@@ -519,12 +641,9 @@ def render_admin_user_results(
         elif override_key in st.session_state:
             st.caption(t("admin_bazi_using_recomputed", lang))
 
-    if override_key in st.session_state:
-        bazi_data = st.session_state[override_key]
-    elif bazi_data is None:
-        bazi_data = _admin_recompute_bazi(birth_info)
-        if bazi_data is not None:
-            st.caption(t("admin_bazi_recomputed", lang))
+    # 现算后强制落在命盘视图
+    if view_key not in st.session_state:
+        st.session_state[view_key] = "chart"
 
     view = st.radio(
         t("admin_view_mode", lang),
@@ -535,7 +654,7 @@ def render_admin_user_results(
             "liunian": t("admin_tab_liunian", lang),
         }.get(k, k),
         horizontal=True,
-        key=f"admin_view_mode_{uid}",
+        key=view_key,
     )
 
     try:
@@ -543,6 +662,7 @@ def render_admin_user_results(
             if not bazi_data:
                 st.info(t("admin_no_chart", lang))
             else:
+                st.markdown(f"#### 📊 {t('admin_tab_chart', lang)}")
                 with _admin_preview_session(
                     birth_info=birth_info or None,
                     bazi_data=bazi_data,
@@ -591,7 +711,6 @@ def render_admin_match(lang: str, supabase_client: Any, users: List[Dict[str, An
     """管理员：两人八字契合（同合婚八维，适用于婚姻/亲密/合作等关系参考）。"""
     from hehun import analyze_hehun, render_hehun_html
 
-    st.markdown(f"### 💞 {t('admin_match_heading', lang)}")
     st.caption(t("admin_match_intro", lang))
 
     if not users:
@@ -895,7 +1014,7 @@ def render_admin_page(lang: str, supabase_client) -> None:
         render_admin_user_results(lang, supabase_client, selected_user)
 
     st.markdown("---")
-    with st.container(border=True):
+    with st.expander(f"💞 {t('admin_match_heading', lang)}", expanded=False):
         render_admin_match(lang, supabase_client, manage_users)
 
     st.markdown("---")
