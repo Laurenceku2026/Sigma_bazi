@@ -1704,8 +1704,10 @@ def apply_scroll_section_if_needed():
 
 
 def render_ai_deep_cta(key_prefix: str = "ai") -> None:
-    """AI 深批入口（才消耗 DeepSeek / 次数）；本地报告已足够阅读。"""
+    """AI 深批入口（才消耗 DeepSeek / 次数）；不展示说明文案。"""
     if st.session_state.bazi_data is None:
+        return
+    if not report_gen:
         return
     tier = st.session_state.subscription_tier
     paid = tier in PAID_TIERS
@@ -1714,14 +1716,7 @@ def render_ai_deep_cta(key_prefix: str = "ai") -> None:
     trials = int((profile or {}).get("free_trials_remaining") or 0)
     expires = (profile or {}).get("subscription_expires_at")
 
-    st.markdown(f"#### ✨ {t('ai_deep_heading', lang)}")
-    st.caption(t("ai_deep_caption", lang))
-    if not report_gen:
-        st.caption(t("ai_engine_missing", lang))
-        return
-
     if paid:
-        st.caption(f"{t('remaining_reports', lang)}：{trials if tier != 'diamond' else '∞'}")
         can = can_generate_report(tier, trials, expires)
         label = t("ai_deep_btn_regen", lang) if has_report else t("ai_deep_btn", lang)
         if st.button(
@@ -1738,20 +1733,11 @@ def render_ai_deep_cta(key_prefix: str = "ai") -> None:
                     st.rerun()
                 elif st.session_state.get("show_join_membership"):
                     st.rerun()
-        if not can:
-            st.warning(
-                "会员次数不足或已到期，请升级后再 AI 深批。"
-                if _is_zh()
-                else "No quota or expired — upgrade for AI deep read."
-            )
     else:
         free_left = int((profile or {}).get("free_trials_remaining") or 0)
-        st.caption(
-            t("free_preview_quota", lang).format(left=free_left, total=FREE_PREVIEW_LIMIT)
-        )
         can = can_free_preview(free_left)
         if st.button(
-            t("ai_deep_btn_free", lang),
+            t("ai_deep_btn", lang),
             key=f"{key_prefix}_ai_deep_free",
             type="secondary",
             use_container_width=True,
@@ -1764,8 +1750,6 @@ def render_ai_deep_cta(key_prefix: str = "ai") -> None:
                     st.rerun()
                 elif st.session_state.get("show_join_membership"):
                     st.rerun()
-        if not can:
-            st.warning(t("free_preview_exhausted", lang))
 
 
 def render_results_bundle(*, key_prefix: str = "results") -> None:
