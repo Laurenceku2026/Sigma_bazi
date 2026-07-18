@@ -520,35 +520,69 @@ def _build_summary(**kw) -> List[str]:
     wuge = kw["wuge"]
     en = _is_en(lang)
     if en:
-        return [
+        out = [
             f"Name: {kw['display']} → Kangxi/traditional for strokes: {kw['trad']}",
-            f"Five grids — Heaven {wuge['tian']['number']}({_wx_label(wuge['tian']['wuxing'], lang)}), "
-            f"Person {wuge['ren']['number']}({_wx_label(wuge['ren']['wuxing'], lang)}), "
-            f"Earth {wuge['di']['number']}({_wx_label(wuge['di']['wuxing'], lang)}), "
-            f"Total {wuge['zong']['number']}({_wx_label(wuge['zong']['wuxing'], lang)}).",
-            f"San Cai: {_loc(wuge['sancai']['combo'], lang)} ({kw['sancai_tone']}).",
-            f"Vs BaZi favor {_join_wx(kw['favor'], lang)}: name signals help {_join_wx(kw['help_favor'], lang)}; "
-            f"caution {_join_wx(kw['hit_avoid'], lang)}.",
-            "Rule: reinforce favorable elements, not simply fill missing ones.",
         ]
+        disp = str(kw.get("display") or "")
+        trad_s = str(kw.get("trad") or "")
+        change_bits = []
+        if len(disp) == len(trad_s):
+            for a, b in zip(disp, trad_s):
+                if a != b:
+                    change_bits.append(f"「{a}」→ traditional 「{b}」")
+        for n in kw.get("variant_notes") or []:
+            change_bits.append(
+                f"「{n.get('char')}」 variant → count as 「{n.get('alias')}」 ({n.get('strokes')} strokes)"
+            )
+        if change_bits:
+            out.append("Variant note: " + "; ".join(change_bits))
+        out.extend(
+            [
+                f"Five grids — Heaven {wuge['tian']['number']}({_wx_label(wuge['tian']['wuxing'], lang)}), "
+                f"Person {wuge['ren']['number']}({_wx_label(wuge['ren']['wuxing'], lang)}), "
+                f"Earth {wuge['di']['number']}({_wx_label(wuge['di']['wuxing'], lang)}), "
+                f"Total {wuge['zong']['number']}({_wx_label(wuge['zong']['wuxing'], lang)}).",
+                f"San Cai: {_loc(wuge['sancai']['combo'], lang)} ({kw['sancai_tone']}).",
+                f"Vs BaZi favor {_join_wx(kw['favor'], lang)}: name signals help {_join_wx(kw['help_favor'], lang)}; "
+                f"caution {_join_wx(kw['hit_avoid'], lang)}.",
+                "Rule: reinforce favorable elements, not simply fill missing ones.",
+            ]
+        )
+        return out
     # 输入名保持原样，避免繁体界面把简体输入也转掉，便于看清「输入→康熙/繁体」
     convert = (
         f"{_loc('姓名：', lang)}{kw['display']}"
         f"{_loc(' → 计画用康熙/繁体：', lang)}{kw['trad']}"
     )
-    notes = kw.get("variant_notes") or []
+    notes = list(kw.get("variant_notes") or [])
+    # 简→繁字形变化提示（如 群→羣）
+    disp = str(kw.get("display") or "")
+    trad = str(kw.get("trad") or "")
+    char_changes = []
+    if len(disp) == len(trad):
+        for a, b in zip(disp, trad):
+            if a != b and _is_cjk(a) and _is_cjk(b):
+                char_changes.append((a, b))
     variant_line = ""
-    if notes:
-        bits = []
-        for n in notes:
+    bits = []
+    for a, b in char_changes:
+        if _is_en(lang):
+            bits.append(f"「{a}」→ traditional 「{b}」")
+        else:
+            bits.append(_loc(f"「{a}」转繁体为「{b}」", lang))
+    for n in notes:
+        if _is_en(lang):
+            bits.append(
+                f"「{n.get('char')}」 variant → count as 「{n.get('alias')}」 ({n.get('strokes')} strokes)"
+            )
+        else:
             bits.append(
                 _loc(
                     f"「{n.get('char')}」为异体，按常用字「{n.get('alias')}」{n.get('strokes')}画计",
                     lang,
                 )
-                if not _is_en(lang)
-                else f"「{n.get('char')}」 variant → count as 「{n.get('alias')}」 ({n.get('strokes')} strokes)"
             )
+    if bits:
         variant_line = ("；".join(bits) if not _is_en(lang) else "; ".join(bits))
     rest = [
         f"五格：天{wuge['tian']['number']}({wuge['tian']['wuxing']}) · "

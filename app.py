@@ -1921,22 +1921,30 @@ def render_name_tab() -> None:
             trad=result.get("traditional_name") or "",
         )
     )
-    notes = result.get("variant_notes") or []
-    if notes:
-        if lang == "en":
-            detail = "; ".join(
-                f"「{n.get('char')}」→ count as 「{n.get('alias')}」 ({n.get('strokes')} strokes)"
-                for n in notes
-            )
-        else:
-            detail = "；".join(
-                f"「{n.get('char')}」为异体，按常用字「{n.get('alias')}」{n.get('strokes')}画计"
-                for n in notes
-            )
-            if lang == "zh_hant":
-                from zh_convert import to_traditional
+    # 简繁字形差异 + 异体笔画回退提示
+    src = str(result.get("display_name") or name_val or "")
+    trad = str(result.get("traditional_name") or "")
+    bits = []
+    if len(src) == len(trad):
+        for a, b in zip(src, trad):
+            if a != b:
+                bits.append(
+                    f"「{a}」→ traditional 「{b}」"
+                    if lang == "en"
+                    else f"「{a}」转繁体为「{b}」"
+                )
+    for n in result.get("variant_notes") or []:
+        bits.append(
+            f"「{n.get('char')}」→ count as 「{n.get('alias')}」 ({n.get('strokes')} strokes)"
+            if lang == "en"
+            else f"「{n.get('char')}」为异体，按常用字「{n.get('alias')}」{n.get('strokes')}画计"
+        )
+    if bits:
+        detail = "; ".join(bits) if lang == "en" else "；".join(bits)
+        if lang == "zh_hant":
+            from zh_convert import to_traditional
 
-                detail = to_traditional(detail)
+            detail = to_traditional(detail)
         st.info(t("name_variant_note", lang).format(detail=detail))
 
     html = render_name_report_html(result, full=full_clean, lang=lang)
