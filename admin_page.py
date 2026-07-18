@@ -980,11 +980,12 @@ def render_admin_page(lang: str, supabase_client) -> None:
         email = str(u.get("email") or "").strip() or str(u.get("user_id") or "")[:8]
         return f"{name} · {email}"
 
-    tab_mgmt, tab_results, tab_match = st.tabs(
+    tab_mgmt, tab_results, tab_match, tab_feedback = st.tabs(
         [
             f"👥 {t('admin_tab_user_mgmt', lang)}",
             f"🔮 {t('admin_tab_user_results', lang)}",
             f"💞 {t('admin_tab_match', lang)}",
+            f"📋 {t('admin_tab_feedback', lang)}",
         ]
     )
 
@@ -1187,47 +1188,6 @@ def render_admin_page(lang: str, supabase_client) -> None:
                     st.rerun()
 
         st.markdown("---")
-        st.markdown(f"### 📋 {t('admin_survey_responses', lang)}")
-        surveys = supabase_client.list_survey_responses(limit=200) if supabase_client else []
-        if not surveys:
-            st.caption(t("admin_survey_empty", lang))
-        else:
-            srows = survey_rows_for_admin(surveys, lang)
-            st.dataframe(srows, use_container_width=True, hide_index=True, height=280)
-            with st.expander(t("admin_survey_full", lang), expanded=False):
-                from trial_survey import _bg_display
-
-                for r in surveys[:30]:
-                    st.markdown(
-                        f"**{str(r.get('created_at') or '')[:10]}** · "
-                        f"{r.get('email') or '-'} · {_bg_display(r.get('background'), lang)}"
-                    )
-                    st.write(r.get("open_feedback") or "—")
-                    st.markdown("---")
-
-        with st.expander(t("admin_export_template", lang), expanded=False):
-            st.markdown(t("admin_export_template_body", lang))
-            doc_dir = Path(__file__).resolve().parent / "docs"
-            qpath = doc_dir / "trial_questionnaire_zh_hant.md"
-            csvpath = doc_dir / "trial_questionnaire_table.csv"
-            if qpath.is_file():
-                st.download_button(
-                    t("admin_download_md", lang),
-                    data=qpath.read_text(encoding="utf-8"),
-                    file_name="sigma_fate_trial_questionnaire.md",
-                    mime="text/markdown",
-                    key="admin_download_questionnaire",
-                )
-            if csvpath.is_file():
-                st.download_button(
-                    t("admin_download_csv", lang),
-                    data=csvpath.read_text(encoding="utf-8-sig"),
-                    file_name="sigma_fate_trial_questionnaire.csv",
-                    mime="text/csv",
-                    key="admin_download_questionnaire_csv",
-                )
-
-        st.markdown("---")
         st.markdown(f"### 🔁 {t('bulk_ops', lang)}")
         bb1, bb2 = st.columns(2)
         with bb1:
@@ -1288,3 +1248,45 @@ def render_admin_page(lang: str, supabase_client) -> None:
     with tab_match:
         st.markdown(f"### 💞 {t('admin_match_heading', lang)}")
         render_admin_match(lang, supabase_client, manage_users)
+
+    # ========== Tab 4：用户反馈 ==========
+    with tab_feedback:
+        st.markdown(f"### 📋 {t('admin_survey_responses', lang)}")
+        surveys = supabase_client.list_survey_responses(limit=200) if supabase_client else []
+        if not surveys:
+            st.caption(t("admin_survey_empty", lang))
+        else:
+            srows = survey_rows_for_admin(surveys, lang)
+            st.dataframe(srows, use_container_width=True, hide_index=True, height=280)
+            with st.expander(t("admin_survey_full", lang), expanded=False):
+                from trial_survey import _bg_display
+
+                for r in surveys[:30]:
+                    st.markdown(
+                        f"**{str(r.get('created_at') or '')[:10]}** · "
+                        f"{r.get('email') or '-'} · {_bg_display(r.get('background'), lang)}"
+                    )
+                    st.write(r.get("open_feedback") or "—")
+                    st.markdown("---")
+
+        with st.expander(t("admin_export_template", lang), expanded=False):
+            st.markdown(t("admin_export_template_body", lang))
+            doc_dir = Path(__file__).resolve().parent / "docs"
+            qpath = doc_dir / "trial_questionnaire_zh_hant.md"
+            csvpath = doc_dir / "trial_questionnaire_table.csv"
+            if qpath.is_file():
+                st.download_button(
+                    t("admin_download_md", lang),
+                    data=qpath.read_text(encoding="utf-8"),
+                    file_name="sigma_fate_trial_questionnaire.md",
+                    mime="text/markdown",
+                    key="admin_download_questionnaire",
+                )
+            if csvpath.is_file():
+                st.download_button(
+                    t("admin_download_csv", lang),
+                    data=csvpath.read_text(encoding="utf-8-sig"),
+                    file_name="sigma_fate_trial_questionnaire.csv",
+                    mime="text/csv",
+                    key="admin_download_questionnaire_csv",
+                )
