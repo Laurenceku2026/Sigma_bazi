@@ -1879,21 +1879,40 @@ def render_name_tab() -> None:
     )
     compound = st.checkbox(t("name_compound", lang), value=False, key="name_tab_compound")
 
-    if st.button(t("name_analyze", lang), type="primary", use_container_width=True, key="name_tab_run"):
-        result = analyze_name_with_bazi(
-            name_val,
+    def _run_name_analysis(raw_name: str) -> dict:
+        return analyze_name_with_bazi(
+            raw_name,
             st.session_state.get("bazi_data"),
             compound=True if compound else None,
             lang=lang,
         )
-        st.session_state["name_analysis_result"] = result
+
+    if st.button(t("name_analyze", lang), type="primary", use_container_width=True, key="name_tab_run"):
+        st.session_state["name_analysis_result"] = _run_name_analysis(name_val)
 
     result = st.session_state.get("name_analysis_result")
+    # 切换语言后按当前语言重算，避免残留英文/简繁错配
+    if (
+        isinstance(result, dict)
+        and result.get("ok")
+        and result.get("lang") != lang
+        and (name_val or result.get("display_name"))
+    ):
+        result = _run_name_analysis(name_val or str(result.get("display_name") or ""))
+        st.session_state["name_analysis_result"] = result
+
     if not result:
         return
     if not result.get("ok"):
         st.error(result.get("message") or t("report_fail", lang))
         return
+
+    st.success(
+        t("name_kangxi_convert", lang).format(
+            src=result.get("display_name") or name_val,
+            trad=result.get("traditional_name") or "",
+        )
+    )
 
     html = render_name_report_html(result, full=full_clean, lang=lang)
     if not full_clean:
@@ -2575,17 +2594,23 @@ if st.session_state.get("show_join_membership"):
                 st.rerun()
 
 # --- 主导航 ---
-_nav = [
-    t("tab_input", lang),
-    t("tab_chart", lang),
-    t("tab_report", lang),
-    t("tab_liunian", lang),
-    t("tab_hehun", lang),
-    t("tab_name", lang),
-    t("tab_survey", lang),
+_nav_keys = [
+    "tab_input",
+    "tab_chart",
+    "tab_report",
+    "tab_liunian",
+    "tab_hehun",
+    "tab_name",
+    "tab_survey",
 ]
+_nav_fallback = {
+    "tab_name": "✍️ 姓名参考" if _is_zh() else "✍️ Name Reference",
+}
 nav_cols = st.columns(7)
-for i, lab in enumerate(_nav):
+for i, key in enumerate(_nav_keys):
+    lab = t(key, lang)
+    if lab == key:
+        lab = _nav_fallback.get(key, key)
     with nav_cols[i]:
         is_on = int(st.session_state.get("ui_tab", 0)) == i
         if st.button(
