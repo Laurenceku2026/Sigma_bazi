@@ -1190,11 +1190,11 @@ def generate_full_report(*, consume_quota: bool = True) -> bool:
 
 
 def go_results_section(section: str = "chart") -> None:
-    """跳到连续结果页的某一段：chart / report / liunian。"""
+    """切换到命盘/报告/流年 Tab（独立页，滚到顶部）。"""
     tab_map = {"chart": 1, "report": 2, "liunian": 3}
     st.session_state.ui_tab = tab_map.get(section, 1)
-    st.session_state["_scroll_section"] = section
-    st.session_state.pop("_scroll_top", None)
+    st.session_state["_scroll_top"] = True
+    st.session_state.pop("_scroll_section", None)
 
 
 def go_report_tab():
@@ -1203,6 +1203,12 @@ def go_report_tab():
 
 def go_liunian_tab():
     go_results_section("liunian")
+
+
+def _ensure_local_report() -> None:
+    """有命盘但无报告时，自动补本地报告（不耗 AI）。"""
+    if st.session_state.bazi_data is not None and not st.session_state.report_content:
+        generate_local_full_report()
 
 
 def render_report_tab_bottom_nav(report: dict, *, key_prefix: str = "report_bottom") -> None:
@@ -1764,13 +1770,14 @@ def render_ai_deep_cta(key_prefix: str = "ai") -> None:
 
 def render_results_bundle(*, key_prefix: str = "results") -> None:
     """
-    傻瓜流程：命盘 → 八字报告 → 流年 同一页连续下滚；
-    顶部 Tab 点击会滚到对应段落。
+    入口 A（命盘页）：命盘 → 八字报告 → 流年，同一页连续下滚。
+    顶部「八字报告 / 流年报告」仍是独立页（入口 B）。
     """
     if st.session_state.bazi_data is None:
         st.info(t("need_input", lang))
         return
 
+    _ensure_local_report()
     tier = st.session_state.subscription_tier
     paid = tier in PAID_TIERS
     report = st.session_state.report_content
@@ -1782,6 +1789,24 @@ def render_results_bundle(*, key_prefix: str = "results") -> None:
         st.caption(t("report_source_local", lang))
     elif src == "ai":
         st.caption(t("report_source_ai", lang))
+
+    jump_l, jump_r = st.columns(2)
+    with jump_l:
+        if st.button(
+            t("jump_to_report", lang),
+            key=f"{key_prefix}_open_report_tab",
+            use_container_width=True,
+        ):
+            go_report_tab()
+            st.rerun()
+    with jump_r:
+        if st.button(
+            t("jump_to_liunian", lang),
+            key=f"{key_prefix}_open_liunian_tab",
+            use_container_width=True,
+        ):
+            go_liunian_tab()
+            st.rerun()
 
     st.markdown(f"## 📊 {t('tab_chart', lang)}")
     render_bazi_chart(st.session_state.bazi_data, lang)
@@ -1844,7 +1869,120 @@ def render_results_bundle(*, key_prefix: str = "results") -> None:
         st.markdown(t("unlock_body", lang))
         render_membership_plans(f"{key_prefix}_unlock")
 
-    apply_scroll_section_if_needed()
+
+def render_report_tab_page(*, key_prefix: str = "tab_report") -> None:
+    """入口 B：顶部「八字报告」独立页。"""
+    if st.session_state.bazi_data is None:
+        st.info(t("need_input", lang))
+        return
+    _ensure_local_report()
+    tier = st.session_state.subscription_tier
+    paid = tier in PAID_TIERS
+    report = st.session_state.report_content
+    if not report:
+        st.warning(t("results_report_missing", lang))
+        if st.button(t("generate_local_now", lang), key=f"{key_prefix}_gen", type="primary"):
+            with st.spinner(t("generating", lang)):
+                if generate_local_full_report():
+                    st.rerun()
+        return
+
+    st.markdown(f"## 📄 {t('your_report', lang)}")
+    src = st.session_state.get("report_source") or ""
+    if src == "local":
+        st.caption(t("report_source_local", lang))
+    elif src == "ai":
+        st.caption(t("report_source_ai", lang))
+
+    report_lang = st.session_state.get("report_language")
+    if not report_lang_compatible(report_lang, lang):
+        st.warning(t("report_lang_mismatch", lang))
+        if st.button(t("report_regen_lang", lang), key=f"{key_prefix}_regen_lang"):
+            with st.spinner(t("generating", lang)):
+                if generate_local_full_report():
+                    st.rerun()
+
+    if ReportGenerator.resolve_liunian_key(report):
+        if st.button(
+            t("goto_liunian_report", lang),
+            key=f"{key_prefix}_to_liunian",
+            use_container_width=True,
+        ):
+            go_liunian_tab()
+            st.rerun()
+
+    if not paid:
+        st.warning(t("free_preview_banner", lang))
+    render_report_pages(report, protected=not paid, pages=range(1, 10))
+    render_ai_deep_cta(f"{key_prefix}_ai")
+    if paid:
+        st.markdown("---")
+        render_report_download_row(report, f"{key_prefix}_dl")
+        render_report_tab_bottom_nav(report, key_prefix=f"{key_prefix}_nav")
+    else:
+        render_report_tab_bottom_nav(report, key_prefix=f"{key_prefix}_nav_free")
+        st.markdown("---")
+        st.markdown(f"### {t('unlock_heading', lang)}")
+        st.markdown(t("unlock_body", lang))
+        render_membership_plans(f"{key_prefix}_unlock")
+
+
+def render_liunian_tab_page(*, key_prefix: str = "tab_liunian") -> None:
+    """入口 B：顶部「流年报告」独立页。"""
+    if st.session_state.bazi_data is None:
+        st.info(t("need_input", lang))
+        return
+    _ensure_local_report()
+    tier = st.session_state.subscription_tier
+    paid = tier in PAID_TIERS
+    report = st.session_state.report_content
+
+    st.markdown(f"## 📅 {t('liunian_heading', lang)}")
+    try:
+        from bazi_analysis import render_lifetime_fortune_html
+
+        st.markdown(
+            render_lifetime_fortune_html(st.session_state.bazi_data, lang),
+            unsafe_allow_html=True,
+        )
+        st.markdown("---")
+    except Exception:
+        pass
+
+    if not report:
+        st.info(t("results_liunian_need_report", lang))
+        if st.button(t("generate_local_now", lang), key=f"{key_prefix}_gen", type="primary"):
+            with st.spinner(t("generating", lang)):
+                if generate_local_full_report():
+                    st.rerun()
+        return
+
+    if not ReportGenerator.resolve_liunian_key(report):
+        st.info(t("results_no_liunian", lang))
+        if st.button(t("goto_full_report", lang), key=f"{key_prefix}_to_report"):
+            go_report_tab()
+            st.rerun()
+        return
+
+    if st.button(
+        t("goto_full_report", lang),
+        key=f"{key_prefix}_back_report",
+        use_container_width=True,
+    ):
+        go_report_tab()
+        st.rerun()
+
+    if not paid:
+        st.warning(t("free_preview_banner", lang))
+    render_liunian_report(report, protected=not paid)
+    if paid:
+        st.markdown("---")
+        render_report_download_row(report, f"{key_prefix}_dl")
+    else:
+        st.markdown("---")
+        st.markdown(f"### {t('unlock_heading', lang)}")
+        st.markdown(t("unlock_body", lang))
+        render_membership_plans(f"{key_prefix}_unlock")
 
 
 def render_report_download_row(report: dict, key_prefix: str = "dl"):
@@ -2247,7 +2385,6 @@ _nav = [
     t("tab_hehun", lang),
     t("tab_survey", lang),
 ]
-_SECTION_BY_TAB = {1: "chart", 2: "report", 3: "liunian"}
 nav_cols = st.columns(6)
 for i, lab in enumerate(_nav):
     with nav_cols[i]:
@@ -2259,12 +2396,8 @@ for i, lab in enumerate(_nav):
             use_container_width=True,
         ):
             st.session_state.ui_tab = i
-            if i in _SECTION_BY_TAB:
-                st.session_state["_scroll_section"] = _SECTION_BY_TAB[i]
-                st.session_state.pop("_scroll_top", None)
-            else:
-                st.session_state["_scroll_top"] = True
-                st.session_state.pop("_scroll_section", None)
+            st.session_state["_scroll_top"] = True
+            st.session_state.pop("_scroll_section", None)
             st.rerun()
         if i == 5:
             st.caption(t("survey_gold_hint", lang))
@@ -2346,28 +2479,38 @@ if _tab == 0:
     if st.session_state.show_register and not is_registered():
         st.info(t("need_register", lang))
 
-    # 已有结果：同页连续展示，避免不知道还有报告
     if st.session_state.bazi_data is not None:
-        st.markdown("---")
-        render_results_bundle(key_prefix="tab_input")
+        st.success(t("input_ready_hint", lang))
+        if st.button(
+            t("open_chart_scroll", lang),
+            key="input_open_chart",
+            type="primary",
+            use_container_width=True,
+        ):
+            go_results_section("chart")
+            st.rerun()
 
-# ========== Tab 1–3：同一连续结果页（Tab 只负责跳到段落） ==========
-elif _tab in (1, 2, 3):
+# ========== Tab 1：命盘（可下滚连看报告+流年） ==========
+elif _tab == 1:
     if st.session_state.bazi_data is None:
         st.info(t("need_input", lang))
         if not is_registered():
             st.caption(t("login_prompt", lang))
-            if st.button(t("login_btn", lang), key="tab_results_login"):
+            if st.button(t("login_btn", lang), key="tab_chart_login"):
                 st.session_state.show_login = True
                 st.rerun()
     else:
-        # 若只有命盘没有报告（旧会话），自动补本地报告
-        if not st.session_state.report_content:
-            with st.spinner(t("generating", lang)):
-                generate_local_full_report()
-        render_results_bundle(key_prefix=f"tab_results_{_tab}")
+        render_results_bundle(key_prefix="tab_chart")
 
-# ========== Tab 5：八字合婚 ==========
+# ========== Tab 2：八字报告（独立页） ==========
+elif _tab == 2:
+    render_report_tab_page(key_prefix="tab_report_page")
+
+# ========== Tab 3：流年报告（独立页） ==========
+elif _tab == 3:
+    render_liunian_tab_page(key_prefix="tab_liunian_page")
+
+# ========== Tab 4：八字合婚 ==========
 elif _tab == 4:
     render_hehun_tab()
 
