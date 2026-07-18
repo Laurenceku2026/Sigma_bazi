@@ -24,7 +24,11 @@ from report_generator import ReportGenerator
 from stripe_payment import StripeClient
 from supabase_client import AppAccessDenied, SupabaseClient
 from hehun import analyze_hehun, render_hehun_html
-from name_analysis import analyze_name_with_bazi, render_name_report_html
+from name_analysis import (
+    analyze_name_with_bazi,
+    format_name_theory_markdown,
+    render_name_report_html,
+)
 from trial_survey import render_trial_survey
 from utils import (
     format_bazi_display,
@@ -1855,6 +1859,8 @@ def render_name_tab() -> None:
     st.markdown(f"### {t('name_heading', lang)}")
     st.caption(t("name_intro", lang))
     st.caption(t("name_stroke_note", lang))
+    with st.expander(t("name_theory_title", lang), expanded=False):
+        st.markdown(format_name_theory_markdown(lang))
 
     tier = st.session_state.subscription_tier or "free"
     full_clean = tier in ("gold", "diamond")

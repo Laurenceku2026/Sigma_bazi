@@ -212,6 +212,139 @@ def number_luck(n: int) -> str:
     return _NUM_LUCK.get(k, "半吉")
 
 
+def format_num_luck_markdown_table(lang: str = "zh") -> str:
+    """八十一数理吉凶表（与站内判定同源）。"""
+    # 每行 9 个：上行数字、下行吉凶
+    rows: List[str] = []
+    for start in range(1, 82, 9):
+        nums = list(range(start, min(start + 9, 82)))
+        rows.append("| " + " | ".join(str(n) for n in nums) + " |")
+        rows.append("| " + " | ".join("---" for _ in nums) + " |")
+        rows.append(
+            "| "
+            + " | ".join(_luck_label(_NUM_LUCK[n], lang) for n in nums)
+            + " |"
+        )
+        rows.append("")
+    return "\n".join(rows).rstrip()
+
+
+def format_name_theory_markdown(lang: str = "zh") -> str:
+    """姓名详批页「姓名理论」折叠区正文。"""
+    # 案例：刘德华（与站内康熙笔画 / 五格公式一致）
+    example_src = "刘德华"
+    example_trad = to_traditional(example_src)
+    surname, given, _ = split_surname_given(example_trad, compound=False)
+    wuge = compute_wuge(surname, given, compound=False)
+    char_bits = []
+    for item in wuge.get("chars") or []:
+        char_bits.append(f"{item['char']} {item['strokes']}")
+    char_line = "、".join(char_bits) if not _is_en(lang) else ", ".join(
+        f"{c['char']}={c['strokes']}" for c in (wuge.get("chars") or [])
+    )
+
+    def g(key: str) -> str:
+        cell = wuge.get(key) or {}
+        n = cell.get("number")
+        luck = _luck_label(str(cell.get("luck") or ""), lang)
+        wx = _wx_label(str(cell.get("wuxing") or ""), lang)
+        return f"{n}（{wx}·{luck}）" if not _is_en(lang) else f"{n} ({wx}, {luck})"
+
+    table = format_num_luck_markdown_table(lang)
+
+    if _is_en(lang):
+        return "\n".join(
+            [
+                "#### Five Grids",
+                "",
+                "- **Heaven (天格)**: ancestral / parental influence (from the surname)",
+                "- **Person (人格)**: main luck — core personal fortune (surname + first given character)",
+                "- **Earth (地格)**: early luck — youth and foundation (given-name characters)",
+                "- **Outer (外格)**: side luck — social circle, outer world, later side influence",
+                "- **Total (总格)**: lifetime overall luck",
+                "",
+                "#### Stroke & Five-Grid formulas (single surname + two-character given name)",
+                "",
+                "- Heaven = surname strokes + 1",
+                "- Person = surname strokes + first given strokes",
+                "- Earth = first given strokes + last given strokes",
+                "- Outer = last given strokes + 1",
+                "- Total = sum of all name strokes",
+                "",
+                "Compound surnames / single given names use a slightly different pairing; "
+                "this site picks the formula from surname/given length automatically.",
+                "",
+                "Numbers above 81 reduce as `((n - 1) % 81) + 1` before looking up luck.",
+                "",
+                "#### Example: 刘德华",
+                "",
+                f"Input 「{example_src}」 → Kangxi/traditional 「{example_trad}」",
+                "",
+                f"Strokes: {char_line}",
+                "",
+                f"- Heaven {g('tian')}",
+                f"- Person {g('ren')}",
+                f"- Earth {g('di')}",
+                f"- Outer {g('wai')}",
+                f"- Total {g('zong')}",
+                "",
+                "#### 81-number luck table (site reference)",
+                "",
+                table,
+                "",
+                "_Reference only; schools of nameology may differ slightly._",
+            ]
+        )
+
+    # 案例输入名保持简体「刘德华」，避免繁体界面整段转换后看不出简繁差异
+    parts = [
+        _loc("#### 五格含义", lang),
+        "",
+        _loc("- **天格**：祖上/父母影响（姓）", lang),
+        _loc("- **人格**：主运，本人核心运势（姓+名首字）", lang),
+        _loc("- **地格**：前运，年轻与基础（名的字）", lang),
+        _loc("- **外格**：副运，社交、外界、晚年旁支影响", lang),
+        _loc("- **总格**：一生总运", lang),
+        "",
+        _loc("#### 笔画与五格计算（单姓复名）", lang),
+        "",
+        _loc("- 天格 = 姓画数 + 1", lang),
+        _loc("- 人格 = 姓画数 + 名首字画数", lang),
+        _loc("- 地格 = 名首字画数 + 名尾字画数", lang),
+        _loc("- 外格 = 名尾字画数 + 1", lang),
+        _loc("- 总格 = 姓名全部画数之和", lang),
+        "",
+        _loc("复姓、单名时组合略有不同；站内会按姓/名长度自动选用公式。", lang),
+        "",
+        _loc("超过 81 的数理按 `((n - 1) % 81) + 1` 归入八十一数理后再看吉凶。", lang),
+        "",
+        _loc("#### 案例：", lang) + example_src,
+        "",
+        (
+            _loc("输入「", lang)
+            + example_src
+            + _loc("」→ 康熙/繁体「", lang)
+            + example_trad
+            + _loc("」", lang)
+        ),
+        "",
+        _loc("笔画：", lang) + char_line,
+        "",
+        _loc("- 天格 ", lang) + g("tian"),
+        _loc("- 人格 ", lang) + g("ren"),
+        _loc("- 地格 ", lang) + g("di"),
+        _loc("- 外格 ", lang) + g("wai"),
+        _loc("- 总格 ", lang) + g("zong"),
+        "",
+        _loc("#### 八十一数理吉凶表（站内参考）", lang),
+        "",
+        table,
+        "",
+        _loc("_仅供参考；各派姓名学对个别数理归类或有差异。_", lang),
+    ]
+    return "\n".join(parts)
+
+
 def _is_cjk(ch: str) -> bool:
     o = ord(ch)
     return (
