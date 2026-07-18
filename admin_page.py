@@ -316,7 +316,6 @@ def render_admin_user_results(
     from report_generator import ReportGenerator
     from utils import render_bazi_chart
 
-    st.markdown(f"### 🔮 {t('admin_user_results', lang)}")
     st.caption(t("admin_user_results_hint", lang))
 
     uid = selected_user.get("user_id")
@@ -353,6 +352,14 @@ def render_admin_user_results(
                 if k not in merged or merged.get(k) in (None, ""):
                     merged[k] = v
             birth_info = merged
+        st.success(
+            t(
+                "admin_report_loaded",
+                lang,
+                n=len(reports),
+                when=_safe_datetime(selected_report.get("created_at")),
+            )
+        )
     else:
         st.info(t("admin_no_saved_report", lang))
 
@@ -369,60 +376,65 @@ def render_admin_user_results(
     if recomputed:
         st.caption(t("admin_bazi_recomputed", lang))
 
-    tab_chart, tab_report, tab_liunian = st.tabs(
-        [
-            t("admin_tab_chart", lang),
-            t("admin_tab_report", lang),
-            t("admin_tab_liunian", lang),
-        ]
+    view = st.radio(
+        t("admin_view_mode", lang),
+        options=["chart", "report", "liunian"],
+        format_func=lambda k: {
+            "chart": t("admin_tab_chart", lang),
+            "report": t("admin_tab_report", lang),
+            "liunian": t("admin_tab_liunian", lang),
+        }.get(k, k),
+        horizontal=True,
+        key=f"admin_view_mode_{uid}",
     )
 
-    with tab_chart:
-        if not bazi_data:
-            st.info(t("admin_no_chart", lang))
-        else:
-            with _admin_preview_session(
-                birth_info=birth_info or None,
-                bazi_data=bazi_data,
-            ):
-                render_bazi_chart(bazi_data, lang)
-
-    with tab_report:
-        if not report_content:
-            st.info(t("admin_no_report", lang))
-        else:
-            _admin_render_report_pages(
-                report_content,
-                lang=lang,
-                bazi_data=bazi_data,
-                pages=range(1, 10),
-            )
-
-    with tab_liunian:
-        if not report_content:
-            st.info(t("admin_no_report", lang))
-        else:
-            lk = ReportGenerator.resolve_liunian_key(report_content)
-            if not lk:
-                st.info(t("admin_no_liunian", lang))
+    try:
+        if view == "chart":
+            if not bazi_data:
+                st.info(t("admin_no_chart", lang))
             else:
-                if bazi_data:
-                    try:
-                        from bazi_analysis import render_lifetime_fortune_html
-
-                        st.markdown(
-                            render_lifetime_fortune_html(bazi_data, lang),
-                            unsafe_allow_html=True,
-                        )
-                    except Exception:
-                        pass
-                idx = 10 if lk == "page10" else 9
+                with _admin_preview_session(
+                    birth_info=birth_info or None,
+                    bazi_data=bazi_data,
+                ):
+                    render_bazi_chart(bazi_data, lang)
+        elif view == "report":
+            if not report_content:
+                st.info(t("admin_no_report", lang))
+            else:
                 _admin_render_report_pages(
                     report_content,
                     lang=lang,
                     bazi_data=bazi_data,
-                    pages=range(idx, idx + 1),
+                    pages=range(1, 10),
                 )
+        else:
+            if not report_content:
+                st.info(t("admin_no_report", lang))
+            else:
+                lk = ReportGenerator.resolve_liunian_key(report_content)
+                if not lk:
+                    st.info(t("admin_no_liunian", lang))
+                else:
+                    if bazi_data:
+                        try:
+                            from bazi_analysis import render_lifetime_fortune_html
+
+                            st.markdown(
+                                render_lifetime_fortune_html(bazi_data, lang),
+                                unsafe_allow_html=True,
+                            )
+                        except Exception:
+                            pass
+                    idx = 10 if lk == "page10" else 9
+                    _admin_render_report_pages(
+                        report_content,
+                        lang=lang,
+                        bazi_data=bazi_data,
+                        pages=range(idx, idx + 1),
+                    )
+    except Exception as e:
+        st.error(t("admin_render_fail", lang, err=str(e)))
 
 
 def render_admin_login(lang: str, username_expected: str, password_expected: str) -> None:
@@ -561,9 +573,6 @@ def render_admin_page(lang: str, supabase_client) -> None:
             t("admin_show_all_caption", lang, shown=len(profiled), total=len(users))
         )
 
-    st.markdown("---")
-    st.markdown(f"### 📋 {t('user_list', lang)}")
-
     if not view_users:
         st.info(
             t("no_users", lang)
@@ -575,6 +584,47 @@ def render_admin_page(lang: str, supabase_client) -> None:
         # 仍允许在全部模式下管理；若默认空但 users 非空，用全部继续选用户
         view_users = users
 
+    # —— 先选用户并查看命盘/报告（放在大表上方，避免被挡住）——
+    manage_users = users
+    def _user_option_label(u: Dict[str, Any]) -> str:
+        name = str(u.get("display_name") or "").strip() or "-"
+        email = str(u.get("email") or "").strip() or str(u.get("user_id") or "")[:8]
+        return f"{name} · {email}"
+
+    st.markdown("---")
+    st.markdown(f"### 🔮 {t('admin_user_results', lang)}")
+    st.info(t("admin_user_results_howto", lang))
+    selected_idx = st.selectbox(
+        t("select_user", lang),
+        options=list(range(len(manage_users))),
+        format_func=lambda i: _user_option_label(manage_users[i]),
+        key="admin_select_user_idx",
+    )
+    selected_user = manage_users[int(selected_idx)] if manage_users else None
+    if not selected_user:
+        return
+
+    st.caption(
+        f"{t('current_user', lang)}: "
+        f"{selected_user.get('email') or selected_user.get('user_id')} · "
+        f"{t('last_login_col', lang)} {_safe_datetime(selected_user.get('last_login_at'))}"
+    )
+
+    st.markdown(f"#### 📍 {t('admin_birth_profile', lang)}")
+    bc1, bc2, bc3, bc4 = st.columns(4)
+    bc1.metric(t("admin_col_name", lang), selected_user.get("display_name") or "-")
+    bc2.metric(t("admin_col_birthday", lang), _safe_date(selected_user.get("birth_date")))
+    bc3.metric(t("admin_col_time", lang), _format_birth_time(selected_user))
+    bc4.metric(t("admin_col_gender", lang), selected_user.get("gender") or "-")
+    st.caption(
+        t("admin_birth_place_label", lang) + _format_birth_location(selected_user, lang)
+    )
+
+    with st.container(border=True):
+        render_admin_user_results(lang, supabase_client, selected_user)
+
+    st.markdown("---")
+    st.markdown(f"### 📋 {t('user_list', lang)}")
     table_rows = []
     for u in view_users:
         table_rows.append(
@@ -593,42 +643,6 @@ def render_admin_page(lang: str, supabase_client) -> None:
             }
         )
     st.dataframe(table_rows, use_container_width=True, hide_index=True, height=360)
-
-    # 选择用户（编辑时用完整列表）
-    manage_users = users
-    options = [
-        f"{u.get('email') or u.get('user_id')}|{u.get('user_id')}" for u in manage_users
-    ]
-    labels = [o.split("|")[0] for o in options]
-    selected_label = st.selectbox(t("select_user", lang), labels, key="admin_select_user")
-    selected_user = next(
-        (
-            u
-            for u, lab in zip(manage_users, labels)
-            if lab == selected_label
-        ),
-        None,
-    )
-    if not selected_user:
-        return
-
-    st.caption(f"{t('current_user', lang)}: {selected_user.get('email') or selected_user.get('user_id')}")
-    st.caption(
-        f"{t('last_login_col', lang)}: {_safe_datetime(selected_user.get('last_login_at'))}"
-    )
-
-    st.markdown(f"#### 📍 {t('admin_birth_profile', lang)}")
-    bc1, bc2, bc3, bc4 = st.columns(4)
-    bc1.metric(t("admin_col_name", lang), selected_user.get("display_name") or "-")
-    bc2.metric(t("admin_col_birthday", lang), _safe_date(selected_user.get("birth_date")))
-    bc3.metric(t("admin_col_time", lang), _format_birth_time(selected_user))
-    bc4.metric(t("admin_col_gender", lang), selected_user.get("gender") or "-")
-    st.caption(
-        t("admin_birth_place_label", lang) + _format_birth_location(selected_user, lang)
-    )
-
-    st.markdown("---")
-    render_admin_user_results(lang, supabase_client, selected_user)
 
     st.markdown("---")
     st.markdown(f"### 📝 {t('edit_subscription', lang)}")
