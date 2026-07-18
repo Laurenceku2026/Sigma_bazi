@@ -111,6 +111,14 @@ class SupabaseClient:
         self.last_error = f"{where}: {err}"
         print(self.last_error)
 
+    def _jsonable(self, value: Any) -> Any:
+        """确保可写入 JSONB：tuple→list、date/datetime→str 等。"""
+        try:
+            return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+        except Exception as e:
+            self._set_error("_jsonable", e)
+            raise
+
     # ---------- 登录 / 权限校验 ----------
 
     def verify_app_access(
@@ -1070,28 +1078,48 @@ class SupabaseClient:
         report_content: Dict,
         report_id: Optional[str] = None,
         payment_tier: str = "monthly",
-    ) -> Dict:
+    ) -> Optional[Dict]:
+        """写入 reports。成功返回行；失败返回 None，并设置 last_error。"""
+        self.last_error = None
         # 写入前校验：防止把报告写到非本 App 用户名下
         self.verify_app_access(user_id)
 
-        data = self._with_app_id(
-            {
-                "report_id": report_id or self._generate_report_id(),
-                "user_id": user_id,
-                "birth_info": birth_info,
-                "bazi_data": bazi_data,
-                "report_content": report_content,
-                "payment_tier": payment_tier,
-                "created_at": self._now(),
-            }
-        )
+        rid = report_id or self._generate_report_id()
+        try:
+            data = self._with_app_id(
+                {
+                    "report_id": rid,
+                    "user_id": user_id,
+                    "birth_info": self._jsonable(birth_info or {}),
+                    "bazi_data": self._jsonable(bazi_data or {}),
+                    "report_content": self._jsonable(report_content or {}),
+                    "payment_tier": payment_tier or "free",
+                    "created_at": self._now(),
+                }
+            )
+        except Exception as e:
+            self._set_error("save_report.serialize", e)
+            return None
 
         try:
             result = self._table("reports").insert(data).execute()
-            return result.data[0] if result.data else data
+            row = result.data[0] if result.data else None
+            if row:
+                return row
+            # insert 无返回行时（部分 RLS / Prefer 配置）再读回确认
+            verified = self.get_report(rid, user_id=user_id)
+            if verified:
+                return verified
+            self.last_error = (
+                f"save_report: insert returned empty for report_id={rid}"
+            )
+            print(self.last_error)
+            return None
+        except AppAccessDenied:
+            raise
         except Exception as e:
-            print(f"Save report error: {e}")
-            return data
+            self._set_error("save_report", e)
+            return None
 
     def get_reports(self, user_id: str, limit: int = 10) -> List[Dict]:
         try:
@@ -1109,7 +1137,7 @@ class SupabaseClient:
         except AppAccessDenied:
             raise
         except Exception as e:
-            print(f"Get reports error: {e}")
+            self._set_error("get_reports", e)
             return []
 
     def get_report(self, report_id: str, user_id: Optional[str] = None) -> Optional[Dict]:
@@ -1125,7 +1153,7 @@ class SupabaseClient:
             result = query.limit(1).execute()
             return result.data[0] if result.data else None
         except Exception as e:
-            print(f"Get report error: {e}")
+            self._set_error("get_report", e)
             return None
 
     def delete_report(self, report_id: str, user_id: str) -> bool:

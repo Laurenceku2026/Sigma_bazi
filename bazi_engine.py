@@ -524,7 +524,11 @@ class BaziEngine:
                 ],
             }
         return {
-            "bazi": self.bazi,
+            # list 而非 tuple，保证 JSONB / PostgREST 序列化稳定
+            "bazi": {
+                name: list(pillar) if isinstance(pillar, (list, tuple)) else pillar
+                for name, pillar in self.bazi.items()
+            },
             "pillars": pillars,
             "day_master": self.day_master,
             "day_branch": self.day_branch,
