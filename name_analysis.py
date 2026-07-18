@@ -48,6 +48,7 @@ def _wx_label(wx: str, lang: str) -> str:
 # 姓名学常见康熙笔画校正（与通用笔顺库不一致时）
 _NAMEOLOGY_STROKE_OVERRIDES: Dict[str, int] = {
     "華": 12,
+    "羣": 13,  # 群之异体（OpenCC 常把「群」转为「羣」）
     "興": 16,
     "艷": 24,
     "靈": 24,
@@ -85,6 +86,22 @@ _NAMEOLOGY_STROKE_OVERRIDES: Dict[str, int] = {
     "露": 21,
     "霹": 21,
     "靂": 24,
+}
+
+# 异体 / 旧字形 → 笔画库中的常用字（查不到时回退，不中断报告）
+_VARIANT_STROKE_ALIASES: Dict[str, str] = {
+    "羣": "群",
+    "峯": "峰",
+    "爲": "為",
+    "眞": "真",
+    "衆": "眾",
+    "裏": "裡",
+    "牀": "床",
+    "敎": "教",
+    "駡": "罵",
+    "麪": "麵",
+    "綫": "線",
+    "啓": "啟",
 }
 
 # 81 数理简表：吉 / 半吉 / 凶（参考五格剖象常用归类，供参考）
@@ -141,8 +158,8 @@ def _stroke_table() -> Dict[str, int]:
         return {}
 
 
-def stroke_of(ch: str) -> Optional[int]:
-    """康熙/姓名学笔画；未知返回 None。"""
+def _lookup_stroke_raw(ch: str) -> Optional[int]:
+    """单字直接查笔画（不含异体回退）。"""
     if not ch:
         return None
     if ch in _NAMEOLOGY_STROKE_OVERRIDES:
@@ -150,12 +167,30 @@ def stroke_of(ch: str) -> Optional[int]:
     table = _stroke_table()
     if ch in table:
         return table[ch]
-    # 数字字
     digit_map = {
         "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
         "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
     }
     return digit_map.get(ch)
+
+
+def resolve_stroke(ch: str) -> Tuple[Optional[int], Optional[str]]:
+    """查笔画；若用异体回退，返回 (画数, 回退用字)。"""
+    n = _lookup_stroke_raw(ch)
+    if n is not None:
+        return n, None
+    alias = _VARIANT_STROKE_ALIASES.get(ch)
+    if alias:
+        n2 = _lookup_stroke_raw(alias)
+        if n2 is not None:
+            return n2, alias
+    return None, None
+
+
+def stroke_of(ch: str) -> Optional[int]:
+    """康熙/姓名学笔画；未知返回 None（含异体回退）。"""
+    n, _ = resolve_stroke(ch)
+    return n
 
 
 def number_wuxing(n: int) -> str:
@@ -242,16 +277,20 @@ def char_wuxing_hints(ch: str) -> Dict[str, Any]:
 
 
 def compute_wuge(surname: str, given: str, *, compound: bool) -> Dict[str, Any]:
-    s_strokes = [stroke_of(c) for c in surname]
-    g_strokes = [stroke_of(c) for c in given]
-    if any(x is None for x in s_strokes + g_strokes) or not surname or not given:
-        missing = [
-            c for c, n in zip(surname + given, s_strokes + g_strokes) if n is None
-        ]
-        return {"ok": False, "missing": missing}
+    resolved = [resolve_stroke(c) for c in surname + given]
+    strokes = [n for n, _ in resolved]
+    variant_notes: List[Dict[str, Any]] = []
+    for c, (n, alias) in zip(surname + given, resolved):
+        if alias and n is not None:
+            variant_notes.append(
+                {"char": c, "alias": alias, "strokes": int(n)}
+            )
+    if any(x is None for x in strokes) or not surname or not given:
+        missing = [c for c, n in zip(surname + given, strokes) if n is None]
+        return {"ok": False, "missing": missing, "variant_notes": variant_notes}
 
-    s_nums = [int(x) for x in s_strokes]  # type: ignore
-    g_nums = [int(x) for x in g_strokes]  # type: ignore
+    s_nums = [int(x) for x in strokes[: len(surname)]]
+    g_nums = [int(x) for x in strokes[len(surname) :]]
     total = sum(s_nums) + sum(g_nums)
 
     if compound:
@@ -290,6 +329,7 @@ def compute_wuge(surname: str, given: str, *, compound: bool) -> Dict[str, Any]:
             {"char": c, "strokes": n, "stroke_wuxing": number_wuxing(n)}
             for c, n in zip(surname + given, s_nums + g_nums)
         ],
+        "variant_notes": variant_notes,
         "tian": pack(tian),
         "ren": pack(ren),
         "di": pack(di),
@@ -406,6 +446,7 @@ def analyze_name_with_bazi(
     else:
         sancai_tone = "neutral" if en else _loc("中平", lang)
 
+    variant_notes = list(wuge.get("variant_notes") or [])
     summary_lines = _build_summary(
         display=display,
         trad=trad,
@@ -416,6 +457,7 @@ def analyze_name_with_bazi(
         hit_avoid=hit_avoid,
         missing_wx=missing_wx,
         sancai_tone=sancai_tone,
+        variant_notes=variant_notes,
         lang=lang,
     )
     detail_lines = _build_details(
@@ -439,6 +481,7 @@ def analyze_name_with_bazi(
         "surname": surname,
         "given": given,
         "compound": is_compound,
+        "variant_notes": variant_notes,
         "wuge": wuge,
         "chars": char_details,
         "bazi": {
@@ -477,22 +520,70 @@ def _build_summary(**kw) -> List[str]:
     wuge = kw["wuge"]
     en = _is_en(lang)
     if en:
-        return [
+        out = [
             f"Name: {kw['display']} → Kangxi/traditional for strokes: {kw['trad']}",
-            f"Five grids — Heaven {wuge['tian']['number']}({_wx_label(wuge['tian']['wuxing'], lang)}), "
-            f"Person {wuge['ren']['number']}({_wx_label(wuge['ren']['wuxing'], lang)}), "
-            f"Earth {wuge['di']['number']}({_wx_label(wuge['di']['wuxing'], lang)}), "
-            f"Total {wuge['zong']['number']}({_wx_label(wuge['zong']['wuxing'], lang)}).",
-            f"San Cai: {_loc(wuge['sancai']['combo'], lang)} ({kw['sancai_tone']}).",
-            f"Vs BaZi favor {_join_wx(kw['favor'], lang)}: name signals help {_join_wx(kw['help_favor'], lang)}; "
-            f"caution {_join_wx(kw['hit_avoid'], lang)}.",
-            "Rule: reinforce favorable elements, not simply fill missing ones.",
         ]
+        disp = str(kw.get("display") or "")
+        trad_s = str(kw.get("trad") or "")
+        change_bits = []
+        if len(disp) == len(trad_s):
+            for a, b in zip(disp, trad_s):
+                if a != b:
+                    change_bits.append(f"「{a}」→ traditional 「{b}」")
+        for n in kw.get("variant_notes") or []:
+            change_bits.append(
+                f"「{n.get('char')}」 variant → count as 「{n.get('alias')}」 ({n.get('strokes')} strokes)"
+            )
+        if change_bits:
+            out.append("Variant note: " + "; ".join(change_bits))
+        out.extend(
+            [
+                f"Five grids — Heaven {wuge['tian']['number']}({_wx_label(wuge['tian']['wuxing'], lang)}), "
+                f"Person {wuge['ren']['number']}({_wx_label(wuge['ren']['wuxing'], lang)}), "
+                f"Earth {wuge['di']['number']}({_wx_label(wuge['di']['wuxing'], lang)}), "
+                f"Total {wuge['zong']['number']}({_wx_label(wuge['zong']['wuxing'], lang)}).",
+                f"San Cai: {_loc(wuge['sancai']['combo'], lang)} ({kw['sancai_tone']}).",
+                f"Vs BaZi favor {_join_wx(kw['favor'], lang)}: name signals help {_join_wx(kw['help_favor'], lang)}; "
+                f"caution {_join_wx(kw['hit_avoid'], lang)}.",
+                "Rule: reinforce favorable elements, not simply fill missing ones.",
+            ]
+        )
+        return out
     # 输入名保持原样，避免繁体界面把简体输入也转掉，便于看清「输入→康熙/繁体」
     convert = (
         f"{_loc('姓名：', lang)}{kw['display']}"
         f"{_loc(' → 计画用康熙/繁体：', lang)}{kw['trad']}"
     )
+    notes = list(kw.get("variant_notes") or [])
+    # 简→繁字形变化提示（如 群→羣）
+    disp = str(kw.get("display") or "")
+    trad = str(kw.get("trad") or "")
+    char_changes = []
+    if len(disp) == len(trad):
+        for a, b in zip(disp, trad):
+            if a != b and _is_cjk(a) and _is_cjk(b):
+                char_changes.append((a, b))
+    variant_line = ""
+    bits = []
+    for a, b in char_changes:
+        if _is_en(lang):
+            bits.append(f"「{a}」→ traditional 「{b}」")
+        else:
+            bits.append(_loc(f"「{a}」转繁体为「{b}」", lang))
+    for n in notes:
+        if _is_en(lang):
+            bits.append(
+                f"「{n.get('char')}」 variant → count as 「{n.get('alias')}」 ({n.get('strokes')} strokes)"
+            )
+        else:
+            bits.append(
+                _loc(
+                    f"「{n.get('char')}」为异体，按常用字「{n.get('alias')}」{n.get('strokes')}画计",
+                    lang,
+                )
+            )
+    if bits:
+        variant_line = ("；".join(bits) if not _is_en(lang) else "; ".join(bits))
     rest = [
         f"五格：天{wuge['tian']['number']}({wuge['tian']['wuxing']}) · "
         f"人{wuge['ren']['number']}({wuge['ren']['wuxing']}) · "
@@ -503,7 +594,13 @@ def _build_summary(**kw) -> List[str]:
         f"需留意 {_join_wx(kw['hit_avoid'], lang)}",
         "要点：按喜用神补益，不是命盘缺什么就补什么。",
     ]
-    return [convert] + [_loc(x, lang) for x in rest]
+    out = [convert]
+    if variant_line:
+        out.append(
+            (_loc("异体提示：", lang) if not _is_en(lang) else "Variant note: ")
+            + variant_line
+        )
+    return out + [_loc(x, lang) for x in rest]
 
 
 def _build_details(**kw) -> List[str]:
