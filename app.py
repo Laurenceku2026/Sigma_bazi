@@ -1921,6 +1921,23 @@ def render_name_tab() -> None:
             trad=result.get("traditional_name") or "",
         )
     )
+    notes = result.get("variant_notes") or []
+    if notes:
+        if lang == "en":
+            detail = "; ".join(
+                f"「{n.get('char')}」→ count as 「{n.get('alias')}」 ({n.get('strokes')} strokes)"
+                for n in notes
+            )
+        else:
+            detail = "；".join(
+                f"「{n.get('char')}」为异体，按常用字「{n.get('alias')}」{n.get('strokes')}画计"
+                for n in notes
+            )
+            if lang == "zh_hant":
+                from zh_convert import to_traditional
+
+                detail = to_traditional(detail)
+        st.info(t("name_variant_note", lang).format(detail=detail))
 
     html = render_name_report_html(result, full=full_clean, lang=lang)
     if not full_clean:
