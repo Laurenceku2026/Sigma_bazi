@@ -501,11 +501,12 @@ def restore_session_from_profile(profile: Dict[str, Any]) -> None:
             pass
 
     if restored_report:
+        restored_report = _maybe_report_dict(restored_report) or restored_report
         st.session_state.report_content = restored_report
         st.session_state.report_generated = True
-        meta = restored_report.get("_meta") if isinstance(restored_report, dict) else None
-        if isinstance(meta, dict) and meta.get("source"):
-            st.session_state.report_source = str(meta.get("source"))
+        src = _report_source_of(restored_report)
+        if src:
+            st.session_state.report_source = src
         elif not st.session_state.get("report_source"):
             st.session_state.report_source = "local"
 
@@ -881,14 +882,22 @@ def sync_app_user(email: Optional[str] = None):
         return None
 
 
+def _norm_birth_date_str(value: Any) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "isoformat"):
+        try:
+            return str(value.isoformat())[:10]
+        except Exception:
+            pass
+    return str(value)[:10]
+
+
 def _form_birth_fingerprint(form: Dict[str, Any]) -> tuple:
     """排盘关键字段指纹（不含姓名，姓名不影响四柱）。"""
-    bd = form.get("birth_date")
-    if hasattr(bd, "isoformat"):
-        bd = bd.isoformat()
     return (
         str(form.get("gender") or ""),
-        str(bd or ""),
+        _norm_birth_date_str(form.get("birth_date")),
         int(form.get("birth_hour") or 0),
         int(form.get("birth_minute") or 0),
         str(form.get("region_id") or ""),
@@ -901,7 +910,7 @@ def _saved_birth_fingerprint(info: Dict[str, Any] | None) -> tuple | None:
         return None
     return (
         str(info.get("gender") or ""),
-        str(info.get("birth_date") or ""),
+        _norm_birth_date_str(info.get("birth_date")),
         int(info.get("birth_hour") or 0),
         int(info.get("birth_minute") or 0),
         str(info.get("region_id") or ""),
@@ -914,6 +923,132 @@ def birth_data_unchanged(form: Dict[str, Any], info: Dict[str, Any] | None) -> b
     if saved is None:
         return False
     return _form_birth_fingerprint(form) == saved
+
+
+def _input_form_from_session() -> Optional[Dict[str, Any]]:
+    """从输入页控件状态拼出当前出生资料；控件尚未创建时返回 None。"""
+    if "input_birth_date" not in st.session_state:
+        return None
+    gender_ui = st.session_state.get("input_gender")
+    gender = "男" if gender_ui in (t("male", lang), "男") else "女"
+    _, reg_ids, _ = region_options(lang)
+    try:
+        reg_idx = int(st.session_state.get("input_region") or 0)
+    except (TypeError, ValueError):
+        reg_idx = 0
+    if not reg_ids:
+        region_id = str(st.session_state.birth_info.get("region_id") or "huabei") if st.session_state.get("birth_info") else "huabei"
+    else:
+        if reg_idx < 0 or reg_idx >= len(reg_ids):
+            reg_idx = 0
+        region_id = reg_ids[reg_idx]
+    return {
+        "gender": gender,
+        "birth_date": st.session_state.get("input_birth_date"),
+        "birth_hour": st.session_state.get("input_hour"),
+        "birth_minute": st.session_state.get("input_minute"),
+        "region_id": region_id,
+        "use_true_solar": bool(st.session_state.get("input_solar", True)),
+    }
+
+
+def _maybe_report_dict(value: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            return None
+    return None
+
+
+def _report_source_of(report: Any) -> str:
+    data = _maybe_report_dict(report)
+    if not data:
+        return ""
+    meta = data.get("_meta")
+    if isinstance(meta, dict):
+        return str(meta.get("source") or "").strip().lower()
+    return ""
+
+
+def _report_is_ai(report: Any) -> bool:
+    return _report_source_of(report) == "ai"
+
+
+def _stamp_report_source(report: Dict[str, Any], source: str) -> Dict[str, Any]:
+    out = dict(report or {})
+    meta = dict(out.get("_meta") or {}) if isinstance(out.get("_meta"), dict) else {}
+    meta["source"] = source
+    meta.setdefault("generated_at", datetime.utcnow().isoformat() + "Z")
+    out["_meta"] = meta
+    return out
+
+
+def _birth_inputs_match_saved_chart() -> bool:
+    """输入页出生资料相对当前已排盘 birth_info 是否未变。"""
+    birth = st.session_state.get("birth_info")
+    if not _saved_birth_fingerprint(birth):
+        return False
+    form = _input_form_from_session()
+    if form is None:
+        return True
+    return birth_data_unchanged(form, birth)
+
+
+def _peek_reusable_ai_report() -> Optional[Dict[str, Any]]:
+    """出生信息未变时，返回可复用的 AI 深批（含 report_content，可选 bazi_data）。"""
+    if not _birth_inputs_match_saved_chart():
+        return None
+    birth = st.session_state.get("birth_info")
+    fp = _saved_birth_fingerprint(birth)
+    if fp is None:
+        return None
+
+    session_report = _maybe_report_dict(st.session_state.get("report_content"))
+    if session_report and (
+        st.session_state.get("report_source") == "ai" or _report_is_ai(session_report)
+    ):
+        return {"report_content": session_report, "bazi_data": st.session_state.get("bazi_data")}
+
+    uid = st.session_state.get("user_id")
+    if not (supabase_client and st.session_state.get("auth_ok") and uid):
+        return None
+    try:
+        reports = supabase_client.get_reports(uid, limit=10) or []
+    except Exception:
+        return None
+
+    for row in reports:
+        content = _maybe_report_dict(row.get("report_content"))
+        if not content or not _report_is_ai(content):
+            continue
+        row_bi = row.get("birth_info") if isinstance(row.get("birth_info"), dict) else None
+        if not row_bi or _saved_birth_fingerprint(row_bi) != fp:
+            continue
+        bazi = _maybe_report_dict(row.get("bazi_data")) or row.get("bazi_data")
+        return {"report_content": content, "bazi_data": bazi if isinstance(bazi, dict) else None}
+    return None
+
+
+def try_reuse_ai_deep_report() -> bool:
+    """若出生未变且已有 AI 深批，载入 session 并返回 True（不调用 DeepSeek）。"""
+    found = _peek_reusable_ai_report()
+    if not found:
+        return False
+    content = found.get("report_content")
+    if not isinstance(content, dict) or not content:
+        return False
+    st.session_state.report_content = content
+    st.session_state.report_language = lang
+    st.session_state.report_generated = True
+    st.session_state.report_source = "ai"
+    bazi = found.get("bazi_data")
+    if isinstance(bazi, dict) and bazi:
+        st.session_state.bazi_data = bazi
+    return True
 
 
 def compute_bazi_from_form(form: Dict[str, Any]) -> dict:
@@ -1120,8 +1255,16 @@ def generate_local_full_report() -> bool:
         return False
 
 
-def generate_full_report(*, consume_quota: bool = True) -> bool:
-    """AI 深批（DeepSeek）写入 session；成功返回 True。默认扣次数（钻石无限除外）。"""
+def generate_full_report(*, consume_quota: bool = True, force: bool = False) -> bool:
+    """AI 深批（DeepSeek）写入 session；成功返回 True。默认扣次数（钻石无限除外）。
+
+    出生信息未变且已有 AI 深批存档时，默认直接复用（不调用 DeepSeek）。
+    force=True 时强制重新生成。
+    """
+    if not force and try_reuse_ai_deep_report():
+        st.session_state["_ai_deep_reused"] = True
+        return True
+
     tier = st.session_state.subscription_tier
     if not report_gen:
         st.error(t("ai_engine_missing", lang))
@@ -1130,6 +1273,7 @@ def generate_full_report(*, consume_quota: bool = True) -> bool:
         st.error(t("need_input", lang))
         return False
     try:
+        st.session_state.pop("_ai_deep_reused", None)
         if consume_quota and tier in PAID_TIERS and supabase_client:
             if not supabase_client.consume_report_quota(st.session_state.user_id):
                 open_upgrade_membership(
@@ -1176,6 +1320,7 @@ def generate_full_report(*, consume_quota: bool = True) -> bool:
                     k == "page9" and isinstance(v, dict) and v.get("quarters")
                 )
             }
+        report = _stamp_report_source(report, "ai")
         st.session_state.report_content = report
         st.session_state.report_language = lang
         st.session_state.report_generated = True
@@ -1226,7 +1371,8 @@ def render_report_tab_bottom_nav(report: dict, *, key_prefix: str = "report_bott
             use_container_width=True,
         ):
             with st.spinner(t("generating", lang)):
-                if generate_full_report(consume_quota=True):
+                # 底部「重新生成」为显式强制重跑 DeepSeek
+                if generate_full_report(consume_quota=True, force=True):
                     st.success(t("report_ok", lang))
                     st.rerun()
                 elif st.session_state.get("show_join_membership"):
@@ -1704,21 +1850,40 @@ def apply_scroll_section_if_needed():
 
 
 def render_ai_deep_cta(key_prefix: str = "ai") -> None:
-    """AI 深批入口（才消耗 DeepSeek / 次数）；不展示说明文案。"""
+    """AI 深批入口（才消耗 DeepSeek / 次数）；出生未变且已有存档时直接复用。"""
     if st.session_state.bazi_data is None:
         return
-    if not report_gen:
+    reusable = _peek_reusable_ai_report()
+    if not report_gen and not reusable:
         return
     tier = st.session_state.subscription_tier
     paid = tier in PAID_TIERS
     has_report = bool(st.session_state.report_content)
+    can_reuse = bool(reusable)
     profile = supabase_client.get_user(st.session_state.user_id) if supabase_client else None
     trials = int((profile or {}).get("free_trials_remaining") or 0)
     expires = (profile or {}).get("subscription_expires_at")
 
+    def _after_ai_deep(ok: bool) -> None:
+        if ok:
+            if st.session_state.pop("_ai_deep_reused", False):
+                st.success(t("ai_deep_reuse_unchanged", lang))
+            else:
+                st.success(t("report_ok", lang))
+            go_results_section("report")
+            st.rerun()
+        elif st.session_state.get("show_join_membership"):
+            st.rerun()
+
     if paid:
-        can = can_generate_report(tier, trials, expires)
-        label = t("ai_deep_btn_regen", lang) if has_report else t("ai_deep_btn", lang)
+        # 可复用已存 AI 时不要求剩余次数
+        can = can_reuse or can_generate_report(tier, trials, expires)
+        if can_reuse:
+            label = t("ai_deep_btn_reuse", lang)
+        elif has_report:
+            label = t("ai_deep_btn_regen", lang)
+        else:
+            label = t("ai_deep_btn", lang)
         if st.button(
             label,
             key=f"{key_prefix}_ai_deep",
@@ -1727,29 +1892,20 @@ def render_ai_deep_cta(key_prefix: str = "ai") -> None:
             disabled=not can,
         ):
             with st.spinner(t("ai_generating", lang)):
-                if generate_full_report(consume_quota=True):
-                    st.success(t("report_ok", lang))
-                    go_results_section("report")
-                    st.rerun()
-                elif st.session_state.get("show_join_membership"):
-                    st.rerun()
+                _after_ai_deep(generate_full_report(consume_quota=True, force=False))
     else:
         free_left = int((profile or {}).get("free_trials_remaining") or 0)
-        can = can_free_preview(free_left)
+        can = can_reuse or can_free_preview(free_left)
+        label = t("ai_deep_btn_reuse", lang) if can_reuse else t("ai_deep_btn", lang)
         if st.button(
-            t("ai_deep_btn", lang),
+            label,
             key=f"{key_prefix}_ai_deep_free",
             type="secondary",
             use_container_width=True,
             disabled=not can,
         ):
             with st.spinner(t("ai_generating", lang)):
-                if generate_full_report(consume_quota=True):
-                    st.success(t("report_ok", lang))
-                    go_results_section("report")
-                    st.rerun()
-                elif st.session_state.get("show_join_membership"):
-                    st.rerun()
+                _after_ai_deep(generate_full_report(consume_quota=True, force=False))
 
 
 def render_results_bundle(*, key_prefix: str = "results") -> None:
