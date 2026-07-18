@@ -4,9 +4,10 @@ from __future__ import annotations
 import csv
 import hmac
 import io
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 import streamlit as st
 
@@ -141,6 +142,287 @@ def _format_birth_location(user: Dict[str, Any], lang: str) -> str:
 
 def check_admin_password(password: str, expected: str) -> bool:
     return hmac.compare_digest(password or "", expected or "")
+
+
+def _admin_birth_info(user: Dict[str, Any]) -> Dict[str, Any]:
+    """拼出可排盘/展示用的 birth_info（优先 last_birth_info，再补用户表字段）。"""
+    info = dict(_birth_info_fallback(user))
+    if user.get("display_name") and not info.get("name"):
+        info["name"] = user["display_name"]
+    if user.get("gender") and not info.get("gender"):
+        info["gender"] = user["gender"]
+    if user.get("birth_date") and not info.get("birth_date"):
+        info["birth_date"] = str(user["birth_date"])[:10]
+    if user.get("birth_hour") is not None and info.get("birth_hour") is None:
+        info["birth_hour"] = user["birth_hour"]
+    if user.get("birth_minute") is not None and info.get("birth_minute") is None:
+        info["birth_minute"] = user["birth_minute"]
+    if user.get("region_id") and not info.get("region_id"):
+        info["region_id"] = user["region_id"]
+    if user.get("birth_place") is not None and info.get("birth_place") is None:
+        info["birth_place"] = user["birth_place"]
+    if user.get("email"):
+        info["email"] = user["email"]
+    return info
+
+
+def _admin_recompute_bazi(birth_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """无存档命盘时，按出生资料现算（只读预览，不写库）。"""
+    if not birth_info or not birth_info.get("birth_date"):
+        return None
+    try:
+        from bazi_engine import BaziEngine
+        from ui_texts import region_longitude
+
+        bd = birth_info.get("birth_date")
+        if isinstance(bd, str):
+            bd = date.fromisoformat(bd[:10])
+        region_id = birth_info.get("region_id") or "huabei"
+        engine = BaziEngine(
+            year=bd.year,
+            month=bd.month,
+            day=bd.day,
+            hour=int(birth_info.get("birth_hour") or 12),
+            minute=int(birth_info.get("birth_minute") or 0),
+            gender=birth_info.get("gender") or "男",
+            true_solar_time=bool(birth_info.get("use_true_solar", True)),
+            longitude=region_longitude(region_id),
+        )
+        return engine.calculate().get_summary()
+    except Exception:
+        return None
+
+
+def _admin_maybe_json_dict(value: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(value, dict):
+        return value if value else None
+    if isinstance(value, str) and value.strip():
+        try:
+            import json
+
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) and parsed else None
+        except Exception:
+            return None
+    return None
+
+
+@contextmanager
+def _admin_preview_session(
+    *,
+    birth_info: Optional[Dict[str, Any]],
+    bazi_data: Optional[Dict[str, Any]],
+) -> Iterator[None]:
+    """临时写入 birth_info（命盘标题名）后还原，避免污染管理员自己的会话。"""
+    keys = ("birth_info", "bazi_data")
+    backup = {k: st.session_state.get(k) for k in keys}
+    try:
+        st.session_state.birth_info = birth_info
+        st.session_state.bazi_data = bazi_data
+        yield
+    finally:
+        for k, v in backup.items():
+            st.session_state[k] = v
+
+
+def _admin_page_labels(lang: str) -> List[str]:
+    labels_zh = [
+        "页一：八字命盘与基本信息",
+        "页二：事业详批 (Part 1｜局势)",
+        "页三：事业详批 (Part 2｜方向与化解)",
+        "页四：财运详批 (Part 1｜局势)",
+        "页五：财运详批 (Part 2｜方向与化解)",
+        "页六：感情详批 (Part 1｜局势)",
+        "页七：感情详批 (Part 2｜方向与化解)",
+        "页八：健康详批 (Part 1｜局势)",
+        "页九：健康详批 (Part 2｜方向与化解)",
+        "流年报告",
+    ]
+    if lang == "en":
+        return [
+            "Page 1: Chart",
+            "Page 2: Career (Part 1 · Situation)",
+            "Page 3: Career (Part 2 · Direction & Remedy)",
+            "Page 4: Wealth (Part 1 · Situation)",
+            "Page 5: Wealth (Part 2 · Direction & Remedy)",
+            "Page 6: Relationship (Part 1 · Situation)",
+            "Page 7: Relationship (Part 2 · Direction & Remedy)",
+            "Page 8: Health (Part 1 · Situation)",
+            "Page 9: Health (Part 2 · Direction & Remedy)",
+            "Annual Luck Report",
+        ]
+    if lang == "zh_hant":
+        try:
+            from zh_convert import to_traditional
+
+            return [to_traditional(x) for x in labels_zh]
+        except Exception:
+            return labels_zh
+    return labels_zh
+
+
+def _admin_render_report_pages(
+    report: Dict[str, Any],
+    *,
+    lang: str,
+    bazi_data: Optional[Dict[str, Any]],
+    pages: range,
+) -> None:
+    """管理员只读渲染报告页（不依赖 app.py，避免 Streamlit 主脚本循环导入）。"""
+    from report_generator import ReportGenerator
+
+    labels = _admin_page_labels(lang)
+    legacy_ln9 = ReportGenerator.is_legacy_liunian_page9(report)
+    core_mode = 1 in pages and len(list(pages)) > 1
+
+    for i in pages:
+        if i == 9 and legacy_ln9 and core_mode:
+            continue
+        pk = f"page{i}"
+        lab = labels[i - 1] if i <= len(labels) else pk
+        page_obj = report.get(pk) if isinstance(report, dict) else None
+        if isinstance(page_obj, dict) and page_obj.get("quarters"):
+            lab = labels[9] if len(labels) > 9 else lab
+        with st.expander(lab, expanded=(i == pages.start)):
+            if pk not in report:
+                continue
+            page = report[pk]
+            if not isinstance(page, dict):
+                page = {"content": str(page), "title": lab}
+            page = ReportGenerator.sanitize_page_for_display(page, lab)
+            if not page.get("professional") and page.get("content"):
+                page = ReportGenerator._split_legacy_content(
+                    str(page.get("content")),
+                    page.get("title") or lab,
+                )
+                page = ReportGenerator.sanitize_page_for_display(page, lab)
+            html = ReportGenerator.render_page_html(page, lang)
+            if i == 1 and bazi_data:
+                try:
+                    from bazi_analysis import render_personality_html
+
+                    html = render_personality_html(bazi_data, lang) + html
+                except Exception:
+                    pass
+            st.markdown(html, unsafe_allow_html=True)
+
+
+def render_admin_user_results(
+    lang: str,
+    supabase_client: Any,
+    selected_user: Dict[str, Any],
+) -> None:
+    """管理员查看所选用户的命盘、八字报告、流年报告。"""
+    from report_generator import ReportGenerator
+    from utils import render_bazi_chart
+
+    st.markdown(f"### 🔮 {t('admin_user_results', lang)}")
+    st.caption(t("admin_user_results_hint", lang))
+
+    uid = selected_user.get("user_id")
+    if not uid or not supabase_client:
+        st.warning(t("admin_user_results_unavailable", lang))
+        return
+
+    reports: List[Dict[str, Any]] = []
+    try:
+        reports = supabase_client.get_reports(uid, limit=10) or []
+    except Exception as e:
+        st.error(t("admin_read_fail", lang, err=str(e)))
+        return
+
+    birth_info = _admin_birth_info(selected_user)
+    selected_report: Optional[Dict[str, Any]] = None
+    if reports:
+        labels = []
+        for r in reports:
+            created = _safe_datetime(r.get("created_at"))
+            rid = str(r.get("report_id") or "")[:8]
+            tier = r.get("payment_tier") or "-"
+            labels.append(f"{created} · {tier} · {rid}")
+        pick = st.selectbox(
+            t("admin_select_report", lang),
+            options=list(range(len(reports))),
+            format_func=lambda i: labels[i],
+            key=f"admin_report_pick_{uid}",
+        )
+        selected_report = reports[int(pick)]
+        if isinstance(selected_report.get("birth_info"), dict) and selected_report["birth_info"]:
+            merged = dict(selected_report["birth_info"])
+            for k, v in birth_info.items():
+                if k not in merged or merged.get(k) in (None, ""):
+                    merged[k] = v
+            birth_info = merged
+    else:
+        st.info(t("admin_no_saved_report", lang))
+
+    bazi_data = None
+    report_content = None
+    if selected_report:
+        bazi_data = _admin_maybe_json_dict(selected_report.get("bazi_data"))
+        report_content = _admin_maybe_json_dict(selected_report.get("report_content"))
+
+    recomputed = False
+    if bazi_data is None:
+        bazi_data = _admin_recompute_bazi(birth_info)
+        recomputed = bazi_data is not None
+    if recomputed:
+        st.caption(t("admin_bazi_recomputed", lang))
+
+    tab_chart, tab_report, tab_liunian = st.tabs(
+        [
+            t("admin_tab_chart", lang),
+            t("admin_tab_report", lang),
+            t("admin_tab_liunian", lang),
+        ]
+    )
+
+    with tab_chart:
+        if not bazi_data:
+            st.info(t("admin_no_chart", lang))
+        else:
+            with _admin_preview_session(
+                birth_info=birth_info or None,
+                bazi_data=bazi_data,
+            ):
+                render_bazi_chart(bazi_data, lang)
+
+    with tab_report:
+        if not report_content:
+            st.info(t("admin_no_report", lang))
+        else:
+            _admin_render_report_pages(
+                report_content,
+                lang=lang,
+                bazi_data=bazi_data,
+                pages=range(1, 10),
+            )
+
+    with tab_liunian:
+        if not report_content:
+            st.info(t("admin_no_report", lang))
+        else:
+            lk = ReportGenerator.resolve_liunian_key(report_content)
+            if not lk:
+                st.info(t("admin_no_liunian", lang))
+            else:
+                if bazi_data:
+                    try:
+                        from bazi_analysis import render_lifetime_fortune_html
+
+                        st.markdown(
+                            render_lifetime_fortune_html(bazi_data, lang),
+                            unsafe_allow_html=True,
+                        )
+                    except Exception:
+                        pass
+                idx = 10 if lk == "page10" else 9
+                _admin_render_report_pages(
+                    report_content,
+                    lang=lang,
+                    bazi_data=bazi_data,
+                    pages=range(idx, idx + 1),
+                )
 
 
 def render_admin_login(lang: str, username_expected: str, password_expected: str) -> None:
@@ -344,6 +626,9 @@ def render_admin_page(lang: str, supabase_client) -> None:
     st.caption(
         t("admin_birth_place_label", lang) + _format_birth_location(selected_user, lang)
     )
+
+    st.markdown("---")
+    render_admin_user_results(lang, supabase_client, selected_user)
 
     st.markdown("---")
     st.markdown(f"### 📝 {t('edit_subscription', lang)}")
