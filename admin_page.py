@@ -237,8 +237,11 @@ def _admin_save_chart_and_report(
     bazi_data: Dict[str, Any],
     report_content: Dict[str, Any],
     tier: str,
-) -> bool:
-    """管理员保存现算命盘 + 本地报告到 reports，并同步出生资料。"""
+) -> tuple[bool, str]:
+    """管理员保存现算命盘 + 本地报告到 reports，并同步出生资料。
+
+    返回 (ok, error_detail)。成功时会再读回 reports 确认可见。
+    """
     bi = _admin_serialize_birth_info(birth_info)
     try:
         supabase_client.save_user_profile(user_id, bi)
@@ -252,9 +255,32 @@ def _admin_save_chart_and_report(
             report_content,
             payment_tier=tier or "free",
         )
-        return bool(saved)
-    except Exception:
-        return False
+    except Exception as e:
+        return False, str(e)
+
+    if not saved:
+        err = getattr(supabase_client, "last_error", None) or "save_report returned empty"
+        return False, str(err)
+
+    rid = str(saved.get("report_id") or "")
+    try:
+        reports = supabase_client.get_reports(user_id, limit=5) or []
+    except Exception as e:
+        return False, f"saved but list failed: {e}"
+
+    if rid and any(str(r.get("report_id") or "") == rid for r in reports):
+        return True, ""
+
+    # 列表未命中时再按 id 读一次
+    try:
+        row = supabase_client.get_report(rid, user_id=user_id) if rid else None
+    except Exception as e:
+        return False, f"saved but readback failed: {e}"
+    if row:
+        return True, ""
+
+    err = getattr(supabase_client, "last_error", None) or "readback empty after save"
+    return False, str(err)
 
 
 def _admin_maybe_json_dict(value: Any) -> Optional[Dict[str, Any]]:
@@ -613,19 +639,27 @@ def render_admin_user_results(
             except Exception as e:
                 st.error(t("admin_render_fail", lang, err=str(e)))
                 to_save_report = None
-            if to_save_report and _admin_save_chart_and_report(
-                supabase_client,
-                user_id=uid,
-                birth_info=birth_info,
-                bazi_data=bazi_data,
-                report_content=to_save_report,
-                tier=tier,
-            ):
-                st.session_state.pop(override_key, None)
-                st.session_state.pop(report_override_key, None)
-                st.session_state[view_key] = "chart"
-                st.session_state["_admin_save_flash"] = uid
-                st.rerun()
+            if to_save_report:
+                ok, err_detail = _admin_save_chart_and_report(
+                    supabase_client,
+                    user_id=uid,
+                    birth_info=birth_info,
+                    bazi_data=bazi_data,
+                    report_content=to_save_report,
+                    tier=tier,
+                )
+                if ok:
+                    st.session_state.pop(override_key, None)
+                    st.session_state.pop(report_override_key, None)
+                    st.session_state.pop(f"admin_report_pick_{uid}", None)
+                    st.session_state[view_key] = "chart"
+                    st.session_state["_admin_save_flash"] = uid
+                    st.rerun()
+                else:
+                    st.error(
+                        t("admin_save_chart_fail", lang)
+                        + (f" ({err_detail})" if err_detail else "")
+                    )
             else:
                 st.error(t("admin_save_chart_fail", lang))
 
