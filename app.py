@@ -1855,17 +1855,12 @@ def apply_scroll_section_if_needed():
 
 
 def render_name_tab() -> None:
-    """独立 Tab：姓名详批（本地；免费水印摘要 / 金钻完整无水印）。"""
+    """独立 Tab：姓名详批（本地；全员完整无水印；输入即算，无需按钮）。"""
     st.markdown(f"### {t('name_heading', lang)}")
     st.caption(t("name_intro", lang))
     st.caption(t("name_stroke_note", lang))
     with st.expander(t("name_theory_title", lang), expanded=False):
         st.markdown(format_name_theory_markdown(lang))
-
-    tier = st.session_state.subscription_tier or "free"
-    full_clean = tier in ("gold", "diamond")
-    if not full_clean:
-        st.warning(t("name_free_banner", lang))
 
     if st.session_state.bazi_data is None:
         st.info(t("name_need_chart", lang))
@@ -1893,42 +1888,31 @@ def render_name_tab() -> None:
     st.caption(t("name_input_hint", lang))
     compound = st.checkbox(t("name_compound", lang), value=False, key="name_tab_compound")
 
-    def _run_name_analysis(raw_name: str) -> dict:
-        return analyze_name_with_bazi(
-            raw_name,
-            st.session_state.get("bazi_data"),
-            compound=True if compound else None,
-            lang=lang,
-        )
-
-    if st.button(t("name_analyze", lang), type="primary", use_container_width=True, key="name_tab_run"):
-        st.session_state["name_analysis_result"] = _run_name_analysis(name_val)
-
-    result = st.session_state.get("name_analysis_result")
-    # 切换语言后按当前语言重算，避免残留英文/简繁错配
-    if (
-        isinstance(result, dict)
-        and result.get("ok")
-        and result.get("lang") != lang
-        and (name_val or result.get("display_name"))
-    ):
-        result = _run_name_analysis(name_val or str(result.get("display_name") or ""))
-        st.session_state["name_analysis_result"] = result
-
-    if not result:
+    raw_name = (name_val or "").strip()
+    if not raw_name:
+        st.info(t("name_enter_hint", lang))
         return
+
+    result = analyze_name_with_bazi(
+        raw_name,
+        st.session_state.get("bazi_data"),
+        compound=True if compound else None,
+        lang=lang,
+    )
+    st.session_state["name_analysis_result"] = result
+
     if not result.get("ok"):
         st.error(result.get("message") or t("report_fail", lang))
         return
 
     st.success(
         t("name_kangxi_convert", lang).format(
-            src=result.get("display_name") or name_val,
+            src=result.get("display_name") or raw_name,
             trad=result.get("traditional_name") or "",
         )
     )
     # 简繁字形差异 + 异体笔画回退提示
-    src = str(result.get("display_name") or name_val or "")
+    src = str(result.get("display_name") or raw_name or "")
     trad = str(result.get("traditional_name") or "")
     bits = []
     if len(src) == len(trad):
@@ -1953,16 +1937,8 @@ def render_name_tab() -> None:
             detail = to_traditional(detail)
         st.info(t("name_variant_note", lang).format(detail=detail))
 
-    html = render_name_report_html(result, full=full_clean, lang=lang)
-    if not full_clean:
-        mark = f"SigmaFate/{st.session_state.get('user_email') or 'preview'}"
-        html = _wrap_protected_html(html, mark)
-        st.markdown(html, unsafe_allow_html=True)
-        st.info(t("name_upgrade_hint", lang))
-        st.session_state.selected_plan = st.session_state.get("selected_plan") or "gold"
-        render_membership_plans("name_tab_upgrade")
-    else:
-        st.markdown(html, unsafe_allow_html=True)
+    html = render_name_report_html(result, full=True, lang=lang)
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def render_ai_deep_cta(key_prefix: str = "ai") -> None:
