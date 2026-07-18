@@ -307,6 +307,128 @@ def _admin_render_report_pages(
             st.markdown(html, unsafe_allow_html=True)
 
 
+def _admin_resolve_user_bazi(
+    user: Dict[str, Any],
+    supabase_client: Any,
+) -> tuple[Optional[Dict[str, Any]], Dict[str, Any], str]:
+    """返回 (bazi_data, birth_info, display_name)。优先存档命盘，否则现算。"""
+    birth_info = _admin_birth_info(user)
+    name = (
+        str(birth_info.get("name") or "").strip()
+        or str(user.get("display_name") or "").strip()
+        or str(user.get("email") or "").split("@")[0]
+        or "User"
+    )
+    uid = user.get("user_id")
+    bazi_data = None
+    if uid and supabase_client:
+        try:
+            reports = supabase_client.get_reports(uid, limit=1) or []
+        except Exception:
+            reports = []
+        if reports:
+            bazi_data = _admin_maybe_json_dict(reports[0].get("bazi_data"))
+            bi = reports[0].get("birth_info")
+            if isinstance(bi, dict) and bi:
+                merged = dict(bi)
+                for k, v in birth_info.items():
+                    if k not in merged or merged.get(k) in (None, ""):
+                        merged[k] = v
+                birth_info = merged
+                if birth_info.get("name"):
+                    name = str(birth_info["name"])
+    if bazi_data is None:
+        bazi_data = _admin_recompute_bazi(birth_info)
+    return bazi_data, birth_info, name
+
+
+def _admin_person_form(prefix: str, lang: str, *, defaults: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """管理员手动输入一方出生资料（独立 key，不与用户合婚页冲突）。"""
+    from ui_texts import region_options
+
+    defaults = defaults or {}
+    c1, c2 = st.columns(2)
+    with c1:
+        name = st.text_input(
+            t("name", lang),
+            value=str(defaults.get("name") or ""),
+            key=f"admin_match_{prefix}_name",
+        )
+        gender_opts = [t("male", lang), t("female", lang)]
+        g_raw = str(defaults.get("gender") or "男")
+        g_idx = 1 if g_raw.startswith("女") or g_raw.lower() in ("female", "f") else 0
+        gender_ui = st.radio(
+            t("gender", lang),
+            options=gender_opts,
+            index=g_idx,
+            horizontal=True,
+            key=f"admin_match_{prefix}_gender",
+        )
+        gender = "男" if gender_ui == t("male", lang) else "女"
+        try:
+            bd_default = defaults.get("birth_date")
+            if isinstance(bd_default, str):
+                bd_default = date.fromisoformat(bd_default[:10])
+            if not isinstance(bd_default, date):
+                bd_default = date(1990, 1, 1)
+        except Exception:
+            bd_default = date(1990, 1, 1)
+        birth_date = st.date_input(
+            t("birth_date", lang),
+            value=bd_default,
+            min_value=date(1900, 1, 1),
+            max_value=date.today(),
+            format="YYYY-MM-DD",
+            key=f"admin_match_{prefix}_date",
+        )
+    with c2:
+        birth_hour = st.number_input(
+            t("birth_hour", lang),
+            0,
+            23,
+            int(defaults.get("birth_hour") or 12),
+            key=f"admin_match_{prefix}_hour",
+        )
+        birth_minute = st.number_input(
+            t("birth_minute", lang),
+            0,
+            59,
+            int(defaults.get("birth_minute") or 0),
+            key=f"admin_match_{prefix}_minute",
+        )
+        reg_labels, reg_ids, _ = region_options(lang)
+        try:
+            reg_default = (
+                reg_ids.index(defaults.get("region_id"))
+                if defaults.get("region_id") in reg_ids
+                else 2
+            )
+        except Exception:
+            reg_default = 2
+        reg_idx = st.selectbox(
+            t("region", lang),
+            options=list(range(len(reg_ids))),
+            format_func=lambda i: reg_labels[i],
+            index=reg_default,
+            key=f"admin_match_{prefix}_region",
+        )
+        region_id = reg_ids[reg_idx]
+    use_true_solar = st.checkbox(
+        t("true_solar", lang),
+        value=bool(defaults.get("use_true_solar", True)),
+        key=f"admin_match_{prefix}_solar",
+    )
+    return {
+        "name": (name or "").strip(),
+        "gender": gender,
+        "birth_date": birth_date,
+        "birth_hour": int(birth_hour),
+        "birth_minute": int(birth_minute),
+        "region_id": region_id,
+        "use_true_solar": use_true_solar,
+    }
+
+
 def render_admin_user_results(
     lang: str,
     supabase_client: Any,
@@ -317,6 +439,7 @@ def render_admin_user_results(
     from utils import render_bazi_chart
 
     st.caption(t("admin_user_results_hint", lang))
+    st.caption(t("admin_how_reports_saved", lang))
 
     uid = selected_user.get("user_id")
     if not uid or not supabase_client:
@@ -369,12 +492,39 @@ def render_admin_user_results(
         bazi_data = _admin_maybe_json_dict(selected_report.get("bazi_data"))
         report_content = _admin_maybe_json_dict(selected_report.get("report_content"))
 
-    recomputed = False
-    if bazi_data is None:
+    override_key = f"admin_bazi_override_{uid}"
+    can_recompute = bool(birth_info.get("birth_date"))
+    btn_col, tip_col = st.columns([1, 2])
+    with btn_col:
+        if st.button(
+            t("admin_recompute_chart", lang),
+            key=f"admin_recompute_btn_{uid}",
+            use_container_width=True,
+            disabled=not can_recompute,
+            type="secondary",
+        ):
+            computed = _admin_recompute_bazi(birth_info)
+            if computed:
+                st.session_state[override_key] = computed
+                st.session_state["_admin_recompute_flash"] = uid
+                st.rerun()
+            else:
+                st.error(t("admin_recompute_fail", lang))
+    with tip_col:
+        if st.session_state.get("_admin_recompute_flash") == uid:
+            st.session_state.pop("_admin_recompute_flash", None)
+            st.success(t("admin_recompute_ok", lang))
+        elif not can_recompute:
+            st.caption(t("admin_recompute_need_birth", lang))
+        elif override_key in st.session_state:
+            st.caption(t("admin_bazi_using_recomputed", lang))
+
+    if override_key in st.session_state:
+        bazi_data = st.session_state[override_key]
+    elif bazi_data is None:
         bazi_data = _admin_recompute_bazi(birth_info)
-        recomputed = bazi_data is not None
-    if recomputed:
-        st.caption(t("admin_bazi_recomputed", lang))
+        if bazi_data is not None:
+            st.caption(t("admin_bazi_recomputed", lang))
 
     view = st.radio(
         t("admin_view_mode", lang),
@@ -435,6 +585,127 @@ def render_admin_user_results(
                     )
     except Exception as e:
         st.error(t("admin_render_fail", lang, err=str(e)))
+
+
+def render_admin_match(lang: str, supabase_client: Any, users: List[Dict[str, Any]]) -> None:
+    """管理员：两人八字契合（同合婚八维，适用于婚姻/亲密/合作等关系参考）。"""
+    from hehun import analyze_hehun, render_hehun_html
+
+    st.markdown(f"### 💞 {t('admin_match_heading', lang)}")
+    st.caption(t("admin_match_intro", lang))
+
+    if not users:
+        st.info(t("no_users", lang))
+        return
+
+    def _label(u: Dict[str, Any]) -> str:
+        name = str(u.get("display_name") or "").strip() or "-"
+        email = str(u.get("email") or "").strip() or str(u.get("user_id") or "")[:8]
+        return f"{name} · {email}"
+
+    mode = st.radio(
+        t("admin_match_mode", lang),
+        options=["users", "manual"],
+        format_func=lambda k: {
+            "users": t("admin_match_mode_users", lang),
+            "manual": t("admin_match_mode_manual", lang),
+        }.get(k, k),
+        horizontal=True,
+        key="admin_match_mode",
+    )
+
+    name_a = name_b = ""
+    bazi_a = bazi_b = None
+
+    if mode == "users":
+        c1, c2 = st.columns(2)
+        with c1:
+            idx_a = st.selectbox(
+                t("admin_match_person_a", lang),
+                options=list(range(len(users))),
+                format_func=lambda i: _label(users[i]),
+                key="admin_match_user_a",
+            )
+        with c2:
+            idx_b = st.selectbox(
+                t("admin_match_person_b", lang),
+                options=list(range(len(users))),
+                format_func=lambda i: _label(users[i]),
+                index=min(1, len(users) - 1),
+                key="admin_match_user_b",
+            )
+        user_a = users[int(idx_a)]
+        user_b = users[int(idx_b)]
+        if st.button(
+            t("admin_match_run", lang),
+            type="primary",
+            use_container_width=True,
+            key="admin_match_run_users",
+        ):
+            if user_a.get("user_id") == user_b.get("user_id"):
+                st.warning(t("admin_match_same_user", lang))
+            else:
+                try:
+                    bazi_a, _, name_a = _admin_resolve_user_bazi(user_a, supabase_client)
+                    bazi_b, _, name_b = _admin_resolve_user_bazi(user_b, supabase_client)
+                    if not bazi_a or not bazi_b:
+                        st.error(t("admin_match_need_bazi", lang))
+                    else:
+                        result = analyze_hehun(bazi_a, bazi_b, lang)
+                        st.session_state["admin_match_result"] = result
+                        st.session_state["admin_match_bazi_a"] = bazi_a
+                        st.session_state["admin_match_bazi_b"] = bazi_b
+                        st.session_state["admin_match_names"] = {"a": name_a, "b": name_b}
+                        st.rerun()
+                except Exception as e:
+                    st.error(t("admin_render_fail", lang, err=str(e)))
+    else:
+        st.markdown(f"#### {t('admin_match_person_a', lang)}")
+        form_a = _admin_person_form("a", lang)
+        st.markdown(f"#### {t('admin_match_person_b', lang)}")
+        form_b = _admin_person_form("b", lang)
+        if st.button(
+            t("admin_match_run", lang),
+            type="primary",
+            use_container_width=True,
+            key="admin_match_run_manual",
+        ):
+            if not form_a.get("name") or not form_b.get("name"):
+                st.warning(t("admin_match_need_names", lang))
+            else:
+                try:
+                    bazi_a = _admin_recompute_bazi(form_a)
+                    bazi_b = _admin_recompute_bazi(form_b)
+                    if not bazi_a or not bazi_b:
+                        st.error(t("admin_match_need_bazi", lang))
+                    else:
+                        result = analyze_hehun(bazi_a, bazi_b, lang)
+                        st.session_state["admin_match_result"] = result
+                        st.session_state["admin_match_bazi_a"] = bazi_a
+                        st.session_state["admin_match_bazi_b"] = bazi_b
+                        st.session_state["admin_match_names"] = {
+                            "a": form_a["name"],
+                            "b": form_b["name"],
+                        }
+                        st.rerun()
+                except Exception as e:
+                    st.error(t("admin_render_fail", lang, err=str(e)))
+
+    result = st.session_state.get("admin_match_result")
+    if not result:
+        return
+    names = st.session_state.get("admin_match_names") or {}
+    bazi_a = st.session_state.get("admin_match_bazi_a") or {}
+    bazi_b = st.session_state.get("admin_match_bazi_b") or {}
+    html = render_hehun_html(
+        result,
+        name_a=names.get("a") or "",
+        name_b=names.get("b") or "",
+        bazi_a=bazi_a,
+        bazi_b=bazi_b,
+        lang=lang,
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def render_admin_login(lang: str, username_expected: str, password_expected: str) -> None:
@@ -622,6 +893,10 @@ def render_admin_page(lang: str, supabase_client) -> None:
 
     with st.container(border=True):
         render_admin_user_results(lang, supabase_client, selected_user)
+
+    st.markdown("---")
+    with st.container(border=True):
+        render_admin_match(lang, supabase_client, manage_users)
 
     st.markdown("---")
     st.markdown(f"### 📋 {t('user_list', lang)}")
