@@ -24,6 +24,7 @@ from report_generator import ReportGenerator
 from stripe_payment import StripeClient
 from supabase_client import AppAccessDenied, SupabaseClient
 from hehun import analyze_hehun, render_hehun_html
+from name_analysis import analyze_name_with_bazi, render_name_report_html
 from trial_survey import render_trial_survey
 from utils import (
     format_bazi_display,
@@ -1849,6 +1850,63 @@ def apply_scroll_section_if_needed():
     )
 
 
+def render_name_tab() -> None:
+    """独立 Tab：姓名参考报告（本地；免费水印摘要 / 金钻完整无水印）。"""
+    st.markdown(f"### {t('name_heading', lang)}")
+    st.caption(t("name_intro", lang))
+    st.caption(t("name_stroke_note", lang))
+
+    tier = st.session_state.subscription_tier or "free"
+    full_clean = tier in ("gold", "diamond")
+    if not full_clean:
+        st.warning(t("name_free_banner", lang))
+
+    if st.session_state.bazi_data is None:
+        st.info(t("name_need_chart", lang))
+
+    default_name = ""
+    bi = st.session_state.get("birth_info") or {}
+    if isinstance(bi, dict) and bi.get("name"):
+        default_name = str(bi.get("name") or "")
+    elif st.session_state.get("input_name"):
+        default_name = str(st.session_state.get("input_name") or "")
+
+    name_val = st.text_input(
+        t("name_input", lang),
+        value=default_name,
+        placeholder=t("name_input_ph", lang),
+        key="name_tab_input",
+    )
+    compound = st.checkbox(t("name_compound", lang), value=False, key="name_tab_compound")
+
+    if st.button(t("name_analyze", lang), type="primary", use_container_width=True, key="name_tab_run"):
+        result = analyze_name_with_bazi(
+            name_val,
+            st.session_state.get("bazi_data"),
+            compound=True if compound else None,
+            lang=lang,
+        )
+        st.session_state["name_analysis_result"] = result
+
+    result = st.session_state.get("name_analysis_result")
+    if not result:
+        return
+    if not result.get("ok"):
+        st.error(result.get("message") or t("report_fail", lang))
+        return
+
+    html = render_name_report_html(result, full=full_clean, lang=lang)
+    if not full_clean:
+        mark = f"SigmaFate/{st.session_state.get('user_email') or 'preview'}"
+        html = _wrap_protected_html(html, mark)
+        st.markdown(html, unsafe_allow_html=True)
+        st.info(t("name_upgrade_hint", lang))
+        st.session_state.selected_plan = st.session_state.get("selected_plan") or "gold"
+        render_membership_plans("name_tab_upgrade")
+    else:
+        st.markdown(html, unsafe_allow_html=True)
+
+
 def render_ai_deep_cta(key_prefix: str = "ai") -> None:
     """AI 深批入口（才消耗 DeepSeek / 次数）；出生未变且已有存档时直接复用。"""
     if st.session_state.bazi_data is None:
@@ -2523,9 +2581,10 @@ _nav = [
     t("tab_report", lang),
     t("tab_liunian", lang),
     t("tab_hehun", lang),
+    t("tab_name", lang),
     t("tab_survey", lang),
 ]
-nav_cols = st.columns(6)
+nav_cols = st.columns(7)
 for i, lab in enumerate(_nav):
     with nav_cols[i]:
         is_on = int(st.session_state.get("ui_tab", 0)) == i
@@ -2539,7 +2598,7 @@ for i, lab in enumerate(_nav):
             st.session_state["_scroll_top"] = True
             st.session_state.pop("_scroll_section", None)
             st.rerun()
-        if i == 5:
+        if i == 6:
             st.caption(t("survey_gold_hint", lang))
 
 _tab = int(st.session_state.get("ui_tab", 0))
@@ -2654,8 +2713,12 @@ elif _tab == 3:
 elif _tab == 4:
     render_hehun_tab()
 
-# ========== Tab 6：试用问卷 ==========
+# ========== Tab 5：姓名参考 ==========
 elif _tab == 5:
+    render_name_tab()
+
+# ========== Tab 6：试用问卷 ==========
+elif _tab == 6:
     if not is_registered():
         st.info(t("survey_login_required", lang))
         if st.button(t("login_btn", lang), key="survey_tab_login", type="primary"):
