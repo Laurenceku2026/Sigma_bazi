@@ -971,260 +971,320 @@ def render_admin_page(lang: str, supabase_client) -> None:
         )
         if not users:
             return
-        # 仍允许在全部模式下管理；若默认空但 users 非空，用全部继续选用户
         view_users = users
 
-    # —— 先选用户并查看命盘/报告（放在大表上方，避免被挡住）——
     manage_users = users
+
     def _user_option_label(u: Dict[str, Any]) -> str:
         name = str(u.get("display_name") or "").strip() or "-"
         email = str(u.get("email") or "").strip() or str(u.get("user_id") or "")[:8]
         return f"{name} · {email}"
 
-    st.markdown("---")
-    st.markdown(f"### 🔮 {t('admin_user_results', lang)}")
-    st.info(t("admin_user_results_howto", lang))
-    selected_idx = st.selectbox(
-        t("select_user", lang),
-        options=list(range(len(manage_users))),
-        format_func=lambda i: _user_option_label(manage_users[i]),
-        key="admin_select_user_idx",
-    )
-    selected_user = manage_users[int(selected_idx)] if manage_users else None
-    if not selected_user:
-        return
-
-    st.caption(
-        f"{t('current_user', lang)}: "
-        f"{selected_user.get('email') or selected_user.get('user_id')} · "
-        f"{t('last_login_col', lang)} {_safe_datetime(selected_user.get('last_login_at'))}"
+    tab_mgmt, tab_results, tab_match = st.tabs(
+        [
+            f"👥 {t('admin_tab_user_mgmt', lang)}",
+            f"🔮 {t('admin_tab_user_results', lang)}",
+            f"💞 {t('admin_tab_match', lang)}",
+        ]
     )
 
-    st.markdown(f"#### 📍 {t('admin_birth_profile', lang)}")
-    bc1, bc2, bc3, bc4 = st.columns(4)
-    bc1.metric(t("admin_col_name", lang), selected_user.get("display_name") or "-")
-    bc2.metric(t("admin_col_birthday", lang), _safe_date(selected_user.get("birth_date")))
-    bc3.metric(t("admin_col_time", lang), _format_birth_time(selected_user))
-    bc4.metric(t("admin_col_gender", lang), selected_user.get("gender") or "-")
-    st.caption(
-        t("admin_birth_place_label", lang) + _format_birth_location(selected_user, lang)
-    )
-
-    with st.container(border=True):
-        render_admin_user_results(lang, supabase_client, selected_user)
-
-    st.markdown("---")
-    with st.expander(f"💞 {t('admin_match_heading', lang)}", expanded=False):
-        render_admin_match(lang, supabase_client, manage_users)
-
-    st.markdown("---")
-    st.markdown(f"### 📋 {t('user_list', lang)}")
-    table_rows = []
-    for u in view_users:
-        table_rows.append(
-            {
-                t("email_col", lang): u.get("email") or "-",
-                t("admin_col_name", lang): u.get("display_name") or "-",
-                t("admin_col_birthday", lang): _safe_date(u.get("birth_date")),
-                t("admin_col_birth_time", lang): _format_birth_time(u),
-                t("admin_col_birth_place", lang): _format_birth_location(u, lang),
-                t("subscription_col", lang): u.get("subscription_tier", "free"),
-                t("trials_col", lang): u.get("free_trials_remaining", 5),
-                t("expires_col", lang): _safe_date(u.get("subscription_expires_at")),
-                t("created_col", lang): _safe_datetime(u.get("created_at")),
-                t("last_login_col", lang): _safe_datetime(u.get("last_login_at")),
-                t("email_confirmed_col", lang): "✅" if u.get("email_confirmed") else "—",
-            }
-        )
-    st.dataframe(table_rows, use_container_width=True, hide_index=True, height=360)
-
-    st.markdown("---")
-    st.markdown(f"### 📝 {t('edit_subscription', lang)}")
-    col_a, col_b = st.columns(2)
-    tiers = ["free", "silver", "gold", "diamond", "monthly", "quarterly", "annual"]
-    cur_tier = selected_user.get("subscription_tier", "free")
-    uid = selected_user["user_id"]
-    cur_exp_raw = selected_user.get("subscription_expires_at")
-    parsed_exp = _parse_expires_date(cur_exp_raw)
-    default_exp = parsed_exp or (date.today() + timedelta(days=365))
-    # 切换用户时刷新到期控件默认值（须在「更新订阅」读取 session 之前）
-    prev_uid = st.session_state.get("_admin_expires_uid")
-    if prev_uid != uid:
-        st.session_state["admin_no_expires"] = not bool(cur_exp_raw)
-        st.session_state["admin_expires_date"] = default_exp
-        st.session_state["_admin_expires_uid"] = uid
-
-    with col_a:
-        new_tier = st.selectbox(
-            t("set_subscription", lang),
-            tiers,
-            index=tiers.index(cur_tier) if cur_tier in tiers else 0,
-            key="admin_tier_select",
-        )
-        if st.button(t("update_subscription", lang), key="admin_update_tier", use_container_width=True):
-            # 更新等级时：若下方勾了「无到期」则清空；否则写入所选到期日。
-            # 兼容旧逻辑：月/季/年卡若未改日期控件，仍可按套餐默认天数。
-            clear_exp = bool(st.session_state.get("admin_no_expires"))
-            exp_d = st.session_state.get("admin_expires_date")
-            kwargs: Dict[str, Any] = {"subscription_tier": new_tier}
-            if clear_exp:
-                kwargs["clear_subscription_expires"] = True
-            elif isinstance(exp_d, date):
-                kwargs["subscription_expires_at"] = _expires_end_of_day_utc_iso(exp_d)
-            elif new_tier in ("monthly", "quarterly", "annual"):
-                days = {"monthly": 30, "quarterly": 90, "annual": 365}[new_tier]
-                kwargs["subscription_expires_at"] = (
-                    datetime.now(timezone.utc) + timedelta(days=days)
-                ).isoformat().replace("+00:00", "Z")
-            ok = supabase_client.admin_update_user(uid, **kwargs)
-            st.success(t("update_ok", lang)) if ok else st.error(t("update_fail", lang))
-            if ok:
-                st.rerun()
-    with col_b:
-        trials_val = int(selected_user.get("free_trials_remaining") or 5)
-        new_trials = st.number_input(
-            t("set_trials", lang),
-            min_value=0,
-            max_value=9999,
-            value=trials_val,
-            key="admin_trials_input",
-        )
-        if st.button(t("reset_trials", lang), key="admin_reset_trials", use_container_width=True):
-            ok = supabase_client.admin_update_user(
-                uid,
-                free_trials_remaining=int(new_trials),
+    # ========== Tab 1：用户管理 ==========
+    with tab_mgmt:
+        st.markdown(f"### 📋 {t('user_list', lang)}")
+        table_rows = []
+        for u in view_users:
+            table_rows.append(
+                {
+                    t("email_col", lang): u.get("email") or "-",
+                    t("admin_col_name", lang): u.get("display_name") or "-",
+                    t("admin_col_birthday", lang): _safe_date(u.get("birth_date")),
+                    t("admin_col_birth_time", lang): _format_birth_time(u),
+                    t("admin_col_birth_place", lang): _format_birth_location(u, lang),
+                    t("subscription_col", lang): u.get("subscription_tier", "free"),
+                    t("trials_col", lang): u.get("free_trials_remaining", 5),
+                    t("expires_col", lang): _safe_date(u.get("subscription_expires_at")),
+                    t("created_col", lang): _safe_datetime(u.get("created_at")),
+                    t("last_login_col", lang): _safe_datetime(u.get("last_login_at")),
+                    t("email_confirmed_col", lang): "✅" if u.get("email_confirmed") else "—",
+                }
             )
-            st.success(t("reset_ok", lang)) if ok else st.error(t("update_fail", lang))
-            if ok:
-                st.rerun()
+        st.dataframe(table_rows, use_container_width=True, hide_index=True, height=360)
 
-    # —— 到期时间（管理员可设置 / 清空）——
-    st.markdown(f"#### ⏳ {t('set_expires', lang)}")
-    st.caption(t("set_expires_hint", lang))
-    st.caption(f"{t('current_expires', lang)}：{_safe_datetime(cur_exp_raw)}")
-
-    no_expires = st.checkbox(
-        t("no_expires", lang),
-        key="admin_no_expires",
-    )
-    exp_date = st.date_input(
-        t("expires_date", lang),
-        value=st.session_state.get("admin_expires_date") or default_exp,
-        min_value=date(2020, 1, 1),
-        max_value=date(2100, 12, 31),
-        format="YYYY-MM-DD",
-        disabled=bool(no_expires),
-        key="admin_expires_date",
-    )
-
-    q1, q2, q3, q4 = st.columns(4)
-    with q1:
-        if st.button(t("expires_quick_30", lang), key="admin_exp_30", use_container_width=True, disabled=bool(no_expires)):
-            st.session_state["admin_expires_date"] = date.today() + timedelta(days=30)
-            st.rerun()
-    with q2:
-        if st.button(t("expires_quick_90", lang), key="admin_exp_90", use_container_width=True, disabled=bool(no_expires)):
-            st.session_state["admin_expires_date"] = date.today() + timedelta(days=90)
-            st.rerun()
-    with q3:
-        if st.button(t("expires_quick_365", lang), key="admin_exp_365", use_container_width=True, disabled=bool(no_expires)):
-            st.session_state["admin_expires_date"] = date.today() + timedelta(days=365)
-            st.rerun()
-    with q4:
-        if st.button(t("update_expires", lang), key="admin_update_expires", type="primary", use_container_width=True):
-            if no_expires:
-                ok = supabase_client.admin_update_user(
-                    uid, clear_subscription_expires=True
-                )
-            else:
-                d = exp_date if isinstance(exp_date, date) else default_exp
-                ok = supabase_client.admin_update_user(
-                    uid,
-                    subscription_expires_at=_expires_end_of_day_utc_iso(d),
-                )
-            st.success(t("update_ok", lang)) if ok else st.error(t("update_fail", lang))
-            if ok:
-                st.rerun()
-
-    st.markdown("---")
-    st.markdown(f"### ⚙️ {t('actions', lang)}")
-    b1, b2, b3 = st.columns(3)
-    with b1:
-        if st.button(f"📧 {t('send_reset_email', lang)}", key="admin_send_reset", use_container_width=True):
-            st.info(t("reset_email_na", lang))
-    with b2:
-        if st.button(f"🗑 {t('delete_user', lang)}", key="admin_delete_user", use_container_width=True):
-            ok = supabase_client.admin_delete_user(selected_user["user_id"])
-            st.success(t("delete_ok", lang)) if ok else st.error(t("delete_fail", lang))
-            if ok:
-                st.rerun()
-    with b3:
-        if st.button(f"🔄 {t('refresh_data', lang)}", key="admin_refresh", use_container_width=True):
-            st.rerun()
-
-    st.markdown("---")
-    st.markdown(f"### 📋 {t('admin_survey_responses', lang)}")
-    surveys = supabase_client.list_survey_responses(limit=200) if supabase_client else []
-    if not surveys:
-        st.caption(t("admin_survey_empty", lang))
-    else:
-        srows = survey_rows_for_admin(surveys, lang)
-        st.dataframe(srows, use_container_width=True, hide_index=True, height=280)
-        with st.expander(t("admin_survey_full", lang), expanded=False):
-            from trial_survey import _bg_display
-
-            for r in surveys[:30]:
-                st.markdown(
-                    f"**{str(r.get('created_at') or '')[:10]}** · "
-                    f"{r.get('email') or '-'} · {_bg_display(r.get('background'), lang)}"
-                )
-                st.write(r.get("open_feedback") or "—")
-                st.markdown("---")
-
-    with st.expander(t("admin_export_template", lang), expanded=False):
-        st.markdown(t("admin_export_template_body", lang))
-        doc_dir = Path(__file__).resolve().parent / "docs"
-        qpath = doc_dir / "trial_questionnaire_zh_hant.md"
-        csvpath = doc_dir / "trial_questionnaire_table.csv"
-        if qpath.is_file():
-            st.download_button(
-                t("admin_download_md", lang),
-                data=qpath.read_text(encoding="utf-8"),
-                file_name="sigma_fate_trial_questionnaire.md",
-                mime="text/markdown",
-                key="admin_download_questionnaire",
+        selected_idx = st.selectbox(
+            t("select_user", lang),
+            options=list(range(len(manage_users))),
+            format_func=lambda i: _user_option_label(manage_users[i]),
+            key="admin_select_user_idx",
+        )
+        selected_user = manage_users[int(selected_idx)] if manage_users else None
+        if not selected_user:
+            st.warning(t("admin_user_results_unavailable", lang))
+        else:
+            st.caption(
+                f"{t('current_user', lang)}: "
+                f"{selected_user.get('email') or selected_user.get('user_id')} · "
+                f"{t('last_login_col', lang)} {_safe_datetime(selected_user.get('last_login_at'))}"
             )
-        if csvpath.is_file():
+
+            st.markdown("---")
+            st.markdown(f"### 📝 {t('edit_subscription', lang)}")
+            col_a, col_b = st.columns(2)
+            tiers = ["free", "silver", "gold", "diamond", "monthly", "quarterly", "annual"]
+            cur_tier = selected_user.get("subscription_tier", "free")
+            uid = selected_user["user_id"]
+            cur_exp_raw = selected_user.get("subscription_expires_at")
+            parsed_exp = _parse_expires_date(cur_exp_raw)
+            default_exp = parsed_exp or (date.today() + timedelta(days=365))
+            prev_uid = st.session_state.get("_admin_expires_uid")
+            if prev_uid != uid:
+                st.session_state["admin_no_expires"] = not bool(cur_exp_raw)
+                st.session_state["admin_expires_date"] = default_exp
+                st.session_state["_admin_expires_uid"] = uid
+
+            with col_a:
+                new_tier = st.selectbox(
+                    t("set_subscription", lang),
+                    tiers,
+                    index=tiers.index(cur_tier) if cur_tier in tiers else 0,
+                    key="admin_tier_select",
+                )
+                if st.button(
+                    t("update_subscription", lang),
+                    key="admin_update_tier",
+                    use_container_width=True,
+                ):
+                    clear_exp = bool(st.session_state.get("admin_no_expires"))
+                    exp_d = st.session_state.get("admin_expires_date")
+                    kwargs: Dict[str, Any] = {"subscription_tier": new_tier}
+                    if clear_exp:
+                        kwargs["clear_subscription_expires"] = True
+                    elif isinstance(exp_d, date):
+                        kwargs["subscription_expires_at"] = _expires_end_of_day_utc_iso(exp_d)
+                    elif new_tier in ("monthly", "quarterly", "annual"):
+                        days = {"monthly": 30, "quarterly": 90, "annual": 365}[new_tier]
+                        kwargs["subscription_expires_at"] = (
+                            datetime.now(timezone.utc) + timedelta(days=days)
+                        ).isoformat().replace("+00:00", "Z")
+                    ok = supabase_client.admin_update_user(uid, **kwargs)
+                    st.success(t("update_ok", lang)) if ok else st.error(t("update_fail", lang))
+                    if ok:
+                        st.rerun()
+            with col_b:
+                trials_val = int(selected_user.get("free_trials_remaining") or 5)
+                new_trials = st.number_input(
+                    t("set_trials", lang),
+                    min_value=0,
+                    max_value=9999,
+                    value=trials_val,
+                    key="admin_trials_input",
+                )
+                if st.button(
+                    t("reset_trials", lang),
+                    key="admin_reset_trials",
+                    use_container_width=True,
+                ):
+                    ok = supabase_client.admin_update_user(
+                        uid,
+                        free_trials_remaining=int(new_trials),
+                    )
+                    st.success(t("reset_ok", lang)) if ok else st.error(t("update_fail", lang))
+                    if ok:
+                        st.rerun()
+
+            st.markdown(f"#### ⏳ {t('set_expires', lang)}")
+            st.caption(t("set_expires_hint", lang))
+            st.caption(f"{t('current_expires', lang)}：{_safe_datetime(cur_exp_raw)}")
+
+            no_expires = st.checkbox(
+                t("no_expires", lang),
+                key="admin_no_expires",
+            )
+            exp_date = st.date_input(
+                t("expires_date", lang),
+                value=st.session_state.get("admin_expires_date") or default_exp,
+                min_value=date(2020, 1, 1),
+                max_value=date(2100, 12, 31),
+                format="YYYY-MM-DD",
+                disabled=bool(no_expires),
+                key="admin_expires_date",
+            )
+
+            q1, q2, q3, q4 = st.columns(4)
+            with q1:
+                if st.button(
+                    t("expires_quick_30", lang),
+                    key="admin_exp_30",
+                    use_container_width=True,
+                    disabled=bool(no_expires),
+                ):
+                    st.session_state["admin_expires_date"] = date.today() + timedelta(days=30)
+                    st.rerun()
+            with q2:
+                if st.button(
+                    t("expires_quick_90", lang),
+                    key="admin_exp_90",
+                    use_container_width=True,
+                    disabled=bool(no_expires),
+                ):
+                    st.session_state["admin_expires_date"] = date.today() + timedelta(days=90)
+                    st.rerun()
+            with q3:
+                if st.button(
+                    t("expires_quick_365", lang),
+                    key="admin_exp_365",
+                    use_container_width=True,
+                    disabled=bool(no_expires),
+                ):
+                    st.session_state["admin_expires_date"] = date.today() + timedelta(days=365)
+                    st.rerun()
+            with q4:
+                if st.button(
+                    t("update_expires", lang),
+                    key="admin_update_expires",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    if no_expires:
+                        ok = supabase_client.admin_update_user(
+                            uid, clear_subscription_expires=True
+                        )
+                    else:
+                        d = exp_date if isinstance(exp_date, date) else default_exp
+                        ok = supabase_client.admin_update_user(
+                            uid,
+                            subscription_expires_at=_expires_end_of_day_utc_iso(d),
+                        )
+                    st.success(t("update_ok", lang)) if ok else st.error(t("update_fail", lang))
+                    if ok:
+                        st.rerun()
+
+            st.markdown("---")
+            st.markdown(f"### ⚙️ {t('actions', lang)}")
+            b1, b2, b3 = st.columns(3)
+            with b1:
+                if st.button(
+                    f"📧 {t('send_reset_email', lang)}",
+                    key="admin_send_reset",
+                    use_container_width=True,
+                ):
+                    st.info(t("reset_email_na", lang))
+            with b2:
+                if st.button(
+                    f"🗑 {t('delete_user', lang)}",
+                    key="admin_delete_user",
+                    use_container_width=True,
+                ):
+                    ok = supabase_client.admin_delete_user(selected_user["user_id"])
+                    st.success(t("delete_ok", lang)) if ok else st.error(t("delete_fail", lang))
+                    if ok:
+                        st.rerun()
+            with b3:
+                if st.button(
+                    f"🔄 {t('refresh_data', lang)}",
+                    key="admin_refresh",
+                    use_container_width=True,
+                ):
+                    st.rerun()
+
+        st.markdown("---")
+        st.markdown(f"### 📋 {t('admin_survey_responses', lang)}")
+        surveys = supabase_client.list_survey_responses(limit=200) if supabase_client else []
+        if not surveys:
+            st.caption(t("admin_survey_empty", lang))
+        else:
+            srows = survey_rows_for_admin(surveys, lang)
+            st.dataframe(srows, use_container_width=True, hide_index=True, height=280)
+            with st.expander(t("admin_survey_full", lang), expanded=False):
+                from trial_survey import _bg_display
+
+                for r in surveys[:30]:
+                    st.markdown(
+                        f"**{str(r.get('created_at') or '')[:10]}** · "
+                        f"{r.get('email') or '-'} · {_bg_display(r.get('background'), lang)}"
+                    )
+                    st.write(r.get("open_feedback") or "—")
+                    st.markdown("---")
+
+        with st.expander(t("admin_export_template", lang), expanded=False):
+            st.markdown(t("admin_export_template_body", lang))
+            doc_dir = Path(__file__).resolve().parent / "docs"
+            qpath = doc_dir / "trial_questionnaire_zh_hant.md"
+            csvpath = doc_dir / "trial_questionnaire_table.csv"
+            if qpath.is_file():
+                st.download_button(
+                    t("admin_download_md", lang),
+                    data=qpath.read_text(encoding="utf-8"),
+                    file_name="sigma_fate_trial_questionnaire.md",
+                    mime="text/markdown",
+                    key="admin_download_questionnaire",
+                )
+            if csvpath.is_file():
+                st.download_button(
+                    t("admin_download_csv", lang),
+                    data=csvpath.read_text(encoding="utf-8-sig"),
+                    file_name="sigma_fate_trial_questionnaire.csv",
+                    mime="text/csv",
+                    key="admin_download_questionnaire_csv",
+                )
+
+        st.markdown("---")
+        st.markdown(f"### 🔁 {t('bulk_ops', lang)}")
+        bb1, bb2 = st.columns(2)
+        with bb1:
+            if st.button(t("reset_all_free", lang), key="admin_reset_all", use_container_width=True):
+                n = supabase_client.admin_reset_free_trials(5)
+                st.success(f"{t('reset_all_ok', lang)} ({n})")
+                st.rerun()
+        with bb2:
+            csv_buf = io.StringIO()
+            writer = csv.DictWriter(
+                csv_buf,
+                fieldnames=list(table_rows[0].keys()) if table_rows else [],
+            )
+            if table_rows:
+                writer.writeheader()
+                writer.writerows(table_rows)
             st.download_button(
-                t("admin_download_csv", lang),
-                data=csvpath.read_text(encoding="utf-8-sig"),
-                file_name="sigma_fate_trial_questionnaire.csv",
+                t("export_csv", lang),
+                data=csv_buf.getvalue().encode("utf-8-sig"),
+                file_name=f"sigma_fate_users_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
-                key="admin_download_questionnaire_csv",
+                use_container_width=True,
+                key="admin_export_csv",
             )
 
-    st.markdown("---")
-    st.markdown(f"### 🔁 {t('bulk_ops', lang)}")
-    bb1, bb2 = st.columns(2)
-    with bb1:
-        if st.button(t("reset_all_free", lang), key="admin_reset_all", use_container_width=True):
-            n = supabase_client.admin_reset_free_trials(5)
-            st.success(f"{t('reset_all_ok', lang)} ({n})")
-            st.rerun()
-    with bb2:
-        csv_buf = io.StringIO()
-        writer = csv.DictWriter(
-            csv_buf,
-            fieldnames=list(table_rows[0].keys()) if table_rows else [],
-        )
-        if table_rows:
-            writer.writeheader()
-            writer.writerows(table_rows)
-        st.download_button(
-            t("export_csv", lang),
-            data=csv_buf.getvalue().encode("utf-8-sig"),
-            file_name=f"sigma_fate_users_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-            key="admin_export_csv",
-        )
+    # ========== Tab 2：用户命盘与报告 ==========
+    with tab_results:
+        st.markdown(f"### 🔮 {t('admin_user_results', lang)}")
+        st.caption(t("admin_user_results_howto", lang))
+        if not manage_users:
+            st.info(t("no_users", lang))
+        else:
+            selected_idx_r = st.selectbox(
+                t("select_user", lang),
+                options=list(range(len(manage_users))),
+                format_func=lambda i: _user_option_label(manage_users[i]),
+                key="admin_results_user_idx",
+            )
+            selected_user_r = manage_users[int(selected_idx_r)]
+            st.caption(
+                f"{t('current_user', lang)}: "
+                f"{selected_user_r.get('email') or selected_user_r.get('user_id')} · "
+                f"{t('last_login_col', lang)} {_safe_datetime(selected_user_r.get('last_login_at'))}"
+            )
+            st.markdown(f"#### 📍 {t('admin_birth_profile', lang)}")
+            bc1, bc2, bc3, bc4 = st.columns(4)
+            bc1.metric(t("admin_col_name", lang), selected_user_r.get("display_name") or "-")
+            bc2.metric(t("admin_col_birthday", lang), _safe_date(selected_user_r.get("birth_date")))
+            bc3.metric(t("admin_col_time", lang), _format_birth_time(selected_user_r))
+            bc4.metric(t("admin_col_gender", lang), selected_user_r.get("gender") or "-")
+            st.caption(
+                t("admin_birth_place_label", lang)
+                + _format_birth_location(selected_user_r, lang)
+            )
+            render_admin_user_results(lang, supabase_client, selected_user_r)
+
+    # ========== Tab 3：八字契合 ==========
+    with tab_match:
+        st.markdown(f"### 💞 {t('admin_match_heading', lang)}")
+        render_admin_match(lang, supabase_client, manage_users)
