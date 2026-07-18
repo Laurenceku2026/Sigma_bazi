@@ -1851,7 +1851,7 @@ def apply_scroll_section_if_needed():
 
 
 def render_name_tab() -> None:
-    """独立 Tab：姓名参考报告（本地；免费水印摘要 / 金钻完整无水印）。"""
+    """独立 Tab：姓名详批（本地；免费水印摘要 / 金钻完整无水印）。"""
     st.markdown(f"### {t('name_heading', lang)}")
     st.caption(t("name_intro", lang))
     st.caption(t("name_stroke_note", lang))
@@ -1864,19 +1864,27 @@ def render_name_tab() -> None:
     if st.session_state.bazi_data is None:
         st.info(t("name_need_chart", lang))
 
-    default_name = ""
+    # 默认沿用八字输入姓名；若用户未改过预填值，源姓名更新时同步
     bi = st.session_state.get("birth_info") or {}
+    source_name = ""
     if isinstance(bi, dict) and bi.get("name"):
-        default_name = str(bi.get("name") or "")
-    elif st.session_state.get("input_name"):
-        default_name = str(st.session_state.get("input_name") or "")
+        source_name = str(bi.get("name") or "").strip()
+    if not source_name:
+        source_name = str(st.session_state.get("input_name") or "").strip()
+    prev_source = str(st.session_state.get("_name_tab_source") or "")
+    current_val = str(st.session_state.get("name_tab_input") or "")
+    if "name_tab_input" not in st.session_state:
+        st.session_state.name_tab_input = source_name
+    elif source_name and (not current_val or current_val == prev_source):
+        st.session_state.name_tab_input = source_name
+    st.session_state._name_tab_source = source_name
 
     name_val = st.text_input(
         t("name_input", lang),
-        value=default_name,
         placeholder=t("name_input_ph", lang),
         key="name_tab_input",
     )
+    st.caption(t("name_input_hint", lang))
     compound = st.checkbox(t("name_compound", lang), value=False, key="name_tab_compound")
 
     def _run_name_analysis(raw_name: str) -> dict:
@@ -2604,7 +2612,7 @@ _nav_keys = [
     "tab_survey",
 ]
 _nav_fallback = {
-    "tab_name": "✍️ 姓名参考" if _is_zh() else "✍️ Name Reference",
+    "tab_name": "✍️ 姓名详批" if _is_zh() else "✍️ Name Analysis",
 }
 nav_cols = st.columns(7)
 for i, key in enumerate(_nav_keys):

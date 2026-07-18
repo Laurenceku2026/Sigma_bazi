@@ -592,7 +592,7 @@ def render_name_report_html(result: Dict[str, Any], *, full: bool, lang: str) ->
             .replace(">", "&gt;")
         )
 
-    title = "Name Reference Report" if _is_en(lang) else _loc("姓名参考报告", lang)
+    title = "Name Analysis Report" if _is_en(lang) else _loc("姓名报告", lang)
     src = result.get("display_name") or ""
     trad = result.get("traditional_name") or ""
     convert_line = (
