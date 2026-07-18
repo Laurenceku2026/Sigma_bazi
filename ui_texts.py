@@ -417,7 +417,7 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "tab_name": "✍️ Name Analysis",
         "tab_survey": "📝 Feedback",
         "name_heading": "✍️ Name Analysis",
-        "name_intro": "Open to everyone (including Free): local Kangxi/traditional Five-Grid + character element hints + BaZi favorable-element check. Enter a name to see results — no button, no AI. Simplified or traditional input both work. Reinforce 喜用, not merely missing elements.",
+        "name_intro": "Name report: local Kangxi/traditional Five-Grid + character element hints + BaZi favorable-element check. Enter a name to see results — no button, no AI. Simplified or traditional input both work. Reinforce 喜用, not merely missing elements.",
         "name_need_chart": "Generate a chart on Input first for BaZi comparison; Five-Grid results still work alone.",
         "name_input": "Name",
         "name_input_ph": "e.g. 张伟 / 張偉 / 欧阳修",
