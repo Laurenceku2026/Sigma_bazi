@@ -18,6 +18,33 @@ from zh_convert import to_traditional
 
 _DATA = Path(__file__).resolve().parent / "data" / "hanzi_strokes.json"
 
+
+def _is_en(lang: str) -> bool:
+    return (lang or "zh") == "en"
+
+
+def _loc(text: str, lang: str) -> str:
+    """中文简体文案；繁体界面再转繁。"""
+    if not text or _is_en(lang):
+        return text
+    if lang == "zh_hant":
+        return to_traditional(text)
+    return text
+
+
+def _luck_label(luck: str, lang: str) -> str:
+    if _is_en(lang):
+        return {"吉": "Auspicious", "半吉": "Mixed", "凶": "Inauspicious"}.get(luck, luck)
+    return _loc(luck, lang)
+
+
+def _wx_label(wx: str, lang: str) -> str:
+    if not wx:
+        return "—"
+    if _is_en(lang):
+        return {"木": "Wood", "火": "Fire", "土": "Earth", "金": "Metal", "水": "Water"}.get(wx, wx)
+    return _loc(wx, lang)
+
 # 姓名学常见康熙笔画校正（与通用笔顺库不一致时）
 _NAMEOLOGY_STROKE_OVERRIDES: Dict[str, int] = {
     "華": 12,
@@ -308,16 +335,17 @@ def analyze_name_with_bazi(
 
     display, trad = normalize_name_chars(name)
     surname, given, is_compound = split_surname_given(trad, compound=compound)
-    en = lang == "en"
+    en = _is_en(lang)
 
     if not surname or not given:
         return {
             "ok": False,
-            "error": "need_fullname" if en else "need_fullname",
+            "lang": lang,
+            "error": "need_fullname",
             "message": (
                 "Please enter a Chinese name with surname + given name."
                 if en
-                else "请输入含姓与名的中文姓名（至少两字）。"
+                else _loc("请输入含姓与名的中文姓名（至少两字）。", lang)
             ),
         }
 
@@ -326,11 +354,12 @@ def analyze_name_with_bazi(
         missing = "、".join(wuge.get("missing") or [])
         return {
             "ok": False,
+            "lang": lang,
             "error": "unknown_strokes",
             "message": (
                 f"No Kangxi stroke data for: {missing}. Try traditional form or another character."
                 if en
-                else f"暂无康熙笔画数据：{missing}。可改用常见繁体字，或调整用字。"
+                else _loc(f"暂无康熙笔画数据：{missing}。可改用常见繁体字，或调整用字。", lang)
             ),
             "display_name": display,
             "traditional_name": trad,
@@ -371,11 +400,11 @@ def analyze_name_with_bazi(
         _sheng_ke_relation(sc["ren"], sc["di"]),
     ]
     if all(r in ("比和", "我生", "生我") for r in relations):
-        sancai_tone = "harmonious" if en else "较顺"
+        sancai_tone = "harmonious" if en else _loc("较顺", lang)
     elif any(r in ("我克", "克我") for r in relations):
-        sancai_tone = "mixed" if en else "有克战"
+        sancai_tone = "mixed" if en else _loc("有克战", lang)
     else:
-        sancai_tone = "neutral" if en else "中平"
+        sancai_tone = "neutral" if en else _loc("中平", lang)
 
     summary_lines = _build_summary(
         display=display,
@@ -404,6 +433,7 @@ def analyze_name_with_bazi(
 
     return {
         "ok": True,
+        "lang": lang,
         "display_name": display,
         "traditional_name": trad,
         "surname": surname,
@@ -427,38 +457,43 @@ def analyze_name_with_bazi(
             "Reference only: Kangxi strokes + Five-Grid theory. "
             "Supplement the favorable elements (喜用), not merely missing ones. Not a rename guarantee."
             if en
-            else "仅供参考：笔画按康熙/繁体；补的是八字喜用，不是简单缺啥补啥；不构成改名承诺。"
+            else _loc(
+                "仅供参考：笔画按康熙/繁体；补的是八字喜用，不是简单缺啥补啥；不构成改名承诺。",
+                lang,
+            )
         ),
     }
 
 
 def _join_wx(items: Sequence[str], lang: str) -> str:
     if not items:
-        return "—" if lang == "en" else "—"
-    if lang == "en":
-        mp = {"木": "Wood", "火": "Fire", "土": "Earth", "金": "Metal", "水": "Water"}
-        return ", ".join(mp.get(x, x) for x in items)
-    return "、".join(items)
+        return "—"
+    sep = ", " if _is_en(lang) else "、"
+    return sep.join(_wx_label(x, lang) for x in items)
 
 
 def _build_summary(**kw) -> List[str]:
     lang = kw["lang"]
     wuge = kw["wuge"]
-    en = lang == "en"
+    en = _is_en(lang)
     if en:
         return [
-            f"Name: {kw['display']} (traditional for strokes: {kw['trad']})",
-            f"Five grids — Heaven {wuge['tian']['number']}({wuge['tian']['wuxing']}), "
-            f"Person {wuge['ren']['number']}({wuge['ren']['wuxing']}), "
-            f"Earth {wuge['di']['number']}({wuge['di']['wuxing']}), "
-            f"Total {wuge['zong']['number']}({wuge['zong']['wuxing']}).",
-            f"San Cai: {wuge['sancai']['combo']} ({kw['sancai_tone']}).",
+            f"Name: {kw['display']} → Kangxi/traditional for strokes: {kw['trad']}",
+            f"Five grids — Heaven {wuge['tian']['number']}({_wx_label(wuge['tian']['wuxing'], lang)}), "
+            f"Person {wuge['ren']['number']}({_wx_label(wuge['ren']['wuxing'], lang)}), "
+            f"Earth {wuge['di']['number']}({_wx_label(wuge['di']['wuxing'], lang)}), "
+            f"Total {wuge['zong']['number']}({_wx_label(wuge['zong']['wuxing'], lang)}).",
+            f"San Cai: {_loc(wuge['sancai']['combo'], lang)} ({kw['sancai_tone']}).",
             f"Vs BaZi favor {_join_wx(kw['favor'], lang)}: name signals help {_join_wx(kw['help_favor'], lang)}; "
             f"caution {_join_wx(kw['hit_avoid'], lang)}.",
-            "Rule: reinforce 喜用 (favorable), not simply fill missing elements.",
+            "Rule: reinforce favorable elements, not simply fill missing ones.",
         ]
-    return [
-        f"姓名：{kw['display']}（计画用繁体：{kw['trad']}）",
+    # 输入名保持原样，避免繁体界面把简体输入也转掉，便于看清「输入→康熙/繁体」
+    convert = (
+        f"{_loc('姓名：', lang)}{kw['display']}"
+        f"{_loc(' → 计画用康熙/繁体：', lang)}{kw['trad']}"
+    )
+    rest = [
         f"五格：天{wuge['tian']['number']}({wuge['tian']['wuxing']}) · "
         f"人{wuge['ren']['number']}({wuge['ren']['wuxing']}) · "
         f"地{wuge['di']['number']}({wuge['di']['wuxing']}) · "
@@ -468,30 +503,38 @@ def _build_summary(**kw) -> List[str]:
         f"需留意 {_join_wx(kw['hit_avoid'], lang)}",
         "要点：按喜用神补益，不是命盘缺什么就补什么。",
     ]
+    return [convert] + [_loc(x, lang) for x in rest]
 
 
 def _build_details(**kw) -> List[str]:
     lang = kw["lang"]
-    en = lang == "en"
+    en = _is_en(lang)
     lines: List[str] = []
     wuge = kw["wuge"]
     if en:
         lines.append("Character strokes & element hints")
         for c in kw["char_details"]:
             lines.append(
-                f"- {c['char']}: {c['strokes']} strokes (数理 {c['stroke_wuxing']}); "
-                f"char hint {c.get('char_wuxing') or '—'}"
+                f"- {c['char']}: {c['strokes']} strokes "
+                f"(number-element {_wx_label(c['stroke_wuxing'], lang)}); "
+                f"char hint {_wx_label(c.get('char_wuxing') or '', lang)}"
             )
         lines.append(
-            f"Grids luck: Tian {wuge['tian']['luck']}, Ren {wuge['ren']['luck']}, "
-            f"Di {wuge['di']['luck']}, Wai {wuge['wai']['luck']}, Zong {wuge['zong']['luck']}"
+            f"Grids luck: Tian {_luck_label(wuge['tian']['luck'], lang)}, "
+            f"Ren {_luck_label(wuge['ren']['luck'], lang)}, "
+            f"Di {_luck_label(wuge['di']['luck'], lang)}, "
+            f"Wai {_luck_label(wuge['wai']['luck'], lang)}, "
+            f"Zong {_luck_label(wuge['zong']['luck'], lang)}"
         )
         lvl = kw["strength"].get("level")
-        lines.append(f"BaZi day-master tendency: {lvl}; favor {_join_wx(kw['favor'], lang)}; caution {_join_wx(kw['avoid'], lang)}")
+        lines.append(
+            f"BaZi day-master tendency: {lvl}; favor {_join_wx(kw['favor'], lang)}; "
+            f"caution {_join_wx(kw['avoid'], lang)}"
+        )
         lines.append(f"Elements absent in chart counts: {_join_wx(kw['missing_wx'], lang)}")
         lines.append(
-            "Interpretation: if a missing element is also favorable (喜用), name support is constructive; "
-            "if missing but unfavorable (忌), do not add it just to 'complete' the set."
+            "Interpretation: if a missing element is also favorable, name support is constructive; "
+            "if missing but unfavorable, do not add it just to complete the set."
         )
         if kw["help_favor"]:
             lines.append(f"This name leans toward helping: {_join_wx(kw['help_favor'], lang)}.")
@@ -500,38 +543,45 @@ def _build_details(**kw) -> List[str]:
         lines.append("San Cai tone: " + kw["sancai_tone"])
         return lines
 
-    lines.append("【用字笔画与五行提示】")
+    raw = [
+        "【用字笔画与五行提示】",
+    ]
     for c in kw["char_details"]:
-        lines.append(
+        raw.append(
             f"- {c['char']}：康熙/姓名学 {c['strokes']} 画（数理{c['stroke_wuxing']}）；"
             f"字义/部首提示 {c.get('char_wuxing') or '—'}"
         )
-    lines.append(
-        f"【五格吉凶参考】天{wuge['tian']['luck']} · 人{wuge['ren']['luck']} · "
-        f"地{wuge['di']['luck']} · 外{wuge['wai']['luck']} · 总{wuge['zong']['luck']}"
+    raw.append(
+        f"【五格吉凶参考】天{_luck_label(wuge['tian']['luck'], lang)} · "
+        f"人{_luck_label(wuge['ren']['luck'], lang)} · "
+        f"地{_luck_label(wuge['di']['luck'], lang)} · "
+        f"外{_luck_label(wuge['wai']['luck'], lang)} · "
+        f"总{_luck_label(wuge['zong']['luck'], lang)}"
     )
     lvl_map = {"strong": "偏强", "weak": "偏弱", "balanced": "中和"}
     lvl = lvl_map.get(kw["strength"].get("level"), "中和")
-    lines.append(
+    raw.append(
         f"【八字对照】日主{lvl}；喜用 {_join_wx(kw['favor'], lang)}；慎用 {_join_wx(kw['avoid'], lang)}"
     )
-    lines.append(f"命盘计数为 0 的五行：{_join_wx(kw['missing_wx'], lang)}")
-    lines.append(
+    raw.append(f"命盘计数为 0 的五行：{_join_wx(kw['missing_wx'], lang)}")
+    raw.append(
         "解读：若「缺」的恰是喜用，名字扶助有建设性；"
         "若只是缺但属忌神，不必为凑齐五行而补。"
     )
     if kw["help_favor"]:
-        lines.append(f"本姓名偏向扶助：{_join_wx(kw['help_favor'], lang)}。")
+        raw.append(f"本姓名偏向扶助：{_join_wx(kw['help_favor'], lang)}。")
     if kw["hit_avoid"]:
-        lines.append(f"需留意可能加重慎用的信号：{_join_wx(kw['hit_avoid'], lang)}。")
-    lines.append(f"三才观感：{kw['sancai_tone']}")
-    return lines
+        raw.append(f"需留意可能加重慎用的信号：{_join_wx(kw['hit_avoid'], lang)}。")
+    raw.append(f"三才观感：{kw['sancai_tone']}")
+    return [_loc(x, lang) for x in raw]
 
 
 def render_name_report_html(result: Dict[str, Any], *, full: bool, lang: str) -> str:
-    """生成可展示 HTML。"""
+    """生成可展示 HTML（随当前界面语言）。"""
     if not result.get("ok"):
-        msg = result.get("message") or ("分析失败" if lang != "en" else "Analysis failed")
+        msg = result.get("message") or (
+            "Analysis failed" if _is_en(lang) else _loc("分析失败", lang)
+        )
         return f"<p>{msg}</p>"
 
     def esc(s: Any) -> str:
@@ -542,26 +592,41 @@ def render_name_report_html(result: Dict[str, Any], *, full: bool, lang: str) ->
             .replace(">", "&gt;")
         )
 
-    title = "姓名参考报告" if lang != "en" else "Name Reference Report"
-    blocks = [f"<h3>{esc(title)}</h3>"]
-    blocks.append("<ul>")
+    title = "Name Reference Report" if _is_en(lang) else _loc("姓名参考报告", lang)
+    src = result.get("display_name") or ""
+    trad = result.get("traditional_name") or ""
+    convert_line = (
+        f"Stroke conversion: 「{src}」 → Kangxi/traditional 「{trad}」"
+        if _is_en(lang)
+        else f"{_loc('计画转换：输入「', lang)}{src}{_loc('」→ 康熙/繁体「', lang)}{trad}{_loc('」', lang)}"
+    )
+    blocks = [
+        f"<h3>{esc(title)}</h3>",
+        f"<p><strong>{esc(convert_line)}</strong></p>",
+        "<ul>",
+    ]
     for line in result.get("summary_lines") or []:
         blocks.append(f"<li>{esc(line)}</li>")
     blocks.append("</ul>")
 
     if full:
         blocks.append("<hr/>")
-        sub = "完整解读" if lang != "en" else "Full reading"
+        sub = "Full reading" if _is_en(lang) else _loc("完整解读", lang)
         blocks.append(f"<h4>{esc(sub)}</h4><ul>")
         for line in result.get("detail_lines") or []:
             blocks.append(f"<li>{esc(line)}</li>")
         blocks.append("</ul>")
-        # 五格表
         w = result.get("wuge") or {}
         labels = (
-            [("天格", "tian"), ("人格", "ren"), ("地格", "di"), ("外格", "wai"), ("总格", "zong")]
-            if lang != "en"
-            else [("Heaven", "tian"), ("Person", "ren"), ("Earth", "di"), ("Outer", "wai"), ("Total", "zong")]
+            [("Heaven", "tian"), ("Person", "ren"), ("Earth", "di"), ("Outer", "wai"), ("Total", "zong")]
+            if _is_en(lang)
+            else [
+                (_loc("天格", lang), "tian"),
+                (_loc("人格", lang), "ren"),
+                (_loc("地格", lang), "di"),
+                (_loc("外格", lang), "wai"),
+                (_loc("总格", lang), "zong"),
+            ]
         )
         blocks.append("<table style='width:100%;border-collapse:collapse;font-size:0.95rem;'>")
         for lab, key in labels:
@@ -570,11 +635,13 @@ def render_name_report_html(result: Dict[str, Any], *, full: bool, lang: str) ->
                 "<tr>"
                 f"<td style='border:1px solid #ccc;padding:6px;'>{esc(lab)}</td>"
                 f"<td style='border:1px solid #ccc;padding:6px;'>{esc(cell.get('number'))}</td>"
-                f"<td style='border:1px solid #ccc;padding:6px;'>{esc(cell.get('wuxing'))}</td>"
-                f"<td style='border:1px solid #ccc;padding:6px;'>{esc(cell.get('luck'))}</td>"
+                f"<td style='border:1px solid #ccc;padding:6px;'>{esc(_wx_label(str(cell.get('wuxing') or ''), lang))}</td>"
+                f"<td style='border:1px solid #ccc;padding:6px;'>{esc(_luck_label(str(cell.get('luck') or ''), lang))}</td>"
                 "</tr>"
             )
         blocks.append("</table>")
 
-    blocks.append(f"<p style='opacity:0.75;font-size:0.85rem;'>{esc(result.get('disclaimer'))}</p>")
+    blocks.append(
+        f"<p style='opacity:0.75;font-size:0.85rem;'>{esc(result.get('disclaimer'))}</p>"
+    )
     return "\n".join(blocks)
