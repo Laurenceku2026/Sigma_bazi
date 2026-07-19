@@ -907,10 +907,10 @@ def format_ziwei_theory_markdown(lang: str = "zh") -> str:
 #### What Zi Wei Dou Shu is
 A natal chart maps birth data onto **12 palaces** (Life, Siblings, Spouse, Children, Wealth, Health, Travel, Friends, Career, Property, Fortune, Parents). Stars and **mutagens (四化)** describe themes and timing.
 
-#### What “6~15 / 1995~2004” means
-That is the **decade (大限)** for that palace: roughly ages 6–15 (nominal age), about calendar years 1995–2004. Each palace holds one ten-year life chapter; direction depends on gender + year yin/yang.
+#### Palace decade (大限)
+Each palace’s bottom-left ages/years are its **decade**: e.g. ages 6～15 (nominal), about years 1995～2004. One palace ≈ one ten-year chapter; direction depends on gender + year yin/yang.
 
-#### Three views (beginner)
+#### Three chart views
 1. **Si Hua (四化)** — year-stem mutagens 禄/权/科/忌 = gain / power / fame / stress. See which palace they land in.  
 2. **San He (三合)** — Life palace + its trine + opposite (三方四正). Structure / pattern first.  
 3. **Flying Stars (飞星)** — each palace has a stem that also flies 禄/权/科/忌 to where those stars sit (**fly path**). In the Flying Stars view, `禄→Wealth` means this palace’s stem flies Lu to Wealth; `*` = self-mutagen.
@@ -923,11 +923,11 @@ San He (structure) → Si Hua (natal mutagens) → Flying Stars (links) → deca
 #### 紫微斗数在讲什么
 以出生年月日时排出一张命盘：把人生分成 **12 宫**（命、兄弟、夫妻、子女、财帛、疾厄、迁移、交友、官禄、田宅、福德、父母），看各宫星曜与组合，论性格、事业、感情、财运等。
 
-#### 宫里的「6~15岁 / 1995~2004年」是什么？
-那是 **大限**（十年运）：该宫主事大约从虚岁 6 岁到 15 岁，对应公历约 1995–2004 年（按「出生年 + 虚岁 − 1」粗算）。  
+#### 宫里大限解读
+宫左下角的年龄与年份，就是该宫的 **大限**（十年运）。例如虚岁 6～15 岁，约对应公历 1995～2004 年（按「出生年 + 虚岁 − 1」粗算）。  
 十二宫各管一段十年；阳男阴女顺行、阴男阳女逆行。读盘时常叠看：**本命 + 当前大限 + 流年**。
 
-#### 三种排盘视角（新手必读）
+#### 三种排盘视角
 1. **四化**  
    用**出生年天干**定四颗「变化星」：  
    - **化禄**：机遇、收获、顺遂  
@@ -945,7 +945,7 @@ San He (structure) → Si Hua (natal mutagens) → Flying Stars (links) → deca
    - `禄→财帛`：本宫天干飞化禄，落在财帛 → 本宫议题牵动财运  
    - `权→官禄`：飞化权落官禄 → 主导力牵动事业  
    - 带 `*`：**自化**（飞回本宫），力量更向内  
-   新手可先只看命宫、财帛、官禄、夫妻四宫的飞出。
+   可先只看命宫、财帛、官禄、夫妻四宫的飞出。
 
 #### 建议读盘顺序
 三合看格局 → 四化看先天喜忌 → 飞星看宫际牵动 → 再对照大限年龄/年份看应期。
@@ -1113,13 +1113,13 @@ def render_ziwei_chart_html(
         year_line = ""
         if dec:
             age_line = loc(
-                f"大限 {dec.get('start_age')}~{dec.get('end_age')}岁",
-                f"Dec {dec.get('start_age')}~{dec.get('end_age')}",
+                f"大限 {dec.get('start_age')}～{dec.get('end_age')}岁",
+                f"Dec {dec.get('start_age')}–{dec.get('end_age')}",
             )
             if dec.get("start_year") and dec.get("end_year"):
                 year_line = loc(
-                    f"{dec.get('start_year')}~{dec.get('end_year')}年",
-                    f"{dec.get('start_year')}~{dec.get('end_year')}",
+                    f"{dec.get('start_year')}～{dec.get('end_year')}年",
+                    f"{dec.get('start_year')}–{dec.get('end_year')}",
                 )
 
         tags = []
@@ -1244,8 +1244,8 @@ def render_ziwei_chart_html(
     dec = chart.get("decadals") or []
     if dec:
         bits = [
-            f"{d.get('palace')} {d.get('start_age')}~{d.get('end_age')}岁/"
-            f"{d.get('start_year')}~{d.get('end_year')}年"
+            f"{d.get('palace')} {d.get('start_age')}～{d.get('end_age')}岁/"
+            f"{d.get('start_year')}～{d.get('end_year')}年"
             for d in dec
         ]
         blocks.append(
