@@ -1626,8 +1626,8 @@ def generate_ziwei_pdf_report(
 ):
     """紫微专业 PDF：封面→8 章目录→三合/四化/飞星（盘+解读）→大限→四域（规则+AI）。
 
-    正文用 ReportLab Paragraph + 项目内 NotoSansSC（可复制文字）；
-    PDF 中文统一简体字形，避免繁体缺字方块。盘图仍为图片。
+    中文与八字报告一致：PIL 绘字嵌图（Streamlit Cloud 上 ReportLab 子集易出全文小方块）。
+    盘图亦为图片。英文副标题仍用 Helvetica。
     """
     import io
     import re
@@ -1642,45 +1642,48 @@ def generate_ziwei_pdf_report(
 
     from report_generator import ReportGenerator
     from utils import (
+        _cjk_font_file,
         _materialize_ttf_for_pdf,
         _pdf_fix_glyphs,
-        _pdf_registered_font_has_cjk,
-        register_pdf_cjk_font,
+        _pdf_text_image,
     )
 
     en = lang == "en"
     here = Path(__file__).resolve().parent
-    # 强制优先简体 TTF，保证 Cloud 可嵌入且文字可选中
-    sc_ttf = here / "fonts" / "NotoSansSC-Regular.ttf"
-    font_name, font_path = "", None
-    if sc_ttf.is_file():
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.ttfonts import TTFont
-
-        font_name = "ZWPDFSC"
-        try:
-            if font_name not in set(pdfmetrics.getRegisteredFontNames()):
-                pdfmetrics.registerFont(TTFont(font_name, str(sc_ttf)))
-                pdfmetrics.registerFont(TTFont(font_name + "-Bold", str(sc_ttf)))
-            font_path = sc_ttf
-        except Exception:
-            font_name, font_path = "", None
-    if not font_name or not _pdf_registered_font_has_cjk(font_name):
-        font_name, font_path = register_pdf_cjk_font("ZWPDF")
-        if font_path is not None:
-            font_path = _materialize_ttf_for_pdf(font_path) or font_path
-    use_paragraphs = bool(font_name and font_path and _pdf_registered_font_has_cjk(font_name))
+    # PIL 字体：优先物化后的全量 TTF，其次项目内 NotoSansSC
+    cjk_path = _materialize_ttf_for_pdf(_cjk_font_file())
+    if cjk_path is None:
+        for p in (
+            here / "fonts" / "NotoSansSC-Regular.ttf",
+            here / "fonts" / "NotoSansSC-CJK-Fallback.ttc",
+        ):
+            got = _materialize_ttf_for_pdf(p) if str(p).lower().endswith(".ttc") else p
+            if got is not None and Path(got).is_file() and Path(got).stat().st_size > 100_000:
+                cjk_path = got
+                break
+    use_pil = cjk_path is not None
 
     def T(s: str) -> str:
-        """PDF 中文统一简体，匹配 NotoSansSC 字形覆盖。"""
         if en or not s:
             return s
+        # 简体子集时走简体；全量字体可保留繁体（再经缺字替补）
         try:
-            from zh_convert import to_simplified
+            from utils import _pdf_font_is_sc_subset
 
-            return to_simplified(s)
+            if _pdf_font_is_sc_subset(cjk_path):
+                from zh_convert import to_simplified
+
+                return to_simplified(s)
         except Exception:
-            return _pdf_fix_glyphs(s, None)
+            pass
+        if lang == "zh_hant":
+            try:
+                from zh_convert import to_traditional
+
+                return to_traditional(s)
+            except Exception:
+                return s
+        return s
 
     buffer = io.BytesIO()
     cover_title = T("六西格玛命理 · 紫微斗数报告") if not en else "Sigma Fate Zi Wei Report"
@@ -1695,7 +1698,7 @@ def generate_ziwei_pdf_report(
         author=str((chart or {}).get("name") or "user"),
     )
     styles = getSampleStyleSheet()
-    body_font = font_name if use_paragraphs else "Helvetica"
+    # ParagraphStyle 仅作英文/极端回退；中文主路径走 PIL
     style_cover_sub = ParagraphStyle(
         "ZWCoverSub",
         parent=styles["Normal"],
@@ -1709,57 +1712,52 @@ def generate_ziwei_pdf_report(
     style_h1 = ParagraphStyle(
         "ZW1",
         parent=styles["Normal"],
-        fontName=body_font,
+        fontName="Helvetica",
         fontSize=18,
         leading=26,
         spaceBefore=6,
         spaceAfter=10,
         textColor="#0B1F33",
         alignment=TA_LEFT,
-        wordWrap="CJK",
     )
     style_h1c = ParagraphStyle("ZW1C", parent=style_h1, alignment=TA_CENTER, fontSize=22, leading=30)
     style_h2 = ParagraphStyle(
         "ZW2",
         parent=styles["Normal"],
-        fontName=body_font,
+        fontName="Helvetica",
         fontSize=13,
         leading=20,
         spaceBefore=12,
         spaceAfter=6,
         textColor="#1565C0",
-        wordWrap="CJK",
     )
     style_body = ParagraphStyle(
         "ZWB",
         parent=styles["Normal"],
-        fontName=body_font,
+        fontName="Helvetica",
         fontSize=10.5,
         leading=17,
         alignment=TA_JUSTIFY,
         spaceAfter=8,
-        wordWrap="CJK",
     )
     style_meta = ParagraphStyle(
         "ZWM",
         parent=styles["Normal"],
-        fontName=body_font,
+        fontName="Helvetica",
         fontSize=11,
         leading=18,
         alignment=TA_CENTER,
         spaceAfter=6,
-        wordWrap="CJK",
     )
     style_toc = ParagraphStyle(
         "ZWToc",
         parent=styles["Normal"],
-        fontName=body_font,
+        fontName="Helvetica",
         fontSize=11,
         leading=18,
         alignment=TA_LEFT,
         leftIndent=12,
         spaceAfter=4,
-        wordWrap="CJK",
     )
     content_width = A4[0] - 3.6 * cm
     story = []
@@ -1771,7 +1769,7 @@ def generate_ziwei_pdf_report(
             .replace("★", "*")
             .replace("●", "-")
         )
-        return _pdf_fix_glyphs(raw, font_path)
+        return _pdf_fix_glyphs(raw, cjk_path)
 
     def add(text, style=style_body):
         raw = str(text or "").strip()
@@ -1780,10 +1778,30 @@ def generate_ziwei_pdf_report(
         raw = _pdf_safe(raw)
         if not raw:
             return
-        if use_paragraphs:
-            story.append(Paragraph(escape(raw).replace("\n", "<br/>"), style))
-            return
-        # 无 CJK 字体时不输出 Helvetica 中文（避免全文方块）
+        if use_pil:
+            size, fill, align = 11, "#222222", "left"
+            if style is style_h1 or style is style_h1c:
+                size, fill = 18, "#0B1F33"
+                if style is style_h1c:
+                    size, align = 22, "center"
+            elif style is style_h2:
+                size, fill = 13, "#1565C0"
+            elif style is style_meta:
+                size, fill, align = 12, "#333333", "center"
+            elif style is style_toc:
+                size = 11
+            img = _pdf_text_image(
+                raw,
+                font_path=cjk_path,
+                font_size=size,
+                max_width_pt=float(content_width),
+                fill=fill,
+                align=align,
+            )
+            if img is not None:
+                story.append(img)
+                return
+        # 无 PIL 字体时：英文可用 Paragraph；中文宁可不输出，避免 Helvetica 方块
         if en:
             story.append(Paragraph(escape(raw).replace("\n", "<br/>"), style))
 
