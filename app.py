@@ -1924,9 +1924,18 @@ def render_ziwei_tab() -> None:
     )
     mode = mode_keys[mode_labels.index(picked)] if picked in mode_labels else "sihua"
     st.caption(t("ziwei_mode_hint", lang))
-    st.markdown(
-        render_ziwei_chart_html(chart, mode=mode, lang=lang, include_title=False),
-        unsafe_allow_html=True,
+    # 用 components.html 渲染方格盘，避免 st.markdown 吃掉复杂 HTML/CSS
+    import streamlit.components.v1 as components
+
+    chart_html = render_ziwei_chart_html(chart, mode=mode, lang=lang, include_title=False)
+    components.html(
+        f"""<!doctype html><html><head><meta charset="utf-8"/>
+<style>
+  body {{ margin:0; padding:0; font-family: "Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+         background: transparent; color:#222; }}
+</style></head><body>{chart_html}</body></html>""",
+        height=640,
+        scrolling=True,
     )
 
     # 2) 盘面下方：基础解读
