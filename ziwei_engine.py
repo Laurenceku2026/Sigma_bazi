@@ -893,67 +893,62 @@ def render_ziwei_chart_html(
         border = "#F9A825" if hl else "#B0BEC5"
         name_color = "#C62828" if p.get("is_ming") else "#1565C0"
 
+        # 用 table 单元格内容（Streamlit markdown 对 CSS grid 支持差）
         return (
-            f"<div style='border:1.5px solid {border};background:{bg};padding:6px 7px;"
-            f"min-height:118px;display:flex;flex-direction:column;justify-content:space-between;"
-            f"box-sizing:border-box;'>"
-            f"<div style='line-height:1.35;'>{majors}<div style='margin-top:2px;'>{minors}</div>"
-            f"{('<div style=\"margin-top:4px;font-size:0.72rem;color:#6D4C41;\">' + esc(accent) + '</div>') if accent else ''}"
+            f"<td style='width:25%;border:1.5px solid {border};background:{bg};"
+            f"padding:6px 7px;vertical-align:top;height:130px;'>"
+            f"<div style='line-height:1.35;min-height:72px;'>{majors}"
+            f"<div style='margin-top:2px;'>{minors}</div>"
+            f"{('<div style=\"margin-top:4px;font-size:11px;color:#6D4C41;\">' + esc(accent) + '</div>') if accent else ''}"
             f"</div>"
-            f"<div style='display:flex;justify-content:space-between;align-items:flex-end;"
-            f"gap:4px;margin-top:6px;font-size:0.78rem;'>"
-            f"<span style='opacity:0.75;'>{esc(age)}</span>"
-            f"<span style='text-align:right;'>"
-            f"<span style='color:{name_color};font-weight:700;'>{esc(pname)}"
-            f"{('·' + esc(tag_s)) if tag_s else ''}</span><br/>"
+            f"<div style='margin-top:8px;font-size:12px;'>"
+            f"<span style='float:left;opacity:0.75;'>{esc(age)}</span>"
+            f"<span style='float:right;text-align:right;'>"
+            f"<b style='color:{name_color};'>{esc(pname)}"
+            f"{('·' + esc(tag_s)) if tag_s else ''}</b><br/>"
             f"<span style='opacity:0.8;'>{esc(gan)}{esc(zhi)}</span>"
-            f"</span></div></div>"
+            f"</span><div style='clear:both;'></div></div>"
+            f"</td>"
         )
 
-    # 中宫
+    # 中宫（合并 2x2）
     sihua_line = "、".join(f"{x['star']}{x['type']}" for x in sihua) if sihua else "—"
-    center = (
-        "<div style='border:1.5px solid #90A4AE;background:linear-gradient(180deg,#ECEFF1,#FAFAFA);"
-        "padding:10px 12px;height:100%;min-height:248px;box-sizing:border-box;"
-        "display:flex;flex-direction:column;justify-content:center;gap:6px;'>"
-        f"<div style='font-weight:700;font-size:1.05rem;color:#0B1F33;'>"
+    center_td = (
+        "<td colspan='2' rowspan='2' style='border:1.5px solid #90A4AE;"
+        "background:#ECEFF1;padding:12px;vertical-align:middle;text-align:center;'>"
+        f"<div style='font-weight:700;font-size:18px;color:#0B1F33;margin-bottom:6px;'>"
         f"{esc(chart.get('name') or loc('命主', 'Native'))}</div>"
-        f"<div style='font-size:0.9rem;'>{esc(chart.get('gender') or '')} · "
+        f"<div style='font-size:14px;margin:3px 0;'>{esc(chart.get('gender') or '')} · "
         f"{esc(chart.get('ju_name') or '')}</div>"
-        f"<div style='font-size:0.85rem;opacity:0.9;'>"
+        f"<div style='font-size:13px;margin:3px 0;opacity:0.9;'>"
         f"{esc((chart.get('lunar') or {}).get('label') or '')} "
         f"{esc(chart.get('hour_zhi') or '')}{esc(loc('时', ' hour'))}</div>"
-        f"<div style='font-size:0.85rem;'>"
+        f"<div style='font-size:13px;margin:3px 0;'>"
         f"{esc(loc('命宫', 'Life'))} {esc(chart.get('ming_ganzhi') or '')} · "
         f"{esc(loc('身宫', 'Body'))} {esc(chart.get('shen_palace') or '')}</div>"
-        f"<div style='font-size:0.8rem;margin-top:4px;'>"
+        f"<div style='font-size:13px;margin:6px 0;'>"
         f"{esc(loc('视角', 'View'))}：<b>{esc(mode_label)}</b></div>"
-        f"<div style='font-size:0.78rem;color:#4E342E;line-height:1.4;'>"
+        f"<div style='font-size:12px;color:#4E342E;line-height:1.45;'>"
         f"{esc(loc('生年四化', 'Natal Si Hua'))}：{esc(sihua_line)}</div>"
-        f"<div style='font-size:0.72rem;opacity:0.75;margin-top:2px;'>"
+        f"<div style='font-size:11px;opacity:0.75;margin-top:6px;'>"
         f"{esc(loc('禄绿·权紫·科蓝·忌红', 'Lu green · Quan purple · Ke blue · Ji red'))}"
-        f"</div></div>"
+        f"</div></td>"
     )
 
-    # 组装 4x4：中宫占 (1,1)-(2,2) 在 0-index 的格子 5,6,9,10
-    cells_html: List[str] = []
-    center_placed = False
-    for i, zhi in enumerate(_GRID_ZHI_ORDER):
-        row, col = divmod(i, 4)
-        if zhi is None:
-            if not center_placed and row == 1 and col == 1:
-                cells_html.append(
-                    f"<div style='grid-column:2 / span 2;grid-row:2 / span 2;'>{center}</div>"
-                )
-                center_placed = True
-            continue
-        cells_html.append(palace_cell(zhi))
+    # 4x4 表格行（地支固定）
+    # 巳 午 未 申
+    # 辰 [中宫] 酉
+    # 卯 [中宫] 戌
+    # 寅 丑 子 亥
+    row1 = "".join(palace_cell(z) for z in ("巳", "午", "未", "申"))
+    row2 = palace_cell("辰") + center_td + palace_cell("酉")
+    row3 = palace_cell("卯") + palace_cell("戌")
+    row4 = "".join(palace_cell(z) for z in ("寅", "丑", "子", "亥"))
 
     blocks: List[str] = []
     if include_title:
         blocks.append(f"<h3>{esc(loc('紫微命盘', 'Zi Wei Chart'))}</h3>")
 
-    # 模式短注
     if mode == "sihua":
         hint = loc("四化盘：高亮生年禄权科忌所在宫；星旁色标为四化。", "Si Hua: highlighted palaces hold natal mutagens.")
     elif mode == "sanhe":
@@ -964,17 +959,17 @@ def render_ziwei_chart_html(
     else:
         hint = loc("飞星盘：宫内小字为该宫天干飞出；* 为自化。", "Flying Stars: small text = flies out; * = self.")
 
-    blocks.append(f"<p style='font-size:0.85rem;margin:0.2rem 0 0.55rem;'>{esc(hint)}</p>")
+    blocks.append(f"<p style='font-size:13px;margin:4px 0 8px;'>{esc(hint)}</p>")
     blocks.append(
-        "<div style='width:100%;max-width:920px;margin:0 auto;"
-        "display:grid;grid-template-columns:repeat(4,minmax(0,1fr));"
-        "grid-template-rows:repeat(4,minmax(118px,auto));gap:3px;"
-        "background:#90A4AE;padding:3px;border-radius:4px;'>"
-        + "".join(cells_html)
-        + "</div>"
+        "<table style='width:100%;max-width:960px;border-collapse:collapse;"
+        "table-layout:fixed;background:#90A4AE;border:3px solid #90A4AE;'>"
+        f"<tr>{row1}</tr>"
+        f"<tr>{row2}</tr>"
+        f"<tr>{row3}</tr>"
+        f"<tr>{row4}</tr>"
+        "</table>"
     )
 
-    # 大限条
     dec = chart.get("decadals") or []
     if dec:
         bits = [
@@ -982,7 +977,7 @@ def render_ziwei_chart_html(
             for d in dec[:6]
         ]
         blocks.append(
-            "<p style='font-size:0.8rem;margin:0.55rem 0 0.2rem;opacity:0.85;'>"
+            "<p style='font-size:12px;margin:8px 0 2px;opacity:0.85;'>"
             + esc(loc("大限：", "Decades: ") + " · ".join(bits) + " …")
             + "</p>"
         )
