@@ -745,6 +745,26 @@ BaZi emphasizes stems/branches, Ten Gods and favorable elements. Zi Wei emphasiz
     return body
 
 
+# 方格盘地支位置（文墨天机式固定地盘）：4x4，中宫 2x2
+#   巳 午 未 申
+#   辰 [中] 酉
+#   卯 [中] 戌
+#   寅 丑 子 亥
+_GRID_ZHI_ORDER = [
+    "巳", "午", "未", "申",
+    "辰", None, None, "酉",
+    "卯", None, None, "戌",
+    "寅", "丑", "子", "亥",
+]
+
+_SIHUA_MARK = {
+    "化禄": ("禄", "#2E7D32"),
+    "化权": ("权", "#6A1B9A"),
+    "化科": ("科", "#1565C0"),
+    "化忌": ("忌", "#C62828"),
+}
+
+
 def render_ziwei_chart_html(
     chart: Dict[str, Any],
     *,
@@ -752,7 +772,7 @@ def render_ziwei_chart_html(
     lang: str = "zh",
     include_title: bool = False,
 ) -> str:
-    """命盘 HTML。mode: sihua | sanhe | feixing。默认不含外层标题（由页面统一标一次）。"""
+    """文墨天机式十二宫方格盘。mode: sihua | sanhe | feixing。"""
     en = lang == "en"
     mode = (mode or "sihua").lower()
     if mode in ("四化",):
@@ -787,181 +807,183 @@ def render_ziwei_chart_html(
         "feixing": loc("飞星", "Flying Stars"),
     }.get(mode, loc("四化", "Si Hua"))
 
-    blocks: List[str] = []
-    if include_title:
-        blocks.append(f"<h3>{esc(loc('紫微命盘', 'Zi Wei Chart'))}</h3>")
-
-    blocks.append(
-        "<p><strong>"
-        + esc(
-            loc(
-                f"{chart.get('name') or '命主'} · {chart.get('gender')} · "
-                f"{(chart.get('lunar') or {}).get('label')} · {chart.get('ju_name')} · "
-                f"命宫{chart.get('ming_ganzhi')} · 身宫{chart.get('shen_palace')} · "
-                f"当前视角：{mode_label}",
-                f"{chart.get('name') or 'Native'} · {chart.get('ju_name')} · "
-                f"Life {chart.get('ming_ganzhi')} · view: {mode_label}",
-            )
-        )
-        + "</strong></p>"
-    )
-
-    # 模式说明 + 关键摘要
     sihua = chart.get("sihua") or []
     sf_names = set(ming_sanfang_sizheng(chart))
     fly_rows = compute_palace_fly(chart)
     fly_by_palace = {r["from_palace"]: r for r in fly_rows}
-
-    if mode == "sihua":
-        blocks.append(
-            "<p style='opacity:0.9;'>"
-            + esc(
-                loc(
-                    "四化视角：突出生年禄权科忌落宫。"
-                    + (
-                        "生年四化："
-                        + "、".join(f"{x['star']}{x['type']}（{x['palace']}）" for x in sihua)
-                        if sihua
-                        else ""
-                    ),
-                    "Si Hua view — natal mutagens highlighted. "
-                    + (
-                        ", ".join(f"{x['star']}{x['type']}@{x['palace']}" for x in sihua)
-                        if sihua
-                        else ""
-                    ),
-                )
-            )
-            + "</p>"
-        )
-        # 图例
-        blocks.append(
-            "<p style='font-size:0.85rem;'>"
-            + esc(
-                loc(
-                    "标记：禄=机遇 · 权=主导 · 科=名声 · 忌=挂碍",
-                    "Legend: Lu=gain · Quan=power · Ke=fame · Ji=stress",
-                )
-            )
-            + "</p>"
-        )
-    elif mode == "sanhe":
-        blocks.append(
-            "<p style='opacity:0.9;'>"
-            + esc(
-                loc(
-                    "三合视角：高亮命宫三方四正（"
-                    + "、".join(ming_sanfang_sizheng(chart))
-                    + "），看格局骨架。",
-                    "San He view — Life-palace trine/opposite highlighted: "
-                    + ", ".join(ming_sanfang_sizheng(chart)),
-                )
-            )
-            + "</p>"
-        )
-    else:
-        ming_fly = fly_by_palace.get("命宫")
-        fly_txt = "—"
-        if ming_fly:
-            fly_txt = "、".join(
-                f"{it['star']}{it['type']}→{it['to_palace']}"
-                + (loc("(自化)", "(self)") if it["self"] else "")
-                for it in ming_fly["flies"]
-            )
-        blocks.append(
-            "<p style='opacity:0.9;'>"
-            + esc(
-                loc(
-                    "飞星视角：各宫天干飞出四化；命宫飞出 " + fly_txt,
-                    "Flying-star view — Life palace flies: " + fly_txt,
-                )
-            )
-            + "</p>"
-        )
-
-    # 表头
-    extra_h = {
-        "sihua": loc("生年四化", "Natal Si Hua"),
-        "sanhe": loc("三方关系", "Trine link"),
-        "feixing": loc("本宫飞出", "Flies out"),
-    }[mode]
-    blocks.append(
-        "<table style='width:100%;border-collapse:collapse;font-size:0.9rem;'>"
-        "<tr>"
-        f"<th style='border:1px solid #ccc;padding:6px;'>{esc(loc('宫位', 'Palace'))}</th>"
-        f"<th style='border:1px solid #ccc;padding:6px;'>{esc(loc('干支', 'Stem-Branch'))}</th>"
-        f"<th style='border:1px solid #ccc;padding:6px;'>{esc(loc('主星', 'Majors'))}</th>"
-        f"<th style='border:1px solid #ccc;padding:6px;'>{esc(loc('辅星', 'Minors'))}</th>"
-        f"<th style='border:1px solid #ccc;padding:6px;'>{esc(extra_h)}</th>"
-        "</tr>"
-    )
-
-    natal_sihua_palace = {x["palace"]: [] for x in sihua}
+    natal_sihua_at = {}
     for x in sihua:
-        natal_sihua_palace.setdefault(x["palace"], []).append(f"{x['star']}{x['type']}")
+        natal_sihua_at.setdefault(x["palace"], []).append(x)
 
-    by_name = {p["name"]: p for p in chart.get("palaces") or []}
-    for pname in PALACE_NAMES:
-        p = by_name.get(pname) or {}
-        tags = []
-        if p.get("is_ming"):
-            tags.append(loc("命", "Life"))
-        if p.get("is_shen"):
-            tags.append(loc("身", "Body"))
-        label = pname + (("·" + "·".join(tags)) if tags else "")
-        majors = "、".join(
-            s["name"]
-            + (f"({s['brightness']})" if s.get("brightness") else "")
-            + (s.get("sihua") or "")
-            for s in (p.get("majors") or [])
-        ) or "—"
-        minors = "、".join(
-            s["name"] + (s.get("sihua") or "") for s in (p.get("minors") or [])
-        ) or "—"
+    # 大限年龄挂到宫
+    dec_by_palace = {}
+    for d in chart.get("decadals") or []:
+        dec_by_palace[d.get("palace")] = d
 
+    by_zhi = {p.get("zhi"): p for p in (chart.get("palaces") or [])}
+
+    def star_html(s: dict, *, major: bool) -> str:
+        name = esc(s.get("name") or "")
+        sihua_tag = s.get("sihua") or ""
+        mark = ""
+        if sihua_tag in _SIHUA_MARK:
+            short, color = _SIHUA_MARK[sihua_tag]
+            mark = (
+                f"<sup style='color:{color};font-weight:700;margin-left:1px;'>"
+                f"{esc(loc(short, short))}</sup>"
+            )
+        bright = s.get("brightness") or ""
+        bright_s = f"<span style='opacity:0.55;font-size:0.7em;'>/{esc(bright)}</span>" if bright and major else ""
+        weight = "700" if major else "500"
+        size = "0.95rem" if major else "0.78rem"
+        color = "#111" if major else "#455A64"
+        return (
+            f"<span style='display:inline-block;margin:0 4px 2px 0;font-weight:{weight};"
+            f"font-size:{size};color:{color};'>{name}{bright_s}{mark}</span>"
+        )
+
+    def palace_cell(zhi: str) -> str:
+        p = by_zhi.get(zhi) or {}
+        pname = p.get("name") or zhi
+        gan = p.get("gan") or ""
+        majors = "".join(star_html(s, major=True) for s in (p.get("majors") or []))
+        minors = "".join(star_html(s, major=False) for s in (p.get("minors") or []))
+        if not majors and not minors:
+            majors = f"<span style='opacity:0.45;'>{esc(loc('空宫', 'empty'))}</span>"
+
+        # 高亮
+        hl = False
+        accent = ""
         if mode == "sihua":
-            extra = "、".join(natal_sihua_palace.get(pname) or []) or "—"
-            hl = bool(natal_sihua_palace.get(pname))
+            hl = pname in natal_sihua_at
+            if hl:
+                accent = "、".join(f"{x['star']}{x['type']}" for x in natal_sihua_at[pname])
         elif mode == "sanhe":
-            if pname in sf_names:
+            hl = pname in sf_names
+            if hl:
                 if p.get("is_ming"):
-                    extra = loc("命宫·本宫", "Life (self)")
-                elif _fix(_yin_idx_of_zhi(p.get("zhi") or "寅") - int(chart.get("soul_index") or 0)) == 6:
-                    extra = loc("对宫", "Opposite")
+                    accent = loc("命·本宫", "Life")
+                elif _fix(_yin_idx_of_zhi(zhi) - int(chart.get("soul_index") or 0)) == 6:
+                    accent = loc("对宫", "Opp")
                 else:
-                    extra = loc("三合", "Trine")
-                hl = True
-            else:
-                extra = "—"
-                hl = False
+                    accent = loc("三合", "Trine")
         else:
             fr = fly_by_palace.get(pname)
             if fr:
-                extra = "、".join(
-                    f"{it['star']}{it['type'][1:] if it['type'].startswith('化') else it['type']}"
-                    f"→{it['to_palace']}"
+                accent = " ".join(
+                    f"{it['type'][1:] if str(it['type']).startswith('化') else it['type']}→{it['to_palace']}"
                     + ("*" if it["self"] else "")
                     for it in fr["flies"]
                 )
-            else:
-                extra = "—"
-            hl = pname == "命宫"
+            hl = pname == "命宫" or bool(fr and any(it["self"] for it in fr["flies"]))
 
-        bg = "background:#FFF8E1;" if hl else ""
-        blocks.append(
-            f"<tr style='{bg}'>"
-            f"<td style='border:1px solid #ccc;padding:6px;'>{esc(label)}</td>"
-            f"<td style='border:1px solid #ccc;padding:6px;'>{esc(p.get('gan',''))}{esc(p.get('zhi',''))}</td>"
-            f"<td style='border:1px solid #ccc;padding:6px;'>{esc(majors)}</td>"
-            f"<td style='border:1px solid #ccc;padding:6px;'>{esc(minors)}</td>"
-            f"<td style='border:1px solid #ccc;padding:6px;'>{esc(extra)}</td>"
-            "</tr>"
+        dec = dec_by_palace.get(pname) or {}
+        age = ""
+        if dec:
+            age = f"{dec.get('start_age')}~{dec.get('end_age')}"
+
+        tags = []
+        if p.get("is_ming"):
+            tags.append(loc("命", "命"))
+        if p.get("is_shen"):
+            tags.append(loc("身", "身"))
+        tag_s = ("·".join(tags)) if tags else ""
+
+        bg = "#FFF8E1" if hl else "#FAFAFA"
+        border = "#F9A825" if hl else "#B0BEC5"
+        name_color = "#C62828" if p.get("is_ming") else "#1565C0"
+
+        return (
+            f"<div style='border:1.5px solid {border};background:{bg};padding:6px 7px;"
+            f"min-height:118px;display:flex;flex-direction:column;justify-content:space-between;"
+            f"box-sizing:border-box;'>"
+            f"<div style='line-height:1.35;'>{majors}<div style='margin-top:2px;'>{minors}</div>"
+            f"{('<div style=\"margin-top:4px;font-size:0.72rem;color:#6D4C41;\">' + esc(accent) + '</div>') if accent else ''}"
+            f"</div>"
+            f"<div style='display:flex;justify-content:space-between;align-items:flex-end;"
+            f"gap:4px;margin-top:6px;font-size:0.78rem;'>"
+            f"<span style='opacity:0.75;'>{esc(age)}</span>"
+            f"<span style='text-align:right;'>"
+            f"<span style='color:{name_color};font-weight:700;'>{esc(pname)}"
+            f"{('·' + esc(tag_s)) if tag_s else ''}</span><br/>"
+            f"<span style='opacity:0.8;'>{esc(gan)}{esc(zhi)}</span>"
+            f"</span></div></div>"
         )
-    blocks.append("</table>")
-    if mode == "feixing":
+
+    # 中宫
+    sihua_line = "、".join(f"{x['star']}{x['type']}" for x in sihua) if sihua else "—"
+    center = (
+        "<div style='border:1.5px solid #90A4AE;background:linear-gradient(180deg,#ECEFF1,#FAFAFA);"
+        "padding:10px 12px;height:100%;min-height:248px;box-sizing:border-box;"
+        "display:flex;flex-direction:column;justify-content:center;gap:6px;'>"
+        f"<div style='font-weight:700;font-size:1.05rem;color:#0B1F33;'>"
+        f"{esc(chart.get('name') or loc('命主', 'Native'))}</div>"
+        f"<div style='font-size:0.9rem;'>{esc(chart.get('gender') or '')} · "
+        f"{esc(chart.get('ju_name') or '')}</div>"
+        f"<div style='font-size:0.85rem;opacity:0.9;'>"
+        f"{esc((chart.get('lunar') or {}).get('label') or '')} "
+        f"{esc(chart.get('hour_zhi') or '')}{esc(loc('时', ' hour'))}</div>"
+        f"<div style='font-size:0.85rem;'>"
+        f"{esc(loc('命宫', 'Life'))} {esc(chart.get('ming_ganzhi') or '')} · "
+        f"{esc(loc('身宫', 'Body'))} {esc(chart.get('shen_palace') or '')}</div>"
+        f"<div style='font-size:0.8rem;margin-top:4px;'>"
+        f"{esc(loc('视角', 'View'))}：<b>{esc(mode_label)}</b></div>"
+        f"<div style='font-size:0.78rem;color:#4E342E;line-height:1.4;'>"
+        f"{esc(loc('生年四化', 'Natal Si Hua'))}：{esc(sihua_line)}</div>"
+        f"<div style='font-size:0.72rem;opacity:0.75;margin-top:2px;'>"
+        f"{esc(loc('禄绿·权紫·科蓝·忌红', 'Lu green · Quan purple · Ke blue · Ji red'))}"
+        f"</div></div>"
+    )
+
+    # 组装 4x4：中宫占 (1,1)-(2,2) 在 0-index 的格子 5,6,9,10
+    cells_html: List[str] = []
+    center_placed = False
+    for i, zhi in enumerate(_GRID_ZHI_ORDER):
+        row, col = divmod(i, 4)
+        if zhi is None:
+            if not center_placed and row == 1 and col == 1:
+                cells_html.append(
+                    f"<div style='grid-column:2 / span 2;grid-row:2 / span 2;'>{center}</div>"
+                )
+                center_placed = True
+            continue
+        cells_html.append(palace_cell(zhi))
+
+    blocks: List[str] = []
+    if include_title:
+        blocks.append(f"<h3>{esc(loc('紫微命盘', 'Zi Wei Chart'))}</h3>")
+
+    # 模式短注
+    if mode == "sihua":
+        hint = loc("四化盘：高亮生年禄权科忌所在宫；星旁色标为四化。", "Si Hua: highlighted palaces hold natal mutagens.")
+    elif mode == "sanhe":
+        hint = loc(
+            "三合盘：高亮命宫三方四正（" + "、".join(ming_sanfang_sizheng(chart)) + "）。",
+            "San He: Life trine/opposite highlighted.",
+        )
+    else:
+        hint = loc("飞星盘：宫内小字为该宫天干飞出；* 为自化。", "Flying Stars: small text = flies out; * = self.")
+
+    blocks.append(f"<p style='font-size:0.85rem;margin:0.2rem 0 0.55rem;'>{esc(hint)}</p>")
+    blocks.append(
+        "<div style='width:100%;max-width:920px;margin:0 auto;"
+        "display:grid;grid-template-columns:repeat(4,minmax(0,1fr));"
+        "grid-template-rows:repeat(4,minmax(118px,auto));gap:3px;"
+        "background:#90A4AE;padding:3px;border-radius:4px;'>"
+        + "".join(cells_html)
+        + "</div>"
+    )
+
+    # 大限条
+    dec = chart.get("decadals") or []
+    if dec:
+        bits = [
+            f"{d.get('start_age')}~{d.get('end_age')} {d.get('palace')}({d.get('zhi')})"
+            for d in dec[:6]
+        ]
         blocks.append(
-            "<p style='font-size:0.85rem;opacity:0.85;'>"
-            + esc(loc("注：* 表示自化（飞回本宫）。", "Note: * = self-mutagen."))
+            "<p style='font-size:0.8rem;margin:0.55rem 0 0.2rem;opacity:0.85;'>"
+            + esc(loc("大限：", "Decades: ") + " · ".join(bits) + " …")
             + "</p>"
         )
     return "\n".join(blocks)

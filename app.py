@@ -1907,7 +1907,7 @@ def render_ziwei_tab() -> None:
     reading = build_ziwei_basic_reading(chart, lang=lang)
     st.session_state.ziwei_reading = reading
 
-    # 紫微命盘：四化 / 三合 / 飞星（只显示一次标题）
+    # 1) 方格十二宫盘（四化 / 三合 / 飞星）
     st.markdown(f"#### {t('ziwei_chart_heading', lang)}")
     mode_labels = [
         t("ziwei_mode_sihua", lang),
@@ -1920,6 +1920,7 @@ def render_ziwei_tab() -> None:
         options=mode_labels,
         horizontal=True,
         key="ziwei_chart_mode",
+        label_visibility="collapsed",
     )
     mode = mode_keys[mode_labels.index(picked)] if picked in mode_labels else "sihua"
     st.caption(t("ziwei_mode_hint", lang))
@@ -1928,7 +1929,8 @@ def render_ziwei_tab() -> None:
         unsafe_allow_html=True,
     )
 
-    # 基础解读（基于三套排盘，只显示一次标题）
+    # 2) 盘面下方：基础解读
+    st.markdown("---")
     st.markdown(f"#### {t('ziwei_local_heading', lang)}")
     st.caption(t("ziwei_basic_hint", lang))
     st.markdown(
