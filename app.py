@@ -2108,33 +2108,12 @@ def render_ziwei_tab() -> None:
     else:
         st.caption(t("ziwei_ai_watermark_note", lang))
 
-    reusable_ziwei = _peek_reusable_ziwei_ai()
-    # 进入页面即载入存档，避免用户再点一次才发现要等 DeepSeek
-    if reusable_ziwei and not _ziwei_ai_chapters(st.session_state.get("ziwei_ai")):
-        try_reuse_ziwei_ai_deep(can_ai_clean=can_ai_clean)
-
-    ziwei_ai_label = (
-        t("ziwei_ai_btn_reuse", lang) if reusable_ziwei else t("ziwei_ai_btn", lang)
-    )
-    btn_cols = st.columns(2 if reusable_ziwei else 1)
-    with btn_cols[0]:
-        clicked_main = st.button(
-            ziwei_ai_label, type="primary", use_container_width=True, key="ziwei_ai_btn"
-        )
-    clicked_regen = False
-    if reusable_ziwei:
-        with btn_cols[1]:
-            clicked_regen = st.button(
-                t("ziwei_ai_btn_regen", lang),
-                use_container_width=True,
-                key="ziwei_ai_regen_btn",
-            )
-
-    if clicked_main or clicked_regen:
+    # 单按钮「AI 深批」：生辰未变且已有报告 → 直接载入；否则才调 DeepSeek
+    if st.button(t("ziwei_ai_btn", lang), type="primary", use_container_width=True, key="ziwei_ai_btn"):
         if not is_registered():
             st.warning(t("ziwei_ai_need_login", lang))
             st.session_state.show_login = True
-        elif clicked_main and reusable_ziwei and try_reuse_ziwei_ai_deep(can_ai_clean=can_ai_clean):
+        elif try_reuse_ziwei_ai_deep(can_ai_clean=can_ai_clean):
             st.success(t("ziwei_ai_reuse_unchanged", lang))
             st.rerun()
         elif not report_gen:
@@ -2142,8 +2121,7 @@ def render_ziwei_tab() -> None:
         else:
             with st.spinner(t("generating", lang)):
                 try:
-                    # 免费预览额度 / 付费报告额度（银卡）；金钻不扣次
-                    # 仅在真正调用 DeepSeek 时扣次；复用存档不扣
+                    # 仅在真正调用 DeepSeek 时扣次
                     if tier == "free" and supabase_client and st.session_state.get("auth_ok"):
                         if not supabase_client.consume_free_preview_quota(st.session_state.user_id):
                             st.warning(t("free_preview_exhausted", lang))
