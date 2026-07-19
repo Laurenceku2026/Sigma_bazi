@@ -548,18 +548,31 @@ def compute_ziwei_chart(
     forward = (gender_norm == "男" and year_zhi_yy == "阳") or (
         gender_norm == "女" and year_zhi_yy == "阴"
     )
+    # 虚岁 → 公历年近似：出生年 + 虚岁 - 1（与常见排盘软件一致）
+    birth_year = int(birth_date.year)
     decadals = []
     for i in range(12):
         idx = _fix(soul_index + i) if forward else _fix(soul_index - i)
         start_age = ju_num + 10 * i
+        end_age = start_age + 9
+        start_year = birth_year + start_age - 1
+        end_year = birth_year + end_age - 1
         decadals.append(
             {
                 "palace": palaces[idx]["name"],
                 "zhi": palaces[idx]["zhi"],
                 "start_age": start_age,
-                "end_age": start_age + 9,
+                "end_age": end_age,
+                "start_year": start_year,
+                "end_year": end_year,
             }
         )
+        palaces[idx]["decadal"] = {
+            "start_age": start_age,
+            "end_age": end_age,
+            "start_year": start_year,
+            "end_year": end_year,
+        }
 
     # 长生十二神
     cs_start = _CHANGSHENG_START.get(ju_num, 0)
@@ -892,27 +905,54 @@ def format_ziwei_theory_markdown(lang: str = "zh") -> str:
     if lang == "en":
         return """
 #### What Zi Wei Dou Shu is
-A natal chart system that maps birth data onto **12 palaces** (Life, Siblings, Spouse, Children, Wealth, Health, Travel, Friends, Career, Property, Fortune, Parents). Stars and **mutagens (四化)** describe themes and timing.
+A natal chart maps birth data onto **12 palaces** (Life, Siblings, Spouse, Children, Wealth, Health, Travel, Friends, Career, Property, Fortune, Parents). Stars and **mutagens (四化)** describe themes and timing.
 
-#### Four layers
-1. **Chart setup** — lunar month/day & hour → Life/Body palaces → Five-Element board → place Zi Wei & other stars  
-2. **Stars** — 14 majors (紫微、天机、太阳…) plus auxiliaries; brightness (庙旺利陷) matters  
-3. **Palaces & mutagens** — palaces = life areas; 禄权科忌 = gain / power / fame / stress  
-4. **Timing** — decades (大限), years (流年), months — read natal + decadal + annual together  
+#### What “6~15 / 1995~2004” means
+That is the **decade (大限)** for that palace: roughly ages 6–15 (nominal age), about calendar years 1995–2004. Each palace holds one ten-year life chapter; direction depends on gender + year yin/yang.
 
-#### Vs BaZi
-BaZi emphasizes stems/branches, Ten Gods and favorable elements. Zi Wei emphasizes palace storytelling + star combinations + mutagen timing.
+#### Three views (beginner)
+1. **Si Hua (四化)** — year-stem mutagens 禄/权/科/忌 = gain / power / fame / stress. See which palace they land in.  
+2. **San He (三合)** — Life palace + its trine + opposite (三方四正). Structure / pattern first.  
+3. **Flying Stars (飞星)** — each palace stem also flies 禄权科忌 to where those stars sit. Text `禄→Wealth` is that fly; `*` = self-mutagen (stays in-palace).
+
+#### About arrows in Wenmo Tianji
+Those arrows are **flying-star paths** (palace stem → target palace). We intentionally **do not** draw a full arrow web (too busy for beginners). Use the **Flying Stars** view: short labels like `禄→财帛` carry the same meaning without covering the plate.
+
+#### Read order
+San He (structure) → Si Hua (natal mutagens) → Flying Stars (links) → decade ages for timing.
 """.strip()
 
     body = """
 #### 紫微斗数在讲什么
 以出生年月日时排出一张命盘：把人生分成 **12 宫**（命、兄弟、夫妻、子女、财帛、疾厄、迁移、交友、官禄、田宅、福德、父母），看各宫星曜与组合，论性格、事业、感情、财运等。
 
-#### 四层结构
-1. **定盘**：农历月日与时辰 → 命宫/身宫 → 五行局 → 安紫微等星  
-2. **星曜**：十四主星（紫微、天机、太阳、武曲、天同、廉贞、天府、太阴、贪狼、巨门、天相、天梁、七杀、破军）为主干，辅星补细节；星有庙旺利陷  
-3. **宫位与四化**：宫位回答「看哪一块人生」；**禄权科忌**回答加强与挂碍  
-4. **大限 / 流年**：静态看先天格局，动态看十年与流年应期；实务常叠看「本命 + 大限 + 流年」
+#### 宫里的「6~15岁 / 1995~2004年」是什么？
+那是 **大限**（十年运）：该宫主事大约从虚岁 6 岁到 15 岁，对应公历约 1995–2004 年（按「出生年 + 虚岁 − 1」粗算）。  
+十二宫各管一段十年；阳男阴女顺行、阴男阳女逆行。读盘时常叠看：**本命 + 当前大限 + 流年**。
+
+#### 三种排盘视角（新手必读）
+1. **四化**  
+   用**出生年天干**定四颗「变化星」：  
+   - **化禄**：机遇、收获、顺遂  
+   - **化权**：主导、掌控、进取  
+   - **化科**：名声、文书、贵人眼缘  
+   - **化忌**：分心、挂碍、功课所在（不是「注定倒霉」）  
+   看它们落在哪一宫，就知道先天哪一块人生更「有戏」或更要经营。
+
+2. **三合**  
+   先看 **命宫的三方四正**（本宫 + 三合宫 + 对宫）里主星多不多、吉凶搭配如何，用来判断格局骨架高低。像看房子的承重墙，而不是先盯一扇窗。
+
+3. **飞星**  
+   每个宫有自己的**天干**，也能飞出禄权科忌，飞到盘中那颗星所在的宫。  
+   - 例如「禄→财帛」：本宫干飞化禄，落点在财帛宫，钱财议题被牵动。  
+   - 标 `*` 或写「自化」：飞回本宫，能量更内聚。
+
+#### 文墨天机里的箭头要不要加？
+文墨盘面上的箭头，多半就是 **飞星路径**（从某宫天干指向四化落点）。  
+我们**刻意不加满盘箭头**：新手盘会显得太密、难读。请改用上方的 **「飞星」视角**——宫内小字 `禄→某某宫` 表达的是同一件事，更清晰。
+
+#### 建议读盘顺序
+三合看格局 → 四化看先天喜忌 → 飞星看宫际牵动 → 再对照大限年龄/年份看应期。
 
 #### 和八字的差别
 - **八字**：干支五行、十神、喜用、大运流年  
@@ -1071,10 +1111,20 @@ def render_ziwei_chart_html(
                 )
             hl = pname == "命宫" or bool(fr and any(it["self"] for it in fr["flies"]))
 
-        dec = dec_by_palace.get(pname) or {}
-        age = ""
+        # 大限：年龄 + 公历年（优先用宫内已挂的 decadal）
+        dec = p.get("decadal") or dec_by_palace.get(pname) or {}
+        age_line = ""
+        year_line = ""
         if dec:
-            age = f"{dec.get('start_age')}~{dec.get('end_age')}"
+            age_line = loc(
+                f"大限 {dec.get('start_age')}~{dec.get('end_age')}岁",
+                f"Dec {dec.get('start_age')}~{dec.get('end_age')}",
+            )
+            if dec.get("start_year") and dec.get("end_year"):
+                year_line = loc(
+                    f"{dec.get('start_year')}~{dec.get('end_year')}年",
+                    f"{dec.get('start_year')}~{dec.get('end_year')}",
+                )
 
         tags = []
         if p.get("is_ming"):
@@ -1092,29 +1142,39 @@ def render_ziwei_chart_html(
             meta_bits.append(esc(p["boshi"]))
         meta_s = " · ".join(meta_bits)
         ages = p.get("ages") or []
-        ages_s = " ".join(str(a) for a in ages[:6])
-        if len(ages) > 6:
-            ages_s += "…"
+        ages_s = ""
+        if ages:
+            ages_s = loc("小限 ", "Ages ") + " ".join(str(a) for a in ages[:5])
+            if len(ages) > 5:
+                ages_s += "…"
 
         bg = "#FFF8E1" if hl else "#FAFAFA"
         border = "#F9A825" if hl else "#90A4AE"
         name_color = "#C62828" if (p.get("is_ming") or p.get("is_shen")) else "#0D47A1"
+        timing_html = ""
+        if age_line or year_line:
+            timing_html = (
+                f"<div style='float:left;font-size:10px;line-height:1.25;color:#37474F;'>"
+                f"<div style='font-weight:600;'>{esc(age_line)}</div>"
+                f"{('<div style=\"opacity:0.85;\">' + esc(year_line) + '</div>') if year_line else ''}"
+                f"</div>"
+            )
 
         return (
             f"<td style='width:25%;border:1.5px solid {border};background:{bg};"
-            f"padding:4px 5px 3px;vertical-align:top;height:168px;'>"
-            f"<div style='line-height:1.2;min-height:88px;'>"
+            f"padding:4px 5px 3px;vertical-align:top;height:178px;'>"
+            f"<div style='line-height:1.2;min-height:82px;'>"
             f"{majors}"
             f"{('<div style=\"margin-top:1px;\">' + minors + '</div>') if minors else ''}"
             f"{('<div style=\"margin-top:1px;\">' + adjs + '</div>') if adjs else ''}"
             f"{('<div style=\"margin-top:3px;font-size:10px;color:#6D4C41;line-height:1.25;\">' + esc(accent) + '</div>') if accent else ''}"
             f"</div>"
-            f"<div style='margin-top:4px;font-size:10px;color:#78909C;line-height:1.2;'>"
+            f"<div style='margin-top:3px;font-size:10px;color:#78909C;line-height:1.2;'>"
             f"{meta_s}"
             f"{('<br/>' + esc(ages_s)) if ages_s else ''}"
             f"</div>"
             f"<div style='margin-top:4px;font-size:12px;line-height:1.25;'>"
-            f"<span style='float:left;opacity:0.8;font-size:11px;'>{esc(age)}</span>"
+            f"{timing_html}"
             f"<span style='float:right;text-align:right;'>"
             f"<b style='color:{name_color};font-size:13px;'>{esc(pname)}"
             f"{('·' + esc(tag_s)) if tag_s else ''}</b><br/>"
@@ -1169,7 +1229,10 @@ def render_ziwei_chart_html(
             "San He: Life trine/opposite highlighted.",
         )
     else:
-        hint = loc("飞星盘：宫内小字为该宫天干飞出；* 为自化。", "Flying Stars: small text = flies out; * = self.")
+        hint = loc(
+            "飞星盘：宫内「禄→某某宫」= 该宫天干飞化路径（等同文墨箭头，文字版更清晰）；* 为自化。",
+            "Flying Stars: labels like Lu→palace = fly path (same idea as Wenmo arrows); * = self.",
+        )
 
     blocks.append(f"<p style='font-size:13px;margin:4px 0 8px;'>{esc(hint)}</p>")
     blocks.append(
@@ -1185,20 +1248,21 @@ def render_ziwei_chart_html(
     dec = chart.get("decadals") or []
     if dec:
         bits = [
-            f"{d.get('start_age')}~{d.get('end_age')}{d.get('palace')}({d.get('zhi')})"
+            f"{d.get('palace')} {d.get('start_age')}~{d.get('end_age')}岁/"
+            f"{d.get('start_year')}~{d.get('end_year')}年"
             for d in dec
         ]
         blocks.append(
             "<p style='font-size:11px;margin:8px 0 2px;opacity:0.85;line-height:1.45;'>"
-            + esc(loc("大限：", "Decades: ") + " · ".join(bits))
+            + esc(loc("大限（年龄/年）：", "Decades (age/year): ") + " · ".join(bits))
             + "</p>"
         )
     blocks.append(
         "<p style='font-size:10px;margin:2px 0 0;opacity:0.7;'>"
         + esc(
             loc(
-                "盘面：主星加粗 · 吉曜绿 · 煞曜红 · 杂曜灰 · 左下大限年龄 · 右下宫名干支 · 小字为长生/博士与小限",
-                "Majors bold · soft green · tough red · adj gray · decade ages bottom-left",
+                "盘面：左下为大限虚岁与对应公历年 · 右下宫名干支 · 主星加粗 · 吉曜绿/煞曜红/杂曜灰 · 飞星视角用文字代替箭头",
+                "Bottom-left: decade age + calendar years · majors bold · Flying view uses text, not arrows",
             )
         )
         + "</p>"
