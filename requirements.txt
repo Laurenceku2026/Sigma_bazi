@@ -7,6 +7,7 @@ plotly>=5.0.0
 pytz>=2023.0
 pillow>=10.0.0
 reportlab>=4.0.0
+fonttools>=4.40.0
 lunardate>=0.2.0
 requests>=2.31.0
 opencc-python-reimplemented>=0.1.7

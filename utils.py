@@ -654,12 +654,14 @@ def _materialize_ttf_for_pdf(path):
 
 
 def _pdf_cjk_source_candidates():
-    """原始字体候选（TTC 会再物化为 TTF）。优先项目内全量字体。"""
+    """原始字体候选（TTC 会再物化为 TTF）。优先项目内已导出的全量 TTF。"""
     from pathlib import Path
 
     here = Path(__file__).resolve().parent
     cache_dir = _pdf_font_cache_dir()
     return [
+        here / "fonts" / "NotoSansSC-CJK-Fallback.ttf",
+        here / "fonts" / "WenQuanYiMicroHei.ttf",
         here / "fonts" / "NotoSansSC-CJK-Fallback.ttc",
         here / "fonts" / "WenQuanYiMicroHei.ttc",
         Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
@@ -853,10 +855,16 @@ def _resolve_pdf_cjk_font() -> tuple:
 
 
 def _cjk_font_file():
-    """返回可用于 PIL 的中文字体路径（优先繁简覆盖更全者）。"""
+    """返回可用于 PIL 的中文字体路径（优先单文件 TTF，避免 Cloud 上 TTC/缺 fontTools）。"""
     from pathlib import Path
     here = Path(__file__).resolve().parent
     candidates = [
+        # 已导出的全量 TTF（首选，无需 fontTools）
+        here / "fonts" / "NotoSansSC-CJK-Fallback.ttf",
+        here / "fonts" / "WenQuanYiMicroHei.ttf",
+        here / "fonts" / "NotoSansSC-Regular.ttf",
+        here / "fonts" / "NotoSansSC-Regular.otf",
+        # TTC 需 Pillow/index 或 fontTools 物化
         here / "fonts" / "NotoSansSC-CJK-Fallback.ttc",
         here / "fonts" / "WenQuanYiMicroHei.ttc",
         Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
@@ -865,8 +873,6 @@ def _cjk_font_file():
         Path(r"C:\Windows\Fonts\msyh.ttc"),
         Path(r"C:\Windows\Fonts\simsun.ttc"),
         Path(r"C:\Windows\Fonts\simhei.ttf"),
-        here / "fonts" / "NotoSansSC-Regular.ttf",
-        here / "fonts" / "NotoSansSC-Regular.otf",
     ]
     for p in candidates:
         try:
@@ -875,6 +881,29 @@ def _cjk_font_file():
         except Exception:
             continue
     return None
+
+
+def _cjk_font_candidates_for_pil():
+    """PIL 可用字体候选列表（按优先级）。"""
+    from pathlib import Path
+
+    here = Path(__file__).resolve().parent
+    out = []
+    for p in (
+        here / "fonts" / "NotoSansSC-CJK-Fallback.ttf",
+        here / "fonts" / "NotoSansSC-Regular.ttf",
+        _cjk_font_file(),
+        _materialize_ttf_for_pdf(here / "fonts" / "NotoSansSC-CJK-Fallback.ttc"),
+    ):
+        if p is None:
+            continue
+        try:
+            pp = Path(p)
+            if pp.is_file() and pp.stat().st_size > 100_000 and pp not in out:
+                out.append(pp)
+        except Exception:
+            continue
+    return out
 
 
 # 简体子集缺繁体字形时的替补（zh_hant / OpenCC 常见字；全量字体下通常不触发）
@@ -1030,6 +1059,28 @@ def _pdf_fix_glyphs(text: str, font_path=None) -> str:
     return "".join(out)
 
 
+def _pdf_load_pil_font(font_path, size_px: int):
+    """加载 PIL 字体；TTC 尝试 index=0；失败返回 None。"""
+    from pathlib import Path
+
+    from PIL import ImageFont
+
+    if not font_path:
+        return None
+    p = Path(font_path)
+    if not p.is_file():
+        return None
+    try:
+        if p.suffix.lower() == ".ttc":
+            return ImageFont.truetype(str(p), size_px, index=0)
+        return ImageFont.truetype(str(p), size_px)
+    except Exception:
+        try:
+            return ImageFont.truetype(str(p), size_px)
+        except Exception:
+            return None
+
+
 def _pdf_text_image(
     text: str,
     *,
@@ -1041,17 +1092,47 @@ def _pdf_text_image(
 ):
     """把中文绘成图片 Flowable，避免 ReportLab TTF 子集缺字黑方块。"""
     import io
+    from pathlib import Path
+
     from reportlab.platypus import Image as RLImage
     from PIL import Image, ImageDraw, ImageFont
 
     raw = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    raw = _pdf_fix_glyphs(raw, font_path)
     if not raw:
         return None
 
-    # pt -> px @ 2x for清晰度
+    # 字体候选：指定路径 → 项目内全量 TTF → 简体子集
+    candidates = []
+    if font_path:
+        candidates.append(Path(font_path))
+    candidates.extend(_cjk_font_candidates_for_pil())
+
     scale = 2
-    font = ImageFont.truetype(str(font_path), font_size * scale)
+    size_px = font_size * scale
+    font = None
+    used_path = None
+    for cand in candidates:
+        # 简体子集时先把正文转简体，避免繁体变成 .notdef 小方块
+        trial = raw
+        if _pdf_font_is_sc_subset(cand):
+            try:
+                from zh_convert import to_simplified
+
+                trial = to_simplified(raw)
+            except Exception:
+                pass
+        trial = _pdf_fix_glyphs(trial, cand)
+        f = _pdf_load_pil_font(cand, size_px)
+        if f is None:
+            continue
+        font = f
+        used_path = cand
+        raw = trial
+        break
+    if font is None or not raw:
+        return None
+
+    # pt -> px @ 2x for清晰度
     max_w = int(max_width_pt * scale)
 
     def char_w(ch: str) -> int:

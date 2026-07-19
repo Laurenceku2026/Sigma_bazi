@@ -1511,11 +1511,12 @@ def render_ziwei_chart_image(
     from reportlab.platypus import Image as RLImage
     from PIL import Image, ImageDraw, ImageFont
 
-    from utils import _cjk_font_file, _materialize_ttf_for_pdf, _pdf_fix_glyphs
+    from utils import _cjk_font_candidates_for_pil, _cjk_font_file, _pdf_fix_glyphs
 
     if not chart.get("ok"):
         return None
-    font_path = _materialize_ttf_for_pdf(_cjk_font_file()) or _cjk_font_file()
+    cands = _cjk_font_candidates_for_pil()
+    font_path = cands[0] if cands else _cjk_font_file()
     if not font_path:
         return None
 
@@ -1631,7 +1632,6 @@ def generate_ziwei_pdf_report(
     """
     import io
     import re
-    from pathlib import Path
     from xml.sax.saxutils import escape
 
     from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
@@ -1642,40 +1642,34 @@ def generate_ziwei_pdf_report(
 
     from report_generator import ReportGenerator
     from utils import (
+        _cjk_font_candidates_for_pil,
         _cjk_font_file,
-        _materialize_ttf_for_pdf,
+        _pdf_font_is_sc_subset,
         _pdf_fix_glyphs,
         _pdf_text_image,
     )
 
     en = lang == "en"
-    here = Path(__file__).resolve().parent
-    # PIL 字体：优先物化后的全量 TTF，其次项目内 NotoSansSC
-    cjk_path = _materialize_ttf_for_pdf(_cjk_font_file())
-    if cjk_path is None:
-        for p in (
-            here / "fonts" / "NotoSansSC-Regular.ttf",
-            here / "fonts" / "NotoSansSC-CJK-Fallback.ttc",
-        ):
-            got = _materialize_ttf_for_pdf(p) if str(p).lower().endswith(".ttc") else p
-            if got is not None and Path(got).is_file() and Path(got).stat().st_size > 100_000:
-                cjk_path = got
-                break
+    # 强制用仓库内单文件 TTF（Cloud 无 fontTools 时 TTC 无法物化会出方块）
+    cands = _cjk_font_candidates_for_pil()
+    cjk_path = cands[0] if cands else _cjk_font_file()
     use_pil = cjk_path is not None
+    if not use_pil:
+        raise RuntimeError(
+            "No CJK font found under fonts/; cannot generate Zi Wei PDF without tofu."
+        )
 
     def T(s: str) -> str:
         if en or not s:
             return s
-        # 简体子集时走简体；全量字体可保留繁体（再经缺字替补）
-        try:
-            from utils import _pdf_font_is_sc_subset
-
-            if _pdf_font_is_sc_subset(cjk_path):
+        # 简体子集：必须转简体。全量字体：界面繁体可保留。
+        if _pdf_font_is_sc_subset(cjk_path):
+            try:
                 from zh_convert import to_simplified
 
                 return to_simplified(s)
-        except Exception:
-            pass
+            except Exception:
+                return _pdf_fix_glyphs(s, None)
         if lang == "zh_hant":
             try:
                 from zh_convert import to_traditional
