@@ -764,8 +764,21 @@ def compute_palace_fly(chart: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
+def _domain_palace_note(chart: Dict[str, Any], pname: str, *, lang: str = "zh") -> str:
+    """单宫一句：干支 + 主辅星 + 四化。"""
+    en = lang == "en"
+    p = _palace_by_name(chart, pname) or {}
+    if not p:
+        return ""
+    line = _star_line(p)
+    gz = f"{p.get('gan') or ''}{p.get('zhi') or ''}"
+    if en:
+        return f"{pname}({gz}): {line}."
+    return f"{pname}（{gz}）星曜：{line}。"
+
+
 def build_ziwei_basic_reading(chart: Dict[str, Any], *, lang: str = "zh") -> Dict[str, Any]:
-    """基础解读：按四化 / 三合 / 飞星三套排盘视角给出专业摘要。"""
+    """基础解读：读盘顺序 三合→四化→飞星→大限，再事业/财运/感情/健康。"""
     en = lang == "en"
     if not chart.get("ok"):
         return {"ok": False, "sections": []}
@@ -773,28 +786,56 @@ def build_ziwei_basic_reading(chart: Dict[str, Any], *, lang: str = "zh") -> Dic
     def L(zh: str, en_s: str) -> str:
         return en_s if en else zh
 
+    def add(sec_id: str, title: str, body: str) -> None:
+        sections.append({"id": sec_id, "title": title, "body": body})
+
     sections: List[Dict[str, str]] = []
     ming = _palace_by_name(chart, "命宫") or {}
-    sections.append(
-        {
-            "title": L("命盘总览", "Chart overview"),
-            "body": L(
-                f"{chart.get('name') or '命主'}，{chart.get('gender')}，"
-                f"{(chart.get('lunar') or {}).get('label')}，{chart.get('ju_name')}；"
-                f"命宫{ming.get('gan')}{ming.get('zhi')}，身宫{chart.get('shen_palace')}；"
-                f"紫微在{chart.get('ziwei_zhi')}，天府在{chart.get('tianfu_zhi')}。"
-                f"下方按「四化 / 三合 / 飞星」三套视角解读。",
-                f"{chart.get('name') or 'Native'}, {chart.get('ju_name')}, "
-                f"Life {ming.get('gan')}{ming.get('zhi')}. Readings below use Si Hua / San He / Flying Stars.",
-            ),
-        }
+    add(
+        "overview",
+        L("命盘总览", "Chart overview"),
+        L(
+            f"{chart.get('name') or '命主'}，{chart.get('gender')}，"
+            f"{(chart.get('lunar') or {}).get('label')}，{chart.get('ju_name')}；"
+            f"命宫{ming.get('gan')}{ming.get('zhi')}，身宫{chart.get('shen_palace')}；"
+            f"紫微在{chart.get('ziwei_zhi')}，天府在{chart.get('tianfu_zhi')}。"
+            "下文按「三合→四化→飞星→大限→事业/财运/感情/健康」展开。",
+            f"{chart.get('name') or 'Native'}, {chart.get('ju_name')}, "
+            f"Life {ming.get('gan')}{ming.get('zhi')}. Order: San He → Si Hua → Flying → Decades → life areas.",
+        ),
     )
 
-    # —— 四化 ——
+    # —— 1 三合 ——
+    sf_names = ming_sanfang_sizheng(chart)
+    sf_bits = []
+    for n in sf_names:
+        p = _palace_by_name(chart, n) or {}
+        majors = "、".join(s["name"] for s in (p.get("majors") or [])) or L("无主星", "no major")
+        sf_bits.append(f"{n}（{p.get('gan')}{p.get('zhi')}）主星{majors}")
+    soft_n = tough_n = 0
+    for n in sf_names:
+        p = _palace_by_name(chart, n) or {}
+        for s in p.get("minors") or []:
+            if s.get("type") == "soft":
+                soft_n += 1
+            elif s.get("type") == "tough":
+                tough_n += 1
+    sanhe_body = L(
+        "【三合】先看命宫三方四正（本宫、三合宫、对宫）的主星气势，判断格局骨架。"
+        + "；".join(sf_bits)
+        + f"。三方吉曜约{soft_n}、煞曜约{tough_n}；吉多则偏开扬，煞多或空宫宜稳健经营。",
+        "[San He] Life trine/opposite: " + "; ".join(sf_bits) + ".",
+    )
+    for pname in ("命宫", "官禄", "财帛", "夫妻"):
+        note = _domain_palace_note(chart, pname, lang=lang)
+        if note:
+            sanhe_body += " " + note
+    add("sanhe", L("三合解读", "San He reading"), sanhe_body)
+
+    # —— 2 四化 ——
     sihua = chart.get("sihua") or []
     sihua_body = L(
-        "【四化盘】以生年天干定禄权科忌，看先天加强与挂碍。"
-        "化禄偏机遇收获，化权偏主导掌控，化科偏名声文书，化忌偏挂碍分心。",
+        "【四化】以生年天干定禄权科忌：禄偏机遇、权偏主导、科偏名声文书、忌偏挂碍功课。",
         "[Si Hua] Year-stem mutagens: Lu=gain, Quan=power, Ke=fame, Ji=stress.",
     )
     if sihua:
@@ -804,47 +845,17 @@ def build_ziwei_basic_reading(chart: Dict[str, Any], *, lang: str = "zh") -> Dic
             + "。",
             " Natal: " + "; ".join(f"{x['star']}{x['type']}→{x['palace']}" for x in sihua) + ".",
         )
-        ji = [x for x in sihua if x.get("type") == "化忌"]
-        lu = [x for x in sihua if x.get("type") == "化禄"]
-        if lu:
-            sihua_body += L(
-                f"禄星落{lu[0]['palace']}，该宫议题易见机遇与资源流动；",
-                f" Lu in {lu[0]['palace']} favors opportunity there; ",
-            )
-        if ji:
-            sihua_body += L(
-                f"忌星落{ji[0]['palace']}，宜当作长期功课与风险管理，而非宿命判决。",
-                f" Ji in {ji[0]['palace']} is a long-term focus, not fate.",
-            )
-    sections.append({"title": L("四化解读", "Si Hua reading"), "body": sihua_body})
+        for x in sihua:
+            tip = {
+                "化禄": L("宜把握资源与机会窗口。", " Favor openings there."),
+                "化权": L("宜主动担责与推进。", " Favor taking charge."),
+                "化科": L("宜文书考试与形象经营。", " Favor reputation/docs."),
+                "化忌": L("宜当作长期功课，非宿命判决。", " Treat as long-term focus, not fate."),
+            }.get(x.get("type") or "", "")
+            sihua_body += L(f"{x['type']}落{x['palace']}，{tip}", f"{x['type']}@{x['palace']}.{tip}")
+    add("sihua", L("四化解读", "Si Hua reading"), sihua_body)
 
-    # —— 三合 ——
-    sf_names = ming_sanfang_sizheng(chart)
-    sf_bits = []
-    for n in sf_names:
-        p = _palace_by_name(chart, n) or {}
-        majors = "、".join(s["name"] for s in (p.get("majors") or [])) or L("无主星", "no major")
-        sf_bits.append(f"{n}（{p.get('gan')}{p.get('zhi')}）主星{majors}")
-    sanhe_body = L(
-        "【三合盘】先看命宫三方四正（本宫、三合宫、对宫）的主星气势，再论格局高低。"
-        + "；".join(sf_bits)
-        + "。三方有吉曜叠临则格局偏开扬；忌曜或空宫较多则宜稳健经营。",
-        "[San He] Life-palace trine/opposite: " + "; ".join(sf_bits) + ".",
-    )
-    # 重点宫位一句
-    for pname in ("命宫", "官禄", "财帛", "夫妻"):
-        p = _palace_by_name(chart, pname) or {}
-        if not p:
-            continue
-        hint = _PALACE_HINTS.get(pname, "")
-        majors = "、".join(s["name"] for s in (p.get("majors") or [])) or L("无主星", "no major")
-        sanhe_body += L(
-            f" {pname}主「{hint}」，星曜：{_star_line(p)}。",
-            f" {pname} ({hint}): {_star_line(p)}.",
-        )
-    sections.append({"title": L("三合解读", "San He reading"), "body": sanhe_body})
-
-    # —— 飞星 ——
+    # —— 3 飞星 ——
     flies = compute_palace_fly(chart)
     ming_fly = next((r for r in flies if r["from_palace"] == "命宫"), None)
     feixing_bits = []
@@ -857,8 +868,20 @@ def build_ziwei_basic_reading(chart: Dict[str, Any], *, lang: str = "zh") -> Dic
         for it in r["flies"]:
             if it["self"]:
                 self_bits.append(f"{r['from_palace']}{it['star']}{it['type']}")
+    key_fly_bits = []
+    for pname in ("命宫", "官禄", "财帛", "夫妻"):
+        fr = next((r for r in flies if r["from_palace"] == pname), None)
+        if not fr:
+            continue
+        parts = []
+        for it in fr["flies"]:
+            short = (it["type"] or "").replace("化", "")
+            parts.append(
+                f"{short}→{it['to_palace']}" + ("*" if it["self"] else "")
+            )
+        key_fly_bits.append(f"{pname}：{' '.join(parts)}")
     feixing_body = L(
-        "【飞星盘】以各宫天干飞出禄权科忌，看宫际牵动；飞回本宫为自化，能量更内聚。"
+        "【飞星】各宫天干飞出禄权科忌，看宫际牵动；飞回本宫为自化。"
         f"命宫天干{ming.get('gan') or '—'}飞出："
         + ("、".join(feixing_bits) if feixing_bits else "—")
         + "。",
@@ -866,32 +889,144 @@ def build_ziwei_basic_reading(chart: Dict[str, Any], *, lang: str = "zh") -> Dic
         + (", ".join(feixing_bits) if feixing_bits else "—")
         + ".",
     )
+    if key_fly_bits:
+        feixing_body += L(
+            "重点宫飞出：" + "；".join(key_fly_bits) + "。",
+            " Key flies: " + "; ".join(key_fly_bits) + ".",
+        )
     if self_bits:
         feixing_body += L(
             "盘中自化：" + "、".join(self_bits[:8]) + "。自化禄权偏自我驱动，自化忌宜防执念内耗。",
             " Self-mutagens: " + ", ".join(self_bits[:8]) + ".",
         )
-    else:
-        feixing_body += L(
-            "本盘显著自化不多，宫际飞化牵动更明显，宜结合流年再看应期。",
-            " Few self-mutagens; inter-palace flies matter more with annual timing.",
-        )
-    sections.append({"title": L("飞星解读", "Flying-star reading"), "body": feixing_body})
+    add("feixing", L("飞星解读", "Flying-star reading"), feixing_body)
 
-    # —— 综合 ——
+    # —— 4 大限 ——
     dec = chart.get("decadals") or []
     d0 = dec[0] if dec else {}
-    sections.append(
-        {
-            "title": L("综合要点", "Synthesis"),
-            "body": L(
-                "读盘顺序建议：先三合看格局骨架 → 再四化看先天喜忌 → 再飞星看宫际连动。"
-                f"大限由命宫起{'顺行' if chart.get('decadal_forward') else '逆行'}，"
-                f"第一大限约在{d0.get('palace') or '—'}（{d0.get('start_age') or '—'}–{d0.get('end_age') or '—'}岁）。"
-                "以上为基础规则解读；更细的组合与文笔可用 AI 深批展开。仅供参考。",
-                "Order: San He structure → Si Hua mutagens → Flying links. Reference only.",
+    d_now = None
+    try:
+        by = int(str(chart.get("solar_date") or "")[:4])
+        from datetime import date as _date
+
+        age_xu = max(1, _date.today().year - by + 1)
+        for d in dec:
+            if int(d.get("start_age") or 0) <= age_xu <= int(d.get("end_age") or 0):
+                d_now = d
+                break
+    except Exception:
+        d_now = None
+    dec_bits = []
+    for d in dec[:6]:
+        dec_bits.append(
+            f"{d.get('palace')}{d.get('start_age')}～{d.get('end_age')}岁"
+            f"/{d.get('start_year')}～{d.get('end_year')}年"
+        )
+    decadal_body = L(
+        "【大限】十年运应期：阳男阴女顺行、阴男阳女逆行。"
+        f"大限由命宫起{'顺行' if chart.get('decadal_forward') else '逆行'}；"
+        f"第一大限在{d0.get('palace') or '—'}（{d0.get('start_age') or '—'}～{d0.get('end_age') or '—'}岁"
+        f"，约{d0.get('start_year') or '—'}～{d0.get('end_year') or '—'}年）。",
+        f"[Decades] First decade at {d0.get('palace')}: "
+        f"{d0.get('start_age')}–{d0.get('end_age')} / {d0.get('start_year')}–{d0.get('end_year')}.",
+    )
+    if d_now:
+        decadal_body += L(
+            f"当前约在{d_now.get('palace')}大限（{d_now.get('start_age')}～{d_now.get('end_age')}岁，"
+            f"{d_now.get('start_year')}～{d_now.get('end_year')}年），宜把该宫议题当作现阶段主舞台。",
+            f" Current decade: {d_now.get('palace')} "
+            f"({d_now.get('start_age')}–{d_now.get('end_age')}).",
+        )
+    if dec_bits:
+        decadal_body += L(" 前段大限：" + " · ".join(dec_bits) + "。", " Early decades: " + " · ".join(dec_bits) + ".")
+    add("decadal", L("大限应期", "Decade timing"), decadal_body)
+
+    # —— 5–8 事业 / 财运 / 感情 / 健康 ——
+    def domain_body(title_zh: str, palaces: Tuple[str, ...], focus: str) -> str:
+        bits = [_domain_palace_note(chart, n, lang=lang) for n in palaces]
+        bits = [b for b in bits if b]
+        # 四化牵动
+        hits = [x for x in sihua if x.get("palace") in palaces]
+        fly_hits = []
+        for pname in palaces:
+            fr = next((r for r in flies if r["from_palace"] == pname), None)
+            if not fr:
+                continue
+            for it in fr["flies"][:2]:
+                fly_hits.append(
+                    f"{pname}{(it['type'] or '').replace('化','')}→{it['to_palace']}"
+                    + ("*" if it["self"] else "")
+                )
+        body = L(f"【{title_zh}】{focus}", f"[{title_zh}] {focus}")
+        if bits:
+            body += " " + " ".join(bits)
+        if hits:
+            body += L(
+                " 生年四化相关："
+                + "；".join(f"{x['star']}{x['type']}@{x['palace']}" for x in hits)
+                + "。",
+                " Mutagens: " + "; ".join(f"{x['star']}{x['type']}@{x['palace']}" for x in hits) + ".",
+            )
+        if fly_hits:
+            body += L(
+                " 飞星牵动：" + "；".join(fly_hits[:6]) + "。",
+                " Flies: " + "; ".join(fly_hits[:6]) + ".",
+            )
+        if d_now and d_now.get("palace") in palaces:
+            body += L(
+                f" 当前大限正落相关宫位（{d_now.get('palace')}），该领域更宜主动布局。",
+                f" Current decade on {d_now.get('palace')} — prioritize this area.",
+            )
+        body += L(" 宜结合大限与流年看应期，理性参考。", " Time with decades/years; reference only.")
+        return body
+
+    add(
+        "career",
+        L("事业分析", "Career"),
+        domain_body(
+            "事业",
+            ("官禄", "迁移", "交友", "命宫"),
+            L(
+                "以官禄为主、迁移看出外与平台、交友看同事部属、命宫看自我驱动力。",
+                "Career from Career/Travel/Friends/Life palaces.",
             ),
-        }
+        ),
+    )
+    add(
+        "wealth",
+        L("财运分析", "Wealth"),
+        domain_body(
+            "财运",
+            ("财帛", "田宅", "福德", "官禄"),
+            L(
+                "以财帛看求财方式、田宅看资产沉淀、福德看花钱心态、官禄看以业生财。",
+                "Wealth from Wealth/Property/Fortune/Career palaces.",
+            ),
+        ),
+    )
+    add(
+        "love",
+        L("感情分析", "Relationships"),
+        domain_body(
+            "感情",
+            ("夫妻", "福德", "子女", "命宫"),
+            L(
+                "以夫妻看伴侣互动、福德看内心满足、子女看付出与创造、命宫看自身相处模式。",
+                "Love from Spouse/Fortune/Children/Life palaces.",
+            ),
+        ),
+    )
+    add(
+        "health",
+        L("健康分析", "Health"),
+        domain_body(
+            "健康",
+            ("疾厄", "父母", "命宫", "福德"),
+            L(
+                "以疾厄看体质压力出口、父母看作息家风与照护、命宫/福德看身心负荷与放松方式。",
+                "Health from Health/Parents/Life/Fortune palaces.",
+            ),
+        ),
     )
     return {"ok": True, "sections": sections}
 
@@ -1364,6 +1499,124 @@ def ziwei_pdf_filename(name: str = "") -> str:
     return f"ZiWei_{safe[:40]}_{datetime.now():%Y%m%d}.pdf"
 
 
+def render_ziwei_chart_image(
+    chart: Dict[str, Any],
+    *,
+    mode: str = "sanhe",
+    lang: str = "zh",
+    max_width_pt: float = 460,
+):
+    """将十二宫方格盘绘成 PDF 可用图片（PIL）。"""
+    import io
+    from reportlab.platypus import Image as RLImage
+    from PIL import Image, ImageDraw, ImageFont
+
+    from utils import _cjk_font_file, _pdf_fix_glyphs
+
+    if not chart.get("ok"):
+        return None
+    font_path = _cjk_font_file()
+    if not font_path:
+        return None
+
+    en = lang == "en"
+    mode = (mode or "sanhe").lower()
+    if mode in ("四化",):
+        mode = "sihua"
+    elif mode in ("三合",):
+        mode = "sanhe"
+    elif mode in ("飞星", "飛星"):
+        mode = "feixing"
+
+    scale = 2
+    cell_w, cell_h = 118 * scale, 108 * scale
+    pad = 6 * scale
+    img_w = cell_w * 4 + pad * 2
+    img_h = cell_h * 4 + pad * 2
+    img = Image.new("RGB", (img_w, img_h), "#90A4AE")
+    draw = ImageDraw.Draw(img)
+    try:
+        font_sm = ImageFont.truetype(str(font_path), 9 * scale)
+        font_md = ImageFont.truetype(str(font_path), 11 * scale)
+        font_lg = ImageFont.truetype(str(font_path), 13 * scale)
+    except Exception:
+        return None
+
+    sf_names = set(ming_sanfang_sizheng(chart))
+    natal_sihua_at = {}
+    for x in chart.get("sihua") or []:
+        natal_sihua_at.setdefault(x.get("palace"), []).append(x)
+    fly_by = {r["from_palace"]: r for r in compute_palace_fly(chart)}
+    by_zhi = {p.get("zhi"): p for p in (chart.get("palaces") or [])}
+
+    grid = [
+        ["巳", "午", "未", "申"],
+        ["辰", None, None, "酉"],
+        ["卯", None, None, "戌"],
+        ["寅", "丑", "子", "亥"],
+    ]
+
+    def text(xy, s, font, fill="#111"):
+        s = _pdf_fix_glyphs(str(s or ""), font_path)
+        if s:
+            draw.text(xy, s, font=font, fill=fill)
+
+    # center
+    cx0, cy0 = pad + cell_w, pad + cell_h
+    draw.rectangle([cx0, cy0, cx0 + cell_w * 2 - 1, cy0 + cell_h * 2 - 1], fill="#ECEFF1", outline="#78909C")
+    mode_label = {"sihua": "四化", "sanhe": "三合", "feixing": "飞星"}.get(mode, "三合")
+    if en:
+        mode_label = {"sihua": "Si Hua", "sanhe": "San He", "feixing": "Flying"}.get(mode, "San He")
+    center_lines = [
+        str(chart.get("name") or ("Native" if en else "命主")),
+        f"{chart.get('gender') or ''} · {chart.get('ju_name') or ''}",
+        f"{(chart.get('lunar') or {}).get('label') or ''}",
+        f"{'命' if not en else 'Life'} {chart.get('ming_ganzhi') or ''}",
+        f"{'视角' if not en else 'View'}：{mode_label}",
+    ]
+    ty = cy0 + 14 * scale
+    for line in center_lines:
+        text((cx0 + 10 * scale, ty), line, font_md if ty == cy0 + 14 * scale else font_sm, "#0B1F33")
+        ty += 16 * scale
+
+    for r, row in enumerate(grid):
+        for c, zhi in enumerate(row):
+            if zhi is None:
+                continue
+            x0 = pad + c * cell_w
+            y0 = pad + r * cell_h
+            p = by_zhi.get(zhi) or {}
+            pname = p.get("name") or zhi
+            hl = False
+            if mode == "sihua":
+                hl = pname in natal_sihua_at
+            elif mode == "sanhe":
+                hl = pname in sf_names
+            else:
+                hl = pname == "命宫" or bool(
+                    fly_by.get(pname) and any(it.get("self") for it in fly_by[pname].get("flies") or [])
+                )
+            bg = "#FFF8E1" if hl else "#FAFAFA"
+            draw.rectangle([x0, y0, x0 + cell_w - 1, y0 + cell_h - 1], fill=bg, outline="#78909C")
+            majors = " ".join(s.get("name", "")[:2] for s in (p.get("majors") or [])[:3])
+            minors = " ".join(s.get("name", "")[:2] for s in (p.get("minors") or [])[:4])
+            text((x0 + 4 * scale, y0 + 4 * scale), majors or ("空" if not en else "—"), font_md, "#111")
+            text((x0 + 4 * scale, y0 + 20 * scale), minors, font_sm, "#455A64")
+            dec = p.get("decadal") or {}
+            if dec:
+                timing = f"{dec.get('start_age')}～{dec.get('end_age')}｜{dec.get('start_year')}～{dec.get('end_year')}"
+                text((x0 + 4 * scale, y0 + cell_h - 34 * scale), timing, font_sm, "#37474F")
+            name_c = "#C62828" if p.get("is_ming") or p.get("is_shen") else "#0D47A1"
+            text((x0 + 4 * scale, y0 + cell_h - 18 * scale), f"{pname} {p.get('gan') or ''}{zhi}", font_lg, name_c)
+
+    bio = io.BytesIO()
+    img.save(bio, format="PNG")
+    bio.seek(0)
+    draw_w = float(max_width_pt)
+    draw_h = img_h / scale * (draw_w / (img_w / scale))
+    return RLImage(bio, width=draw_w, height=draw_h)
+
+
 def generate_ziwei_pdf_report(
     chart: dict,
     reading: dict,
@@ -1371,14 +1624,16 @@ def generate_ziwei_pdf_report(
     ai_deep: Optional[dict] = None,
     lang: str = "zh",
 ):
-    """紫微斗数 PDF：封面 + 命盘摘要 + 本地解读 +（可选）AI 深批。"""
+    """紫微专业 PDF：封面→目录→三合/四化/飞星盘与解读→大限→事业财运感情健康（基础+AI整合）。"""
     import io
     import re
+    from xml.sax.saxutils import escape
+
     from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+    from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 
     from report_generator import ReportGenerator
     from utils import _cjk_font_file, _pdf_text_image, _resolve_pdf_cjk_font
@@ -1399,7 +1654,7 @@ def generate_ziwei_pdf_report(
     cjk_path = _cjk_font_file()
     use_pil = cjk_path is not None
     buffer = io.BytesIO()
-    cover_title = "Sigma Fate Zi Wei Report" if en else T("六西格玛命理 · 紫微斗数报告")
+    cover_title = T("六西格玛命理 · 紫微斗数报告") if not en else "Sigma Fate Zi Wei Report"
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
@@ -1411,6 +1666,10 @@ def generate_ziwei_pdf_report(
         author=str((chart or {}).get("name") or "user"),
     )
     styles = getSampleStyleSheet()
+    style_cover_sub = ParagraphStyle(
+        "ZWCoverSub", parent=styles["Normal"], fontName="Helvetica", fontSize=11,
+        leading=16, alignment=TA_CENTER, spaceAfter=10, textColor="#455A64",
+    )
     style_h1 = ParagraphStyle(
         "ZW1", parent=styles["Normal"], fontName=font_head, fontSize=18, leading=26,
         spaceBefore=6, spaceAfter=10, textColor="#0B1F33",
@@ -1427,126 +1686,242 @@ def generate_ziwei_pdf_report(
         "ZWM", parent=styles["Normal"], fontName=font_body, fontSize=11, leading=18,
         alignment=TA_CENTER, spaceAfter=6,
     )
+    style_toc = ParagraphStyle(
+        "ZWToc", parent=styles["Normal"], fontName=font_body, fontSize=11, leading=18,
+        alignment=TA_LEFT, leftIndent=12, spaceAfter=4,
+    )
     content_width = A4[0] - 3.6 * cm
     story = []
 
     def _pdf_safe(text: str) -> str:
-        return str(text or "").replace("⚠️", "").replace("★", "*")
+        return (
+            str(text or "")
+            .replace("⚠️", "")
+            .replace("★", "*")
+            .replace("●", "-")
+        )
 
-    def P(text: str, style=style_body):
+    def P(text: str, style=style_body, *, center: bool = False):
         raw = _pdf_safe(str(text or "").strip())
         if not en:
             raw = T(raw)
         if not raw:
             return None
         if use_pil:
+            size, fill, align = 11, "#222222", "center" if center or style == style_meta else "left"
+            if style == style_h1:
+                size, fill = 18, "#0B1F33"
+            elif style == style_h2:
+                size, fill = 13, "#1565C0"
+            elif style == style_meta:
+                size, fill, align = 12, "#333333", "center"
+            elif style == style_toc:
+                size = 11
             img = _pdf_text_image(
                 raw,
                 font_path=cjk_path,
                 max_width_pt=content_width,
-                font_size=11 if style == style_body else (16 if style == style_h1 else 13),
-                fill="#0B1F33" if style != style_body else "#222222",
-                align="center" if style == style_meta else "left",
+                font_size=size,
+                fill=fill,
+                align=align,
             )
             if img is not None:
                 return img
-        return Paragraph(raw.replace("\n", "<br/>"), style)
+        return Paragraph(escape(raw).replace("\n", "<br/>"), style)
 
-    def add(text, style=style_body):
-        node = P(text, style=style)
+    def add(text, style=style_body, *, center: bool = False):
+        node = P(text, style=style, center=center)
         if node is not None:
             story.append(node)
 
+    def section_by_id(sec_id: str) -> Dict[str, str]:
+        for sec in (reading or {}).get("sections") or []:
+            if sec.get("id") == sec_id:
+                return sec
+        # fallback by title keywords
+        for sec in (reading or {}).get("sections") or []:
+            t = str(sec.get("title") or "")
+            if sec_id == "sanhe" and ("三合" in t or "San He" in t):
+                return sec
+            if sec_id == "sihua" and ("四化" in t or "Si Hua" in t):
+                return sec
+            if sec_id == "feixing" and ("飞星" in t or "Flying" in t):
+                return sec
+            if sec_id == "decadal" and ("大限" in t or "Decade" in t):
+                return sec
+            if sec_id == "career" and ("事业" in t or "Career" in t):
+                return sec
+            if sec_id == "wealth" and ("财运" in t or "Wealth" in t):
+                return sec
+            if sec_id == "love" and ("感情" in t or "Love" in t or "Relationship" in t):
+                return sec
+            if sec_id == "health" and ("健康" in t or "Health" in t):
+                return sec
+        return {}
+
+    def add_ai_chapter(page: dict):
+        if not isinstance(page, dict):
+            return
+        pro = page.get("professional") or []
+        if isinstance(pro, str):
+            pro = [pro]
+        if pro:
+            add("专业解读" if not en else "Professional reading", style_h2)
+            for para in pro:
+                if str(para).strip():
+                    add(str(para).strip())
+        plain = page.get("plain") or {}
+        if isinstance(plain, dict) and (plain.get("summary") or plain.get("points") or plain.get("detail")):
+            add("白话说明" if not en else "Plain language", style_h2)
+            if plain.get("summary"):
+                add(("一句话：" if not en else "Summary: ") + str(plain.get("summary")))
+            for i, pt in enumerate(plain.get("points") or [], 1):
+                add(f"{i}. {pt}")
+            if plain.get("detail"):
+                add(str(plain.get("detail")))
+        elif page.get("content"):
+            content = re.sub(r"[#*`]+", "", str(page.get("content") or ""))
+            if content and not ReportGenerator._looks_like_json_blob(content):
+                add(content)
+
+    # —— 封面 ——
     name = (chart or {}).get("name") or ("Native" if en else "命主")
-    add(cover_title, style_h1)
+    story.append(Spacer(1, 1.8 * cm))
+    if use_pil:
+        cover = _pdf_text_image(
+            cover_title,
+            font_path=cjk_path,
+            font_size=22,
+            max_width_pt=float(content_width),
+            fill="#0B1F33",
+            align="center",
+        )
+        if cover is not None:
+            story.append(cover)
+    else:
+        add(cover_title, style_h1, center=True)
+    story.append(Paragraph(escape("Sigma Fate Zi Wei Report"), style_cover_sub))
+    story.append(Spacer(1, 0.5 * cm))
+    add(f"{'姓名' if not en else 'Name'}：{name}", style_meta)
+    add(f"{'性别' if not en else 'Gender'}：{chart.get('gender') or '—'}", style_meta)
     add(
-        f"{name} · {chart.get('gender')} · {chart.get('solar_date')} "
+        f"{'出生' if not en else 'Birth'}：{chart.get('solar_date')} "
         f"{int(chart.get('birth_hour') or 0):02d}:{int(chart.get('birth_minute') or 0):02d}",
         style_meta,
     )
     add(
-        f"{(chart.get('lunar') or {}).get('label')} · {chart.get('ju_name')} · "
-        f"{'命宫' if not en else 'Life'} {chart.get('ming_ganzhi')} · "
-        f"{'身宫' if not en else 'Body'} {chart.get('shen_palace')}",
+        f"{(chart.get('lunar') or {}).get('label') or ''} · {chart.get('ju_name') or ''} · "
+        f"{'命宫' if not en else 'Life'} {chart.get('ming_ganzhi') or ''} · "
+        f"{'身宫' if not en else 'Body'} {chart.get('shen_palace') or ''}",
         style_meta,
     )
-    story.append(Spacer(1, 0.3 * cm))
+    story.append(Spacer(1, 0.6 * cm))
+    add("本报告仅供参考，请理性看待。" if not en else "For reference only — please read rationally.", style_meta)
 
-    add("命盘十二宫" if not en else "Twelve palaces", style_h1)
-    by_name = {p["name"]: p for p in (chart.get("palaces") or [])}
-    for pname in PALACE_NAMES:
-        p = by_name.get(pname) or {}
-        majors = "、".join(
-            s["name"] + (f"({s.get('brightness')})" if s.get("brightness") else "") + (s.get("sihua") or "")
-            for s in (p.get("majors") or [])
-        ) or "—"
-        minors = "、".join(
-            s["name"] + (s.get("sihua") or "") for s in (p.get("minors") or [])
-        ) or "—"
-        adjs = "、".join(s["name"] for s in (p.get("adjectives") or [])) or "—"
-        meta = []
-        if p.get("changsheng"):
-            meta.append(p["changsheng"])
-        if p.get("boshi"):
-            meta.append(p["boshi"])
-        meta_s = ("；" + "、".join(meta)) if meta else ""
-        add(
-            f"{pname}（{p.get('gan')}{p.get('zhi')}）主星：{majors}；辅星：{minors}；"
-            f"杂曜：{adjs}{meta_s}"
-        )
+    toc = [
+        ("1", "三合盘与格局" if not en else "San He chart & structure"),
+        ("2", "四化盘与先天喜忌" if not en else "Si Hua chart & mutagens"),
+        ("3", "飞星盘与宫际牵动" if not en else "Flying-star chart & links"),
+        ("4", "大限应期" if not en else "Decade timing"),
+        ("5", "事业总结" if not en else "Career summary"),
+        ("6", "财运总结" if not en else "Wealth summary"),
+        ("7", "感情总结" if not en else "Relationship summary"),
+        ("8", "健康总结" if not en else "Health summary"),
+    ]
+    story.append(Spacer(1, 0.4 * cm))
+    add("目录" if not en else "Contents", style_h1)
+    for num, title in toc:
+        add(f"{num}. {title}", style_toc)
+    story.append(PageBreak())
 
-    sihua = chart.get("sihua") or []
-    if sihua:
-        add("生年四化" if not en else "Natal mutagens", style_h2)
-        add("、".join(f"{x['star']}{x['type']}（{x['palace']}）" for x in sihua))
+    # —— 1 三合 ——
+    add(toc[0][1], style_h1)
+    add("高亮命宫三方四正，先看格局骨架。" if not en else "Highlight Life trine/opposite — structure first.")
+    img = render_ziwei_chart_image(chart, mode="sanhe", lang=lang, max_width_pt=content_width)
+    if img is not None:
+        story.append(Spacer(1, 0.2 * cm))
+        story.append(img)
+        story.append(Spacer(1, 0.3 * cm))
+    sec = section_by_id("sanhe")
+    if sec.get("body"):
+        add(sec["body"])
+    story.append(PageBreak())
 
-    add("基础解读" if not en else "Basic reading", style_h1)
-    for sec in (reading or {}).get("sections") or []:
-        add(sec.get("title") or "", style_h2)
-        add(sec.get("body") or "")
+    # —— 2 四化 ——
+    add(toc[1][1], style_h1)
+    add("高亮生年禄权科忌所在宫。" if not en else "Highlight natal mutagen palaces.")
+    img = render_ziwei_chart_image(chart, mode="sihua", lang=lang, max_width_pt=content_width)
+    if img is not None:
+        story.append(Spacer(1, 0.2 * cm))
+        story.append(img)
+        story.append(Spacer(1, 0.3 * cm))
+    sec = section_by_id("sihua")
+    if sec.get("body"):
+        add(sec["body"])
+    story.append(PageBreak())
 
-    if isinstance(ai_deep, dict) and any(ai_deep.values()):
-        add("AI 深批" if not en else "AI deep read", style_h1)
-        add(
-            "以下为 AI 深批，理性参考，勿作宿命断言。"
-            if not en
-            else "AI deep read for reflection — not destiny."
-        )
-        for key, fallback in (
-            ("pattern", "命格总论" if not en else "Natal Pattern"),
-            ("career", "事业财运" if not en else "Career & Wealth"),
-            ("life", "感情身心" if not en else "Love, Health & Mind"),
-        ):
-            sec = ai_deep.get(key)
-            if not sec:
-                continue
-            page = dict(sec) if isinstance(sec, dict) else {"content": str(sec)}
-            title = page.get("title") or fallback
-            add(title, style_h2)
-            pro = page.get("professional") or []
-            if isinstance(pro, str):
-                pro = [pro]
-            for para in pro:
-                if str(para).strip():
-                    add(str(para).strip())
-            plain = page.get("plain") or {}
-            if isinstance(plain, dict):
-                if plain.get("summary"):
-                    add(("一句话：" if not en else "Summary: ") + str(plain.get("summary")))
-                for i, pt in enumerate(plain.get("points") or [], 1):
-                    add(f"{i}. {pt}")
-                if plain.get("detail"):
-                    add(str(plain.get("detail")))
-            elif page.get("content"):
-                content = re.sub(r"[#*`]+", "", str(page.get("content") or ""))
-                if not ReportGenerator._looks_like_json_blob(content):
-                    add(content)
+    # —— 3 飞星 ——
+    add(toc[2][1], style_h1)
+    add("宫内路径见飞星视角；下文摘录重点宫飞出。" if not en else "Fly paths summarized below.")
+    img = render_ziwei_chart_image(chart, mode="feixing", lang=lang, max_width_pt=content_width)
+    if img is not None:
+        story.append(Spacer(1, 0.2 * cm))
+        story.append(img)
+        story.append(Spacer(1, 0.3 * cm))
+    sec = section_by_id("feixing")
+    if sec.get("body"):
+        add(sec["body"])
+    story.append(PageBreak())
 
+    # —— 4 大限 ——
+    add(toc[3][1], style_h1)
+    sec = section_by_id("decadal")
+    if sec.get("body"):
+        add(sec["body"])
+    story.append(PageBreak())
+
+    # —— 5–8 四域：基础规则 + AI（整合，避免重复另开 AI 章）——
+    domain_map = [
+        ("career", toc[4][1], ("career", "事业", "事业财运")),
+        ("wealth", toc[5][1], ("wealth", "财运", "career")),
+        ("love", toc[6][1], ("love", "感情", "life", "感情身心")),
+        ("health", toc[7][1], ("health", "健康", "life", "感情身心")),
+    ]
+    ai = ai_deep if isinstance(ai_deep, dict) else {}
+    for i, (sec_id, title, ai_aliases) in enumerate(domain_map):
+        add(title, style_h1)
+        add("规则要点" if not en else "Rule-based notes", style_h2)
+        sec = section_by_id(sec_id)
+        if sec.get("body"):
+            add(sec["body"])
+        # AI：按别名取章；wealth 若无独立章则跳过旧 career 全文避免与事业重复
+        ai_page = None
+        for a in ai_aliases:
+            if a in ai and ai.get(a) not in (None, "", {}, []):
+                # wealth 不要误用整份旧 career
+                if sec_id == "wealth" and a in ("career", "事业财运") and "wealth" not in ai:
+                    continue
+                # love/health 都可能指向旧 life：仍可用，但加注
+                ai_page = ai.get(a)
+                break
+        if ai_page:
+            add(
+                "AI 深批（与上列规则互补，勿作宿命断言）"
+                if not en
+                else "AI deep read (complements rules — not destiny)",
+                style_h2,
+            )
+            page = dict(ai_page) if isinstance(ai_page, dict) else {"content": str(ai_page)}
+            add_ai_chapter(page)
+        if i < len(domain_map) - 1:
+            story.append(PageBreak())
+
+    story.append(Spacer(1, 0.5 * cm))
     add(
         "仅供参考：紫微斗数本地规则 +（可选）AI 文笔，不构成人生决定依据。"
         if not en
         else "Reference only — not a life decision.",
-        style_body,
+        style_meta,
     )
     doc.build(story)
     buffer.seek(0)
