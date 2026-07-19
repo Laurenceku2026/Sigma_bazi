@@ -454,7 +454,7 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "ziwei_mode_sihua": "Si Hua",
         "ziwei_mode_sanhe": "San He",
         "ziwei_mode_feixing": "Flying Stars",
-        "ziwei_mode_hint": "Si Hua = year mutagens; San He = Life trine/opposite; Flying = palace-stem flies (text instead of arrows). Bottom-left age/year = that palace’s decade. See theory expander.",
+        "ziwei_mode_hint": "Si Hua = year mutagens; San He = Life trine/opposite; Flying = palace-stem fly paths (e.g. Lu→Wealth). Bottom-left age/year = that palace’s decade. See theory expander.",
         "ziwei_basic_hint": "Rule-based professional summary from Si Hua, San He, and Flying Stars (not AI).",
         "ziwei_ai_btn": "Generate AI deep read",
         "ziwei_ai_heading": "AI deep read",
