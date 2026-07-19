@@ -35,6 +35,7 @@ from utils import (
     generate_hehun_pdf_report,
     generate_pdf_report,
     hehun_pdf_filename,
+    is_bazi_chart_data,
     pdf_filename,
     render_bazi_chart,
 )
@@ -491,15 +492,24 @@ def restore_session_from_profile(profile: Dict[str, Any]) -> None:
     restored_bazi = None
     restored_report = None
     if reports:
-        latest = reports[0]
-        restored_bazi = latest.get("bazi_data")
-        restored_report = latest.get("report_content")
-        if not info and latest.get("birth_info"):
-            info = latest["birth_info"] if isinstance(latest["birth_info"], dict) else {}
-            st.session_state.birth_info = info
-            prefills_form_from_birth_info(info)
+        # 跳过紫微存档：其 bazi_data 仅为 {_kind: ziwei}，不能当八字盘恢复
+        for row in reports:
+            if not isinstance(row, dict):
+                continue
+            if not info and isinstance(row.get("birth_info"), dict):
+                info = row["birth_info"]
+                st.session_state.birth_info = info
+                prefills_form_from_birth_info(info)
+            bd = row.get("bazi_data")
+            if restored_bazi is None and is_bazi_chart_data(bd):
+                restored_bazi = bd
+            content = _maybe_report_dict(row.get("report_content"))
+            if restored_report is None and content and not _report_is_ziwei_ai(content):
+                restored_report = content
+            if restored_bazi is not None and restored_report is not None:
+                break
 
-    if restored_bazi:
+    if restored_bazi and is_bazi_chart_data(restored_bazi):
         st.session_state.bazi_data = restored_bazi
     elif info and info.get("birth_date") and info.get("name"):
         try:
@@ -519,7 +529,7 @@ def restore_session_from_profile(profile: Dict[str, Any]) -> None:
         except Exception:
             pass
 
-    if restored_report:
+    if restored_report and not _report_is_ziwei_ai(restored_report):
         restored_report = _maybe_report_dict(restored_report) or restored_report
         st.session_state.report_content = restored_report
         st.session_state.report_generated = True
@@ -1183,7 +1193,9 @@ def _peek_reusable_ai_report() -> Optional[Dict[str, Any]]:
         if not row_bi or _saved_birth_fingerprint(row_bi) != fp:
             continue
         bazi = _maybe_report_dict(row.get("bazi_data")) or row.get("bazi_data")
-        return {"report_content": content, "bazi_data": bazi if isinstance(bazi, dict) else None}
+        if not is_bazi_chart_data(bazi):
+            bazi = None
+        return {"report_content": content, "bazi_data": bazi}
     return None
 
 
@@ -1200,7 +1212,8 @@ def try_reuse_ai_deep_report() -> bool:
     st.session_state.report_generated = True
     st.session_state.report_source = "ai"
     bazi = found.get("bazi_data")
-    if isinstance(bazi, dict) and bazi:
+    # 绝不把紫微占位写入八字盘
+    if is_bazi_chart_data(bazi):
         st.session_state.bazi_data = bazi
     return True
 
@@ -2414,6 +2427,26 @@ def render_results_bundle(*, key_prefix: str = "results") -> None:
             st.rerun()
 
     st.markdown(f"## 📊 {t('tab_chart', lang)}")
+    # 若 session 被紫微存档污染，尝试用 birth_info 重排八字
+    if not is_bazi_chart_data(st.session_state.get("bazi_data")):
+        bi = st.session_state.get("birth_info") or {}
+        try:
+            bd = _parse_birth_date(bi.get("birth_date")) if bi.get("birth_date") else None
+            if bd and bi.get("name"):
+                run_bazi(
+                    {
+                        "name": bi.get("name", ""),
+                        "gender": bi.get("gender") or "男",
+                        "birth_date": bd,
+                        "birth_hour": int(bi.get("birth_hour") or 12),
+                        "birth_minute": int(bi.get("birth_minute") or 0),
+                        "region_id": bi.get("region_id") or "huabei",
+                        "use_true_solar": bool(bi.get("use_true_solar", True)),
+                        "birth_place": bi.get("birth_place") or "",
+                    }
+                )
+        except Exception:
+            pass
     render_bazi_chart(st.session_state.bazi_data, lang)
     render_ai_deep_cta(f"{key_prefix}_after_chart")
 
