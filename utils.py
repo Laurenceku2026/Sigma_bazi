@@ -101,13 +101,44 @@ def render_wuxing_bars(stats):
     return bars
 
 
-def _build_pillars(bazi_data):
+def is_bazi_chart_data(bazi_data) -> bool:
+    """是否为可用的八字排盘数据（排除紫微存档占位 {_kind: ziwei}）。"""
+    if not isinstance(bazi_data, dict) or not bazi_data:
+        return False
+    if bazi_data.get("_kind") == "ziwei":
+        return False
     pillars = bazi_data.get("pillars")
-    if pillars:
+    if isinstance(pillars, dict) and any(
+        isinstance(pillars.get(k), dict) and pillars[k].get("gan")
+        for k in ("年柱", "月柱", "日柱", "时柱")
+    ):
+        return True
+    raw = bazi_data.get("bazi")
+    if isinstance(raw, dict) and raw:
+        return True
+    return False
+
+
+def _build_pillars(bazi_data):
+    if not isinstance(bazi_data, dict):
+        return {}
+    pillars = bazi_data.get("pillars")
+    if isinstance(pillars, dict) and pillars:
         return pillars
     ten_gods = bazi_data.get("ten_gods") or {}
+    raw = bazi_data.get("bazi") or {}
+    if not isinstance(raw, dict):
+        return {}
     out = {}
-    for name, (gan, zhi) in bazi_data["bazi"].items():
+    for name, pair in raw.items():
+        if isinstance(pair, (list, tuple)) and len(pair) >= 2:
+            gan, zhi = pair[0], pair[1]
+        elif isinstance(pair, dict):
+            gan, zhi = pair.get("gan") or "", pair.get("zhi") or ""
+        else:
+            continue
+        if not gan and not zhi:
+            continue
         cangan = CANGAN.get(zhi, [])
         out[name] = {
             "gan": gan,
@@ -126,6 +157,8 @@ def _build_pillars(bazi_data):
 
 def render_colored_pillar_table(bazi_data, lang: str = "zh") -> str:
     """四柱彩色表格：十神/干支/藏干(本气中气余气)/纳音/神煞/空亡。"""
+    if not is_bazi_chart_data(bazi_data):
+        return ""
     order = ["年柱", "月柱", "日柱", "时柱"]
     labels = [chart_label(x, lang) for x in order]
     pillars = _build_pillars(bazi_data)
@@ -442,6 +475,14 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
     """彩色四柱 + 五行 + 大运/流年双表。"""
     from ui_texts import t
 
+    if not is_bazi_chart_data(bazi_data):
+        st.warning(
+            "当前没有可用的八字排盘数据，请先在「输入信息」重新排盘。"
+            if lang != "en"
+            else "No usable BaZi chart data. Please generate a chart on the Input tab."
+        )
+        return
+
     info = st.session_state.get("birth_info") or {}
     name = info.get("name", "")
     gender = bazi_data.get("gender", "")
@@ -481,7 +522,7 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
 
     st.markdown("---")
     st.markdown(f"### {t('wuxing', lang)}")
-    bars = render_wuxing_bars(bazi_data["wuxing_stats"])
+    bars = render_wuxing_bars(bazi_data.get("wuxing_stats") or {})
     cols = st.columns(5)
     for i, bar in enumerate(bars):
         with cols[i]:
