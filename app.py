@@ -34,9 +34,18 @@ from utils import (
     format_bazi_display,
     generate_hehun_pdf_report,
     generate_pdf_report,
+    generate_ziwei_pdf_report,
     hehun_pdf_filename,
     pdf_filename,
     render_bazi_chart,
+    ziwei_pdf_filename,
+)
+from ziwei_engine import (
+    build_ziwei_local_reading,
+    compute_ziwei_from_birth_info,
+    format_ziwei_theory_markdown,
+    render_ziwei_chart_html,
+    render_ziwei_reading_html,
 )
 
 st.set_page_config(
@@ -73,6 +82,10 @@ for key, default in [
     ("hehun_ai", None),
     ("hehun_watermarked", False),
     ("report_source", ""),  # local | ai
+    ("ziwei_chart", None),
+    ("ziwei_reading", None),
+    ("ziwei_ai", None),
+    ("ziwei_ai_watermarked", False),
 ]:
     if key == "user_id":
         if "user_id" not in st.session_state:
@@ -1854,6 +1867,163 @@ def apply_scroll_section_if_needed():
     )
 
 
+def render_ziwei_tab() -> None:
+    """紫微斗数：排盘/本地解读全员开放；AI 深批全员可看，金卡+无水印与 PDF。"""
+    st.markdown(f"### {t('ziwei_heading', lang)}")
+    st.caption(t("ziwei_intro", lang))
+    with st.expander(t("ziwei_theory_title", lang), expanded=False):
+        st.markdown(format_ziwei_theory_markdown(lang))
+
+    bi = st.session_state.get("birth_info")
+    bd = st.session_state.get("bazi_data")
+    if not bi or not bd:
+        st.info(t("ziwei_need_chart", lang))
+        return
+
+    st.caption(t("ziwei_reuse_caption", lang))
+    st.caption(
+        f"{bi.get('name') or '—'} · {bi.get('birth_date') or '—'} "
+        f"{bi.get('birth_hour', '—')}:{int(bi.get('birth_minute') or 0):02d} · "
+        f"{bi.get('gender') or bd.get('gender') or '—'}"
+    )
+
+    if st.button(t("ziwei_run", lang), type="primary", use_container_width=True, key="ziwei_run_btn"):
+        try:
+            chart = compute_ziwei_from_birth_info(bi, bd)
+            reading = build_ziwei_local_reading(chart, lang=lang)
+            st.session_state.ziwei_chart = chart
+            st.session_state.ziwei_reading = reading
+            st.session_state.ziwei_ai = None
+            st.session_state.ziwei_ai_watermarked = False
+            st.rerun()
+        except Exception as e:
+            st.error(f"{t('report_fail', lang)}{e}")
+            return
+
+    chart = st.session_state.get("ziwei_chart")
+    reading = st.session_state.get("ziwei_reading")
+    if not isinstance(chart, dict) or not chart.get("ok"):
+        return
+
+    # 语言切换时重刷本地解读文案
+    if isinstance(reading, dict) and reading.get("ok"):
+        # 若当前语言与上次不一致，按 chart 重算本地解读
+        pass
+    reading = build_ziwei_local_reading(chart, lang=lang)
+    st.session_state.ziwei_reading = reading
+
+    st.markdown(f"#### {t('ziwei_chart_heading', lang)}")
+    st.markdown(render_ziwei_chart_html(chart, lang=lang), unsafe_allow_html=True)
+    st.markdown(f"#### {t('ziwei_local_heading', lang)}")
+    st.markdown(render_ziwei_reading_html(reading, lang=lang), unsafe_allow_html=True)
+
+    st.markdown("---")
+    tier = st.session_state.subscription_tier or "free"
+    can_ai_clean = tier in ("gold", "diamond")
+
+    if can_ai_clean:
+        st.caption(t("ziwei_ai_clean_note", lang))
+    else:
+        st.caption(t("ziwei_ai_watermark_note", lang))
+
+    if st.button(t("ziwei_ai_btn", lang), type="primary", use_container_width=True, key="ziwei_ai_btn"):
+        if not is_registered():
+            st.warning(t("ziwei_ai_need_login", lang))
+            st.session_state.show_login = True
+        elif not report_gen:
+            st.warning(t("ai_engine_missing", lang))
+        else:
+            with st.spinner(t("generating", lang)):
+                try:
+                    # 免费预览额度 / 付费报告额度（银卡）；金钻不扣次
+                    if tier == "free" and supabase_client and st.session_state.get("auth_ok"):
+                        if not supabase_client.consume_free_preview_quota(st.session_state.user_id):
+                            st.warning(t("free_preview_exhausted", lang))
+                            st.session_state.selected_plan = "gold"
+                            render_membership_plans("ziwei_ai_quota")
+                            return
+                    elif tier == "silver" and supabase_client:
+                        if not supabase_client.consume_report_quota(st.session_state.user_id):
+                            st.warning(t("free_preview_exhausted", lang))
+                            return
+                    ai = report_gen.generate_ziwei_deep(
+                        chart=chart,
+                        local_reading=reading,
+                        lang=lang,
+                    )
+                    st.session_state.ziwei_ai = ai
+                    st.session_state.ziwei_ai_watermarked = not can_ai_clean
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"{t('ziwei_ai_fail', lang)}{e}")
+
+    ai = st.session_state.get("ziwei_ai")
+    if isinstance(ai, dict) and any(ai.values()):
+        st.markdown(f"### {t('ziwei_ai_heading', lang)}")
+        for key, label_key in (
+            ("pattern", "ziwei_ai_pattern"),
+            ("career", "ziwei_ai_career"),
+            ("life", "ziwei_ai_life"),
+        ):
+            sec = ai.get(key)
+            if not sec:
+                continue
+            title = t(label_key, lang)
+            if report_gen:
+                page = report_gen._normalize_hehun_chapter(sec, title, "")
+            else:
+                page = dict(sec) if isinstance(sec, dict) else {"content": str(sec)}
+                page["title"] = title
+            html = ReportGenerator.render_page_html(page, lang)
+            if st.session_state.get("ziwei_ai_watermarked"):
+                mark = f"SigmaFate/{st.session_state.get('user_email') or 'preview'}"
+                html = _wrap_protected_html(html, mark)
+            st.markdown(html, unsafe_allow_html=True)
+            st.markdown("")
+
+        if not can_ai_clean:
+            st.info(t("ziwei_ai_watermark_note", lang))
+            st.session_state.selected_plan = st.session_state.get("selected_plan") or "gold"
+            render_membership_plans("ziwei_ai_upgrade")
+
+    # 金卡/钻石：PDF（含本地；若有 AI 一并收录），无水印
+    if can_ai_clean:
+        st.markdown("---")
+        try:
+            ai_for_pdf = st.session_state.get("ziwei_ai")
+            if isinstance(ai_for_pdf, dict) and report_gen:
+                norm = {}
+                for key, label_key in (
+                    ("pattern", "ziwei_ai_pattern"),
+                    ("career", "ziwei_ai_career"),
+                    ("life", "ziwei_ai_life"),
+                ):
+                    sec = ai_for_pdf.get(key)
+                    if sec:
+                        norm[key] = report_gen._normalize_hehun_chapter(
+                            sec, t(label_key, lang), ""
+                        )
+                if norm:
+                    ai_for_pdf = norm
+            pdf_buf = generate_ziwei_pdf_report(
+                chart,
+                reading,
+                ai_deep=ai_for_pdf if isinstance(ai_for_pdf, dict) else None,
+                lang=lang,
+            )
+            st.caption(t("ziwei_pdf_caption", lang))
+            st.download_button(
+                t("ziwei_download_pdf", lang),
+                pdf_buf,
+                ziwei_pdf_filename(str(bi.get("name") or chart.get("name") or "")),
+                "application/pdf",
+                key="ziwei_dl_pdf",
+                use_container_width=True,
+            )
+        except Exception:
+            st.warning(t("pdf_warn", lang))
+
+
 def render_name_tab() -> None:
     """独立 Tab：姓名详批（本地；全员完整无水印；输入即算，无需按钮）。"""
     st.markdown(f"### {t('name_heading', lang)}")
@@ -2616,12 +2786,14 @@ _nav_keys = [
     "tab_liunian",
     "tab_hehun",
     "tab_name",
+    "tab_ziwei",
     "tab_survey",
 ]
 _nav_fallback = {
     "tab_name": "✍️ 姓名详批" if _is_zh() else "✍️ Name Analysis",
+    "tab_ziwei": "🌌 紫微斗数" if _is_zh() else "🌌 Zi Wei",
 }
-nav_cols = st.columns(7)
+nav_cols = st.columns(8)
 for i, key in enumerate(_nav_keys):
     lab = t(key, lang)
     if lab == key:
@@ -2638,7 +2810,7 @@ for i, key in enumerate(_nav_keys):
             st.session_state["_scroll_top"] = True
             st.session_state.pop("_scroll_section", None)
             st.rerun()
-        if i == 6:
+        if i == 7:
             st.caption(t("survey_gold_hint", lang))
 
 _tab = int(st.session_state.get("ui_tab", 0))
@@ -2753,12 +2925,16 @@ elif _tab == 3:
 elif _tab == 4:
     render_hehun_tab()
 
-# ========== Tab 5：姓名参考 ==========
+# ========== Tab 5：姓名详批 ==========
 elif _tab == 5:
     render_name_tab()
 
-# ========== Tab 6：试用问卷 ==========
+# ========== Tab 6：紫微斗数 ==========
 elif _tab == 6:
+    render_ziwei_tab()
+
+# ========== Tab 7：试用问卷 ==========
+elif _tab == 7:
     if not is_registered():
         st.info(t("survey_login_required", lang))
         if st.button(t("login_btn", lang), key="survey_tab_login", type="primary"):
