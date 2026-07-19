@@ -1933,8 +1933,9 @@ def render_ziwei_tab() -> None:
 <style>
   body {{ margin:0; padding:0; font-family: "Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
          background: transparent; color:#222; }}
+  table {{ font-variant-east-asian: proportional-width; }}
 </style></head><body>{chart_html}</body></html>""",
-        height=640,
+        height=820,
         scrolling=True,
     )
 
