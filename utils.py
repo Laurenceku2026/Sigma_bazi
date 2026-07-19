@@ -579,20 +579,23 @@ def _resolve_pdf_cjk_font() -> tuple:
     cache_ttf = cache_dir / "NotoSansSC-Regular.ttf"
     cache_otf = cache_dir / "NotoSansSC-Regular.otf"
 
-    # 优先项目内字体（Streamlit Cloud 可靠）
+    # 优先繁简覆盖更全的字体，避免「祿/鸞」等在简体子集缺字
     candidates = [
+        (here / "fonts" / "NotoSansSC-CJK-Fallback.ttc", 0),
+        (here / "fonts" / "WenQuanYiMicroHei.ttc", 0),
+        (Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"), 0),
+        (Path("/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"), None),
+        (Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"), 0),
+        (Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"), 0),
+        (Path("/usr/share/fonts/truetype/arphic/uming.ttc"), 0),
+        (Path(r"C:\Windows\Fonts\msyh.ttc"), 0),
+        (Path(r"C:\Windows\Fonts\simsun.ttc"), 0),
+        (Path(r"C:\Windows\Fonts\simhei.ttf"), None),
         (here / "fonts" / "NotoSansSC-Regular.ttf", None),
         (here / "fonts" / "NotoSansSC-Regular.otf", None),
         (here / "fonts" / "SimHei.ttf", None),
         (cache_ttf, None),
         (cache_otf, None),
-        (Path(r"C:\Windows\Fonts\simhei.ttf"), None),
-        (Path(r"C:\Windows\Fonts\msyh.ttc"), 0),
-        (Path(r"C:\Windows\Fonts\simsun.ttc"), 0),
-        (Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"), 0),
-        (Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"), 0),
-        (Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"), 0),
-        (Path("/usr/share/fonts/truetype/arphic/uming.ttc"), 0),
     ]
 
     def _try_register(path: Path, subfont_index):
@@ -692,17 +695,20 @@ def _resolve_pdf_cjk_font() -> tuple:
 
 
 def _cjk_font_file():
-    """返回可用于 PIL 的中文字体路径。"""
+    """返回可用于 PIL 的中文字体路径（优先繁简覆盖更全者）。"""
     from pathlib import Path
     here = Path(__file__).resolve().parent
     candidates = [
-        here / "fonts" / "NotoSansSC-Regular.ttf",
-        here / "fonts" / "NotoSansSC-Regular.otf",
-        Path(r"C:\Windows\Fonts\simhei.ttf"),
+        here / "fonts" / "NotoSansSC-CJK-Fallback.ttc",
+        here / "fonts" / "WenQuanYiMicroHei.ttc",
+        Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+        Path("/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
         Path(r"C:\Windows\Fonts\msyh.ttc"),
         Path(r"C:\Windows\Fonts\simsun.ttc"),
-        Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
-        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+        Path(r"C:\Windows\Fonts\simhei.ttf"),
+        here / "fonts" / "NotoSansSC-Regular.ttf",
+        here / "fonts" / "NotoSansSC-Regular.otf",
     ]
     for p in candidates:
         try:
@@ -713,10 +719,68 @@ def _cjk_font_file():
     return None
 
 
-# PDF 所用 Noto Sans SC 等简体字体缺字时的替补（如繁体「相克」→「相剋」）
+# 简体子集缺繁体字形时的替补（zh_hant / OpenCC 常见字；全量字体下通常不触发）
 _PDF_GLYPH_FALLBACKS = str.maketrans(
     {
-        "剋": "克",  # U+524B 不在 NotoSansSC；用「克」避免方框 X
+        "剋": "克",
+        "祿": "禄",
+        "權": "权",
+        "鸞": "鸾",
+        "鉞": "钺",
+        "銜": "衔",
+        "門": "门",
+        "馬": "马",
+        "龍": "龙",
+        "鳳": "凤",
+        "華": "华",
+        "蓋": "盖",
+        "貴": "贵",
+        "臺": "台",
+        "輔": "辅",
+        "誥": "诰",
+        "虛": "虚",
+        "傷": "伤",
+        "應": "应",
+        "歲": "岁",
+        "與": "与",
+        "專": "专",
+        "業": "业",
+        "總": "总",
+        "結": "结",
+        "規": "规",
+        "則": "则",
+        "點": "点",
+        "際": "际",
+        "牽": "牵",
+        "動": "动",
+        "當": "当",
+        "階": "阶",
+        "現": "现",
+        "場": "场",
+        "為": "为",
+        "這": "这",
+        "個": "个",
+        "還": "还",
+        "會": "会",
+        "說": "说",
+        "對": "对",
+        "開": "开",
+        "揚": "扬",
+        "穩": "稳",
+        "經": "经",
+        "營": "营",
+        "資": "资",
+        "讀": "读",
+        "盤": "盘",
+        "宮": "宫",
+        "陽": "阳",
+        "陰": "阴",
+        "殺": "杀",
+        "國": "国",
+        "語": "语",
+        "術": "术",
+        "數": "数",
+        "報": "报",
     }
 )
 _pdf_cmap_cache: dict = {}
@@ -746,25 +810,28 @@ def _pdf_font_has_char(font_path, ch: str) -> bool:
 def _pdf_fix_glyphs(text: str, font_path=None) -> str:
     """
     PDF 出字前替换字体缺失字形，避免「方框里带 X」。
-    优先静态替补表；其余缺字若存在兼容简体/常见异体再换，否则保留。
+    仅在字体确实缺该字时才用替补表；全量字体则保留繁体原字。
     """
     if not text:
         return text
-    s = str(text).translate(_PDF_GLYPH_FALLBACKS)
+    s = str(text)
     # 短语级：OpenCC 常把「相克」转成「相剋」
     s = s.replace("相剋", "相克")
     if not font_path:
-        return s
+        return s.translate(_PDF_GLYPH_FALLBACKS)
     out = []
     for ch in s:
+        if ch in ("\u200b", "\ufeff"):
+            continue
         if _pdf_font_has_char(font_path, ch):
             out.append(ch)
             continue
-        # 再试一次静态表（已处理）后的兜底：略过极少见控制符
-        if ch in ("\u200b", "\ufeff"):
-            continue
-        # 缺字且无替补：用「克」类已覆盖；其它保留原字（避免误伤）
-        out.append(ch)
+        # 字体缺字：查静态繁→简替补
+        alt = ch.translate(_PDF_GLYPH_FALLBACKS)
+        if alt != ch and _pdf_font_has_char(font_path, alt):
+            out.append(alt)
+        else:
+            out.append(alt if alt != ch else ch)
     return "".join(out)
 
 

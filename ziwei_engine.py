@@ -1624,7 +1624,7 @@ def generate_ziwei_pdf_report(
     ai_deep: Optional[dict] = None,
     lang: str = "zh",
 ):
-    """紫微专业 PDF：封面→目录→三合/四化/飞星盘与解读→大限→事业财运感情健康（基础+AI整合）。"""
+    """紫微专业 PDF：封面→目录→三合/四化/飞星盘图→完整基础解读→AI 深批。文字可选中。"""
     import io
     import re
     from xml.sax.saxutils import escape
@@ -1633,10 +1633,12 @@ def generate_ziwei_pdf_report(
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 
     from report_generator import ReportGenerator
-    from utils import _cjk_font_file, _pdf_text_image, _resolve_pdf_cjk_font
+    from utils import _cjk_font_file, _pdf_fix_glyphs, _resolve_pdf_cjk_font
 
     en = lang == "en"
 
@@ -1650,9 +1652,25 @@ def generate_ziwei_pdf_report(
                 return s
         return s
 
-    font_body, font_head = _resolve_pdf_cjk_font()
-    cjk_path = _cjk_font_file()
-    use_pil = cjk_path is not None
+    # 注册覆盖更全的 CJK 字体（独立名字，避免被简体子集抢先占用）
+    font_path = _cjk_font_file()
+    font_name = "ZWPDF"
+    try:
+        registered = set(pdfmetrics.getRegisteredFontNames())
+    except Exception:
+        registered = set()
+    if font_name not in registered and font_path is not None:
+        try:
+            p = str(font_path)
+            if p.lower().endswith(".ttc"):
+                pdfmetrics.registerFont(TTFont(font_name, p, subfontIndex=0))
+            else:
+                pdfmetrics.registerFont(TTFont(font_name, p))
+        except Exception:
+            font_name, _ = _resolve_pdf_cjk_font()
+    elif font_name not in registered:
+        font_name, _ = _resolve_pdf_cjk_font()
+
     buffer = io.BytesIO()
     cover_title = T("六西格玛命理 · 紫微斗数报告") if not en else "Sigma Fate Zi Wei Report"
     doc = SimpleDocTemplate(
@@ -1667,95 +1685,108 @@ def generate_ziwei_pdf_report(
     )
     styles = getSampleStyleSheet()
     style_cover_sub = ParagraphStyle(
-        "ZWCoverSub", parent=styles["Normal"], fontName="Helvetica", fontSize=11,
-        leading=16, alignment=TA_CENTER, spaceAfter=10, textColor="#455A64",
+        "ZWCoverSub",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=11,
+        leading=16,
+        alignment=TA_CENTER,
+        spaceAfter=10,
+        textColor="#455A64",
     )
     style_h1 = ParagraphStyle(
-        "ZW1", parent=styles["Normal"], fontName=font_head, fontSize=18, leading=26,
-        spaceBefore=6, spaceAfter=10, textColor="#0B1F33",
+        "ZW1",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=18,
+        leading=26,
+        spaceBefore=6,
+        spaceAfter=10,
+        textColor="#0B1F33",
+        alignment=TA_LEFT,
     )
+    style_h1c = ParagraphStyle("ZW1C", parent=style_h1, alignment=TA_CENTER, fontSize=22, leading=30)
     style_h2 = ParagraphStyle(
-        "ZW2", parent=styles["Normal"], fontName=font_head, fontSize=13, leading=20,
-        spaceBefore=12, spaceAfter=6, textColor="#1565C0",
+        "ZW2",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=13,
+        leading=20,
+        spaceBefore=12,
+        spaceAfter=6,
+        textColor="#1565C0",
     )
     style_body = ParagraphStyle(
-        "ZWB", parent=styles["Normal"], fontName=font_body, fontSize=10.5, leading=17,
-        alignment=TA_JUSTIFY, spaceAfter=8,
+        "ZWB",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=10.5,
+        leading=17,
+        alignment=TA_JUSTIFY,
+        spaceAfter=8,
     )
     style_meta = ParagraphStyle(
-        "ZWM", parent=styles["Normal"], fontName=font_body, fontSize=11, leading=18,
-        alignment=TA_CENTER, spaceAfter=6,
+        "ZWM",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=11,
+        leading=18,
+        alignment=TA_CENTER,
+        spaceAfter=6,
     )
     style_toc = ParagraphStyle(
-        "ZWToc", parent=styles["Normal"], fontName=font_body, fontSize=11, leading=18,
-        alignment=TA_LEFT, leftIndent=12, spaceAfter=4,
+        "ZWToc",
+        parent=styles["Normal"],
+        fontName=font_name,
+        fontSize=11,
+        leading=18,
+        alignment=TA_LEFT,
+        leftIndent=12,
+        spaceAfter=4,
     )
     content_width = A4[0] - 3.6 * cm
     story = []
 
     def _pdf_safe(text: str) -> str:
-        return (
+        raw = (
             str(text or "")
             .replace("⚠️", "")
             .replace("★", "*")
             .replace("●", "-")
+            .replace("→", "->")
+            .replace("⇒", "->")
+            .replace("｜", "|")
+            .replace("—", "-")
         )
+        return _pdf_fix_glyphs(raw, font_path)
 
-    def P(text: str, style=style_body, *, center: bool = False):
+    def add(text, style=style_body):
         raw = _pdf_safe(str(text or "").strip())
         if not en:
-            raw = T(raw)
+            raw = _pdf_safe(T(raw))
         if not raw:
-            return None
-        if use_pil:
-            size, fill, align = 11, "#222222", "center" if center or style == style_meta else "left"
-            if style == style_h1:
-                size, fill = 18, "#0B1F33"
-            elif style == style_h2:
-                size, fill = 13, "#1565C0"
-            elif style == style_meta:
-                size, fill, align = 12, "#333333", "center"
-            elif style == style_toc:
-                size = 11
-            img = _pdf_text_image(
-                raw,
-                font_path=cjk_path,
-                max_width_pt=content_width,
-                font_size=size,
-                fill=fill,
-                align=align,
-            )
-            if img is not None:
-                return img
-        return Paragraph(escape(raw).replace("\n", "<br/>"), style)
-
-    def add(text, style=style_body, *, center: bool = False):
-        node = P(text, style=style, center=center)
-        if node is not None:
-            story.append(node)
+            return
+        story.append(Paragraph(escape(raw).replace("\n", "<br/>"), style))
 
     def section_by_id(sec_id: str) -> Dict[str, str]:
         for sec in (reading or {}).get("sections") or []:
             if sec.get("id") == sec_id:
                 return sec
-        # fallback by title keywords
         for sec in (reading or {}).get("sections") or []:
             t = str(sec.get("title") or "")
-            if sec_id == "sanhe" and ("三合" in t or "San He" in t):
-                return sec
-            if sec_id == "sihua" and ("四化" in t or "Si Hua" in t):
-                return sec
-            if sec_id == "feixing" and ("飞星" in t or "Flying" in t):
-                return sec
-            if sec_id == "decadal" and ("大限" in t or "Decade" in t):
-                return sec
-            if sec_id == "career" and ("事业" in t or "Career" in t):
-                return sec
-            if sec_id == "wealth" and ("财运" in t or "Wealth" in t):
-                return sec
-            if sec_id == "love" and ("感情" in t or "Love" in t or "Relationship" in t):
-                return sec
-            if sec_id == "health" and ("健康" in t or "Health" in t):
+            mapping = {
+                "overview": ("命盘总览", "Chart overview"),
+                "sanhe": ("三合", "San He"),
+                "sihua": ("四化", "Si Hua"),
+                "feixing": ("飞星", "Flying"),
+                "decadal": ("大限", "Decade"),
+                "career": ("事业", "Career"),
+                "wealth": ("财运", "Wealth"),
+                "love": ("感情", "Love", "Relationship"),
+                "health": ("健康", "Health"),
+            }
+            keys = mapping.get(sec_id) or ()
+            if any(k in t for k in keys):
                 return sec
         return {}
 
@@ -1787,19 +1818,7 @@ def generate_ziwei_pdf_report(
     # —— 封面 ——
     name = (chart or {}).get("name") or ("Native" if en else "命主")
     story.append(Spacer(1, 1.8 * cm))
-    if use_pil:
-        cover = _pdf_text_image(
-            cover_title,
-            font_path=cjk_path,
-            font_size=22,
-            max_width_pt=float(content_width),
-            fill="#0B1F33",
-            align="center",
-        )
-        if cover is not None:
-            story.append(cover)
-    else:
-        add(cover_title, style_h1, center=True)
+    add(cover_title, style_h1c)
     story.append(Paragraph(escape("Sigma Fate Zi Wei Report"), style_cover_sub))
     story.append(Spacer(1, 0.5 * cm))
     add(f"{'姓名' if not en else 'Name'}：{name}", style_meta)
@@ -1819,14 +1838,9 @@ def generate_ziwei_pdf_report(
     add("本报告仅供参考，请理性看待。" if not en else "For reference only — please read rationally.", style_meta)
 
     toc = [
-        ("1", "三合盘与格局" if not en else "San He chart & structure"),
-        ("2", "四化盘与先天喜忌" if not en else "Si Hua chart & mutagens"),
-        ("3", "飞星盘与宫际牵动" if not en else "Flying-star chart & links"),
-        ("4", "大限应期" if not en else "Decade timing"),
-        ("5", "事业总结" if not en else "Career summary"),
-        ("6", "财运总结" if not en else "Wealth summary"),
-        ("7", "感情总结" if not en else "Relationship summary"),
-        ("8", "健康总结" if not en else "Health summary"),
+        ("1", "三合 / 四化 / 飞星盘图" if not en else "San He / Si Hua / Flying charts"),
+        ("2", "基础解读" if not en else "Basic reading"),
+        ("3", "AI 深批" if not en else "AI deep read"),
     ]
     story.append(Spacer(1, 0.4 * cm))
     add("目录" if not en else "Contents", style_h1)
@@ -1834,87 +1848,101 @@ def generate_ziwei_pdf_report(
         add(f"{num}. {title}", style_toc)
     story.append(PageBreak())
 
-    # —— 1 三合 ——
+    # —— 1 盘图 ——
     add(toc[0][1], style_h1)
-    add("高亮命宫三方四正，先看格局骨架。" if not en else "Highlight Life trine/opposite — structure first.")
-    img = render_ziwei_chart_image(chart, mode="sanhe", lang=lang, max_width_pt=content_width)
-    if img is not None:
-        story.append(Spacer(1, 0.2 * cm))
-        story.append(img)
-        story.append(Spacer(1, 0.3 * cm))
-    sec = section_by_id("sanhe")
-    if sec.get("body"):
-        add(sec["body"])
+    for mode, caption in (
+        ("sanhe", "三合盘：高亮命宫三方四正" if not en else "San He: Life trine/opposite"),
+        ("sihua", "四化盘：高亮生年禄权科忌" if not en else "Si Hua: natal mutagens"),
+        ("feixing", "飞星盘：宫干飞化路径" if not en else "Flying Stars: stem flies"),
+    ):
+        add(caption, style_h2)
+        img = render_ziwei_chart_image(chart, mode=mode, lang=lang, max_width_pt=content_width)
+        if img is not None:
+            story.append(Spacer(1, 0.15 * cm))
+            story.append(img)
+            story.append(Spacer(1, 0.25 * cm))
     story.append(PageBreak())
 
-    # —— 2 四化 ——
+    # —— 2 完整基础解读 ——
     add(toc[1][1], style_h1)
-    add("高亮生年禄权科忌所在宫。" if not en else "Highlight natal mutagen palaces.")
-    img = render_ziwei_chart_image(chart, mode="sihua", lang=lang, max_width_pt=content_width)
-    if img is not None:
-        story.append(Spacer(1, 0.2 * cm))
-        story.append(img)
-        story.append(Spacer(1, 0.3 * cm))
-    sec = section_by_id("sihua")
-    if sec.get("body"):
-        add(sec["body"])
-    story.append(PageBreak())
-
-    # —— 3 飞星 ——
-    add(toc[2][1], style_h1)
-    add("宫内路径见飞星视角；下文摘录重点宫飞出。" if not en else "Fly paths summarized below.")
-    img = render_ziwei_chart_image(chart, mode="feixing", lang=lang, max_width_pt=content_width)
-    if img is not None:
-        story.append(Spacer(1, 0.2 * cm))
-        story.append(img)
-        story.append(Spacer(1, 0.3 * cm))
-    sec = section_by_id("feixing")
-    if sec.get("body"):
-        add(sec["body"])
-    story.append(PageBreak())
-
-    # —— 4 大限 ——
-    add(toc[3][1], style_h1)
-    sec = section_by_id("decadal")
-    if sec.get("body"):
-        add(sec["body"])
-    story.append(PageBreak())
-
-    # —— 5–8 四域：基础规则 + AI（整合，避免重复另开 AI 章）——
-    domain_map = [
-        ("career", toc[4][1], ("career", "事业", "事业财运")),
-        ("wealth", toc[5][1], ("wealth", "财运", "career")),
-        ("love", toc[6][1], ("love", "感情", "life", "感情身心")),
-        ("health", toc[7][1], ("health", "健康", "life", "感情身心")),
-    ]
-    ai = ai_deep if isinstance(ai_deep, dict) else {}
-    for i, (sec_id, title, ai_aliases) in enumerate(domain_map):
-        add(title, style_h1)
-        add("规则要点" if not en else "Rule-based notes", style_h2)
+    add(
+        "读盘顺序：三合 → 四化 → 飞星 → 大限 → 事业 / 财运 / 感情 / 健康。"
+        if not en
+        else "Order: San He → Si Hua → Flying → Decades → Career/Wealth/Love/Health.",
+        style_body,
+    )
+    basic_order = (
+        "overview",
+        "sanhe",
+        "sihua",
+        "feixing",
+        "decadal",
+        "career",
+        "wealth",
+        "love",
+        "health",
+    )
+    # 若无 id，按 sections 原序输出
+    emitted = set()
+    for sec_id in basic_order:
         sec = section_by_id(sec_id)
+        if not sec:
+            continue
+        emitted.add(id(sec))
+        add(sec.get("title") or sec_id, style_h2)
         if sec.get("body"):
             add(sec["body"])
-        # AI：按别名取章；wealth 若无独立章则跳过旧 career 全文避免与事业重复
+    for sec in (reading or {}).get("sections") or []:
+        if id(sec) in emitted:
+            continue
+        add(sec.get("title") or "", style_h2)
+        if sec.get("body"):
+            add(sec["body"])
+    story.append(PageBreak())
+
+    # —— 3 AI 深批 ——
+    add(toc[2][1], style_h1)
+    ai = ai_deep if isinstance(ai_deep, dict) else {}
+    ai_chapters = [
+        ("career", "事业" if not en else "Career", ("career", "事业", "事业财运")),
+        ("wealth", "财运" if not en else "Wealth", ("wealth", "财运")),
+        ("love", "感情" if not en else "Relationships", ("love", "感情", "life", "感情身心")),
+        ("health", "健康" if not en else "Health", ("health", "健康", "life")),
+    ]
+    has_ai = False
+    for sec_id, title, aliases in ai_chapters:
         ai_page = None
-        for a in ai_aliases:
+        for a in aliases:
             if a in ai and ai.get(a) not in (None, "", {}, []):
-                # wealth 不要误用整份旧 career
-                if sec_id == "wealth" and a in ("career", "事业财运") and "wealth" not in ai:
+                if sec_id == "wealth" and a in ("career", "事业财运"):
                     continue
-                # love/health 都可能指向旧 life：仍可用，但加注
                 ai_page = ai.get(a)
                 break
-        if ai_page:
-            add(
-                "AI 深批（与上列规则互补，勿作宿命断言）"
-                if not en
-                else "AI deep read (complements rules — not destiny)",
-                style_h2,
-            )
-            page = dict(ai_page) if isinstance(ai_page, dict) else {"content": str(ai_page)}
-            add_ai_chapter(page)
-        if i < len(domain_map) - 1:
-            story.append(PageBreak())
+        if not ai_page:
+            continue
+        has_ai = True
+        add(title, style_h2)
+        page = dict(ai_page) if isinstance(ai_page, dict) else {"content": str(ai_page)}
+        add_ai_chapter(page)
+    if not has_ai:
+        # 兼容旧三章
+        for key, title in (
+            ("pattern", "命格总论" if not en else "Natal Pattern"),
+            ("career", "事业财运" if not en else "Career & Wealth"),
+            ("life", "感情身心" if not en else "Love & Health"),
+        ):
+            if key not in ai or not ai.get(key):
+                continue
+            has_ai = True
+            add(title, style_h2)
+            add_ai_chapter(dict(ai[key]) if isinstance(ai[key], dict) else {"content": str(ai[key])})
+    if not has_ai:
+        add(
+            "尚未生成 AI 深批；可在网页端生成后再次下载。"
+            if not en
+            else "AI deep read not generated yet.",
+            style_body,
+        )
 
     story.append(Spacer(1, 0.5 * cm))
     add(
@@ -1926,3 +1954,4 @@ def generate_ziwei_pdf_report(
     doc.build(story)
     buffer.seek(0)
     return buffer
+
