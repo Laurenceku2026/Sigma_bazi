@@ -504,7 +504,13 @@ def restore_session_from_profile(profile: Dict[str, Any]) -> None:
             if restored_bazi is None and is_bazi_chart_data(bd):
                 restored_bazi = bd
             content = _maybe_report_dict(row.get("report_content"))
-            if restored_report is None and content and not _report_is_ziwei_ai(content):
+            # 必须是带 page* 的八字报告；紫微四章不能当八字报告恢复
+            if (
+                restored_report is None
+                and content
+                and _report_has_bazi_pages(content)
+                and not _report_is_ziwei_ai(content)
+            ):
                 restored_report = content
             if restored_bazi is not None and restored_report is not None:
                 break
@@ -529,7 +535,7 @@ def restore_session_from_profile(profile: Dict[str, Any]) -> None:
         except Exception:
             pass
 
-    if restored_report and not _report_is_ziwei_ai(restored_report):
+    if restored_report and _report_has_bazi_pages(restored_report):
         restored_report = _maybe_report_dict(restored_report) or restored_report
         st.session_state.report_content = restored_report
         st.session_state.report_generated = True
@@ -538,6 +544,13 @@ def restore_session_from_profile(profile: Dict[str, Any]) -> None:
             st.session_state.report_source = src
         elif not st.session_state.get("report_source"):
             st.session_state.report_source = "local"
+    elif st.session_state.get("report_content") and not _report_has_bazi_pages(
+        st.session_state.get("report_content")
+    ):
+        # 清掉被紫微污染的 session 报告，避免页面空白
+        st.session_state.report_content = None
+        st.session_state.report_generated = False
+        st.session_state.report_source = ""
 
     st.session_state.app_user_synced = True
     st.session_state.show_login = False
@@ -1013,23 +1026,26 @@ def _report_kind_of(report: Any) -> str:
     return ""
 
 
+def _report_has_bazi_pages(report: Any) -> bool:
+    """八字报告必须有 page1… 篇章，否则页面会空白。"""
+    data = _maybe_report_dict(report) or {}
+    return any(isinstance(data.get(f"page{i}"), dict) for i in range(1, 12))
+
+
 def _report_is_ziwei_ai(report: Any) -> bool:
-    """识别紫微 AI 深批：显式 kind，或结构为四章且无八字 page*。"""
+    """识别紫微 AI 深批：显式 kind，或四章/旧三章结构且无八字 page*。"""
     if _report_kind_of(report) == "ziwei_ai_deep":
         return True
     data = _maybe_report_dict(report) or {}
-    if not data:
+    if not data or _report_has_bazi_pages(data):
         return False
-    has_zw = any(data.get(k) for k in ("career", "wealth", "love", "health"))
-    has_bazi_pages = any(data.get(f"page{i}") for i in range(1, 12))
-    if has_zw and not has_bazi_pages:
-        return True
-    return False
+    has_zw = any(data.get(k) for k in ("career", "wealth", "love", "health", "pattern", "life"))
+    return bool(has_zw)
 
 
 def _report_is_ai(report: Any) -> bool:
     """八字 AI 深批（排除紫微 AI，避免档案串用）。"""
-    if _report_is_ziwei_ai(report):
+    if _report_is_ziwei_ai(report) or not _report_has_bazi_pages(report):
         return False
     return _report_source_of(report) == "ai"
 
@@ -1172,8 +1188,11 @@ def _peek_reusable_ai_report() -> Optional[Dict[str, Any]]:
         return None
 
     session_report = _maybe_report_dict(st.session_state.get("report_content"))
-    if session_report and (
-        st.session_state.get("report_source") == "ai" or _report_is_ai(session_report)
+    if (
+        session_report
+        and _report_has_bazi_pages(session_report)
+        and not _report_is_ziwei_ai(session_report)
+        and (st.session_state.get("report_source") == "ai" or _report_is_ai(session_report))
     ):
         return {"report_content": session_report, "bazi_data": st.session_state.get("bazi_data")}
 
@@ -1518,8 +1537,19 @@ def go_liunian_tab():
 
 
 def _ensure_local_report() -> None:
-    """有命盘但无报告时，自动补本地报告（不耗 AI）。"""
-    if st.session_state.bazi_data is not None and not st.session_state.report_content:
+    """有命盘但无可用八字报告时，自动补本地报告（不耗 AI）。
+
+    若 session 被紫微四章污染（无 page*），先清空再生成，避免报告区空白。
+    """
+    if not is_bazi_chart_data(st.session_state.get("bazi_data")):
+        return
+    rc = st.session_state.get("report_content")
+    if rc and not _report_has_bazi_pages(rc):
+        st.session_state.report_content = None
+        st.session_state.report_generated = False
+        st.session_state.report_source = ""
+        rc = None
+    if not rc:
         generate_local_full_report()
 
 
@@ -2099,8 +2129,8 @@ def render_ziwei_tab() -> None:
          background: transparent; color:#222; }}
   table {{ font-variant-east-asian: proportional-width; }}
 </style></head><body>{chart_html}</body></html>""",
-        height=920,
-        scrolling=True,
+        height=720,
+        scrolling=False,
     )
 
     # 2) 盘面下方：基础解读
@@ -2121,14 +2151,20 @@ def render_ziwei_tab() -> None:
     else:
         st.caption(t("ziwei_ai_watermark_note", lang))
 
-    # 单按钮「AI 深批」：生辰未变且已有报告 → 直接载入；否则才调 DeepSeek
-    if st.button(t("ziwei_ai_btn", lang), type="primary", use_container_width=True, key="ziwei_ai_btn"):
+    # 有存档则直接展示，无需再点「AI 深批」
+    if not _ziwei_ai_chapters(st.session_state.get("ziwei_ai")):
+        try_reuse_ziwei_ai_deep(can_ai_clean=can_ai_clean)
+
+    ai = st.session_state.get("ziwei_ai")
+    has_ziwei_ai = isinstance(ai, dict) and bool(_ziwei_ai_chapters(ai))
+
+    # 尚无报告时才显示生成按钮；已有则直接在下方展示
+    if not has_ziwei_ai and st.button(
+        t("ziwei_ai_btn", lang), type="primary", use_container_width=True, key="ziwei_ai_btn"
+    ):
         if not is_registered():
             st.warning(t("ziwei_ai_need_login", lang))
             st.session_state.show_login = True
-        elif try_reuse_ziwei_ai_deep(can_ai_clean=can_ai_clean):
-            st.success(t("ziwei_ai_reuse_unchanged", lang))
-            st.rerun()
         elif not report_gen:
             st.warning(t("ai_engine_missing", lang))
         else:
