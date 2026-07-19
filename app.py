@@ -1004,7 +1004,17 @@ def _report_kind_of(report: Any) -> str:
 
 
 def _report_is_ziwei_ai(report: Any) -> bool:
-    return _report_kind_of(report) == "ziwei_ai_deep"
+    """识别紫微 AI 深批：显式 kind，或结构为四章且无八字 page*。"""
+    if _report_kind_of(report) == "ziwei_ai_deep":
+        return True
+    data = _maybe_report_dict(report) or {}
+    if not data:
+        return False
+    has_zw = any(data.get(k) for k in ("career", "wealth", "love", "health"))
+    has_bazi_pages = any(data.get(f"page{i}") for i in range(1, 12))
+    if has_zw and not has_bazi_pages:
+        return True
+    return False
 
 
 def _report_is_ai(report: Any) -> bool:
@@ -1046,31 +1056,45 @@ def _peek_reusable_ziwei_ai() -> Optional[Dict[str, Any]]:
     if fp is None:
         return None
 
+    # 短缓存，避免每次渲染都打 Supabase
+    cache = st.session_state.get("_ziwei_ai_peek_cache")
+    if isinstance(cache, dict) and cache.get("fp") == fp and "chapters" in cache:
+        return cache.get("chapters")
+
     session_ai = _ziwei_ai_chapters(st.session_state.get("ziwei_ai"))
     session_fp = st.session_state.get("ziwei_ai_fp")
     if session_ai and (session_fp == fp or session_fp is None):
         # 旧 session 可能尚未打 fp；当前盘未重排时直接复用
         st.session_state.ziwei_ai_fp = fp
+        st.session_state["_ziwei_ai_peek_cache"] = {"fp": fp, "chapters": session_ai}
         return session_ai
 
     uid = st.session_state.get("user_id")
     if not (supabase_client and st.session_state.get("auth_ok") and uid):
+        st.session_state["_ziwei_ai_peek_cache"] = {"fp": fp, "chapters": None}
         return None
     try:
-        reports = supabase_client.get_reports(uid, limit=15) or []
+        reports = supabase_client.get_reports(uid, limit=20) or []
     except Exception:
+        st.session_state["_ziwei_ai_peek_cache"] = {"fp": fp, "chapters": None}
         return None
 
     for row in reports:
         content = _maybe_report_dict(row.get("report_content"))
-        if not content or not _report_is_ziwei_ai(content):
+        bazi_meta = row.get("bazi_data") if isinstance(row.get("bazi_data"), dict) else {}
+        is_ziwei = _report_is_ziwei_ai(content) or (
+            isinstance(bazi_meta, dict) and bazi_meta.get("_kind") == "ziwei"
+        )
+        if not content or not is_ziwei:
             continue
         row_bi = row.get("birth_info") if isinstance(row.get("birth_info"), dict) else None
         if not row_bi or _saved_birth_fingerprint(row_bi) != fp:
             continue
         chapters = _ziwei_ai_chapters(content)
         if chapters:
+            st.session_state["_ziwei_ai_peek_cache"] = {"fp": fp, "chapters": chapters}
             return chapters
+    st.session_state["_ziwei_ai_peek_cache"] = {"fp": fp, "chapters": None}
     return None
 
 
@@ -2008,6 +2032,7 @@ def render_ziwei_tab() -> None:
             st.session_state.ziwei_ai = None
             st.session_state.ziwei_ai_fp = None
             st.session_state.ziwei_ai_watermarked = False
+            st.session_state.pop("_ziwei_ai_peek_cache", None)
             st.rerun()
         except Exception as e:
             st.error(f"{t('report_fail', lang)}{e}")
@@ -2027,14 +2052,20 @@ def render_ziwei_tab() -> None:
     reading = build_ziwei_basic_reading(chart, lang=lang)
     st.session_state.ziwei_reading = reading
 
-    # 1) 方格十二宫盘（四化 / 三合 / 飞星）
+    # 1) 方格十二宫盘（读盘顺序：三合 → 四化 → 飞星）
     st.markdown(f"#### {t('ziwei_chart_heading', lang)}")
     mode_labels = [
-        t("ziwei_mode_sihua", lang),
         t("ziwei_mode_sanhe", lang),
+        t("ziwei_mode_sihua", lang),
         t("ziwei_mode_feixing", lang),
     ]
-    mode_keys = ["sihua", "sanhe", "feixing"]
+    mode_keys = ["sanhe", "sihua", "feixing"]
+    # 迁移旧默认（曾把四化放首位）；读盘顺序以三合为先
+    if st.session_state.get("_ziwei_mode_order") != "sanhe_first":
+        st.session_state.ziwei_chart_mode = mode_labels[0]
+        st.session_state._ziwei_mode_order = "sanhe_first"
+    elif st.session_state.get("ziwei_chart_mode") not in mode_labels:
+        st.session_state.ziwei_chart_mode = mode_labels[0]
     picked = st.radio(
         t("ziwei_mode_label", lang),
         options=mode_labels,
@@ -2042,7 +2073,7 @@ def render_ziwei_tab() -> None:
         key="ziwei_chart_mode",
         label_visibility="collapsed",
     )
-    mode = mode_keys[mode_labels.index(picked)] if picked in mode_labels else "sihua"
+    mode = mode_keys[mode_labels.index(picked)] if picked in mode_labels else "sanhe"
     st.caption(t("ziwei_mode_hint", lang))
     # 用 components.html 渲染方格盘，避免 st.markdown 吃掉复杂 HTML/CSS
     import streamlit.components.v1 as components
@@ -2078,14 +2109,32 @@ def render_ziwei_tab() -> None:
         st.caption(t("ziwei_ai_watermark_note", lang))
 
     reusable_ziwei = _peek_reusable_ziwei_ai()
+    # 进入页面即载入存档，避免用户再点一次才发现要等 DeepSeek
+    if reusable_ziwei and not _ziwei_ai_chapters(st.session_state.get("ziwei_ai")):
+        try_reuse_ziwei_ai_deep(can_ai_clean=can_ai_clean)
+
     ziwei_ai_label = (
         t("ziwei_ai_btn_reuse", lang) if reusable_ziwei else t("ziwei_ai_btn", lang)
     )
-    if st.button(ziwei_ai_label, type="primary", use_container_width=True, key="ziwei_ai_btn"):
+    btn_cols = st.columns(2 if reusable_ziwei else 1)
+    with btn_cols[0]:
+        clicked_main = st.button(
+            ziwei_ai_label, type="primary", use_container_width=True, key="ziwei_ai_btn"
+        )
+    clicked_regen = False
+    if reusable_ziwei:
+        with btn_cols[1]:
+            clicked_regen = st.button(
+                t("ziwei_ai_btn_regen", lang),
+                use_container_width=True,
+                key="ziwei_ai_regen_btn",
+            )
+
+    if clicked_main or clicked_regen:
         if not is_registered():
             st.warning(t("ziwei_ai_need_login", lang))
             st.session_state.show_login = True
-        elif reusable_ziwei and try_reuse_ziwei_ai_deep(can_ai_clean=can_ai_clean):
+        elif clicked_main and reusable_ziwei and try_reuse_ziwei_ai_deep(can_ai_clean=can_ai_clean):
             st.success(t("ziwei_ai_reuse_unchanged", lang))
             st.rerun()
         elif not report_gen:
@@ -2115,6 +2164,7 @@ def render_ziwei_tab() -> None:
                         st.session_state.get("birth_info")
                     )
                     st.session_state.ziwei_ai_watermarked = not can_ai_clean
+                    st.session_state.pop("_ziwei_ai_peek_cache", None)
                     _save_ziwei_ai_if_logged_in(ai, chart)
                     st.rerun()
                 except Exception as e:

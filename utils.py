@@ -567,32 +567,75 @@ def render_bazi_chart(bazi_data, lang: str = "zh"):
 _pdf_registered_font_paths: dict = {}
 
 
-def _pdf_cjk_font_candidates():
-    """优先繁简覆盖更全的字体，避免「祿/鸞」等在简体子集缺字。"""
+def _pdf_font_cache_dir():
     import tempfile
     from pathlib import Path
 
+    d = Path(tempfile.gettempdir()) / "sigma_fate_fonts"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _materialize_ttf_for_pdf(path):
+    """
+    ReportLab 直接嵌 TTC 在部分环境会失败或落回 Helvetica（全文小方块）。
+    将 TTC 第 0 面导出为临时 TTF；已是 TTF/OTF 则原样返回。
+    """
+    from pathlib import Path
+
+    p = Path(path) if path else None
+    if not p or not p.is_file() or p.stat().st_size < 100_000:
+        return None
+    suf = p.suffix.lower()
+    if suf in (".ttf", ".otf"):
+        return p
+    if suf != ".ttc":
+        return None
+    cache = _pdf_font_cache_dir() / f"{p.stem}-face0.ttf"
+    try:
+        if cache.is_file() and cache.stat().st_size > 100_000:
+            return cache
+        from fontTools.ttLib import TTFont
+
+        font = TTFont(str(p), fontNumber=0)
+        tmp = Path(str(cache) + ".part")
+        font.save(str(tmp))
+        if tmp.stat().st_size > 100_000:
+            tmp.replace(cache)
+            return cache
+        tmp.unlink(missing_ok=True)
+    except Exception:
+        try:
+            Path(str(cache) + ".part").unlink(missing_ok=True)
+        except Exception:
+            pass
+    return None
+
+
+def _pdf_cjk_source_candidates():
+    """原始字体候选（TTC 会再物化为 TTF）。优先项目内全量字体。"""
+    from pathlib import Path
+
     here = Path(__file__).resolve().parent
-    cache_dir = Path(tempfile.gettempdir()) / "sigma_fate_fonts"
-    cache_ttf = cache_dir / "NotoSansSC-Regular.ttf"
-    cache_otf = cache_dir / "NotoSansSC-Regular.otf"
+    cache_dir = _pdf_font_cache_dir()
     return [
-        (here / "fonts" / "NotoSansSC-CJK-Fallback.ttc", 0),
-        (here / "fonts" / "WenQuanYiMicroHei.ttc", 0),
-        (Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"), 0),
-        (Path("/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"), None),
-        (Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"), 0),
-        (Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"), 0),
-        (Path("/usr/share/fonts/truetype/arphic/uming.ttc"), 0),
-        (Path(r"C:\Windows\Fonts\msyh.ttc"), 0),
-        (Path(r"C:\Windows\Fonts\simsun.ttc"), 0),
-        (Path(r"C:\Windows\Fonts\simhei.ttf"), None),
-        (here / "fonts" / "NotoSansSC-Regular.ttf", None),
-        (here / "fonts" / "NotoSansSC-Regular.otf", None),
-        (here / "fonts" / "SimHei.ttf", None),
-        (cache_ttf, None),
-        (cache_otf, None),
-    ], cache_dir, cache_ttf, cache_otf
+        here / "fonts" / "NotoSansSC-CJK-Fallback.ttc",
+        here / "fonts" / "WenQuanYiMicroHei.ttc",
+        Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+        Path("/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/truetype/arphic/uming.ttc"),
+        Path(r"C:\Windows\Fonts\msyh.ttc"),
+        Path(r"C:\Windows\Fonts\simsun.ttc"),
+        Path(r"C:\Windows\Fonts\simhei.ttf"),
+        # 简体子集放后面：缺「祿」等，需配合缺字替补
+        here / "fonts" / "NotoSansSC-Regular.ttf",
+        here / "fonts" / "NotoSansSC-Regular.otf",
+        here / "fonts" / "SimHei.ttf",
+        cache_dir / "NotoSansSC-Regular.ttf",
+        cache_dir / "NotoSansSC-Regular.otf",
+    ], cache_dir
 
 
 def _pdf_font_is_sc_subset(font_path) -> bool:
@@ -619,18 +662,41 @@ def _pdf_font_is_sc_subset(font_path) -> bool:
     return False
 
 
+def _pdf_registered_font_has_cjk(font_name: str) -> bool:
+    """确认已注册字体真能出汉字；Helvetica/失败注册会变成全文小方块。"""
+    if not font_name or font_name in (
+        "Helvetica",
+        "Times-Roman",
+        "Courier",
+        "STSong-Light",
+        "STHeiti-Light",
+    ):
+        return False
+    try:
+        from reportlab.pdfbase import pdfmetrics
+
+        face = pdfmetrics.getFont(font_name).face
+        cmap = getattr(face, "charToGlyph", None) or {}
+        # 中 / 禄 / 祿 任一即可
+        return any(cmap.get(cp) is not None for cp in (0x4E2D, 0x7984, 0x797F))
+    except Exception:
+        return False
+
+
 def register_pdf_cjk_font(font_name: str = "SFCJK") -> tuple:
     """
     注册 PDF 用 CJK 字体，返回 (font_name, font_path)。
-    font_path 与嵌入字体严格一致，供缺字替换使用。
+    始终优先嵌入 TTF（TTC 先导出），并校验汉字字形；绝不静默落回 Helvetica。
     """
     from pathlib import Path
 
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
 
-    candidates, cache_dir, cache_ttf, cache_otf = _pdf_cjk_font_candidates()
+    sources, cache_dir = _pdf_cjk_source_candidates()
     bold_name = f"{font_name}-Bold"
+    cache_ttf = cache_dir / "NotoSansSC-Regular.ttf"
+    cache_otf = cache_dir / "NotoSansSC-Regular.otf"
 
     try:
         registered = set(pdfmetrics.getRegisteredFontNames())
@@ -638,55 +704,55 @@ def register_pdf_cjk_font(font_name: str = "SFCJK") -> tuple:
         registered = set()
 
     prev_path = _pdf_registered_font_paths.get(font_name)
-    if font_name in registered:
-        if prev_path:
-            return font_name, Path(prev_path)
-        # 已注册但无路径记录：用优先全量字体做缺字检测，避免误用简体子集 cmap
-        guess = _cjk_font_file()
-        if guess is not None:
-            _pdf_registered_font_paths[font_name] = str(guess)
-            return font_name, Path(guess)
-        return font_name, None
+    if font_name in registered and prev_path and _pdf_registered_font_has_cjk(font_name):
+        return font_name, Path(prev_path)
 
-    def _try_register(path: Path, subfont_index):
-        if not path or not path.is_file() or path.stat().st_size < 100_000:
+    # 旧注册无效（如 Helvetica 占位）时换名重试
+    use_name = font_name
+    if font_name in registered and not _pdf_registered_font_has_cjk(font_name):
+        use_name = f"{font_name}X"
+        bold_name = f"{use_name}-Bold"
+
+    def _try_register_ttf(ttf_path: Path):
+        if not ttf_path or not ttf_path.is_file() or ttf_path.stat().st_size < 100_000:
             return None
         try:
             reg = set(pdfmetrics.getRegisteredFontNames())
         except Exception:
             reg = set()
-        # 名称已被其它路径占用时不要冒充
-        if font_name in reg:
+        if use_name in reg:
+            if _pdf_registered_font_has_cjk(use_name):
+                _pdf_registered_font_paths[font_name] = str(ttf_path)
+                _pdf_registered_font_paths[use_name] = str(ttf_path)
+                return use_name
             return None
         try:
-            if path.suffix.lower() == ".ttc":
-                idx = 0 if subfont_index is None else int(subfont_index)
-                pdfmetrics.registerFont(TTFont(font_name, str(path), subfontIndex=idx))
-                if bold_name not in reg:
-                    pdfmetrics.registerFont(TTFont(bold_name, str(path), subfontIndex=idx))
-            else:
-                pdfmetrics.registerFont(TTFont(font_name, str(path)))
-                if bold_name not in reg:
-                    pdfmetrics.registerFont(TTFont(bold_name, str(path)))
+            pdfmetrics.registerFont(TTFont(use_name, str(ttf_path)))
+            if bold_name not in reg:
+                pdfmetrics.registerFont(TTFont(bold_name, str(ttf_path)))
             try:
                 pdfmetrics.registerFontFamily(
-                    font_name,
-                    normal=font_name,
+                    use_name,
+                    normal=use_name,
                     bold=bold_name,
-                    italic=font_name,
+                    italic=use_name,
                     boldItalic=bold_name,
                 )
             except Exception:
                 pass
-            _pdf_registered_font_paths[font_name] = str(path)
-            return font_name
+            if not _pdf_registered_font_has_cjk(use_name):
+                return None
+            _pdf_registered_font_paths[font_name] = str(ttf_path)
+            _pdf_registered_font_paths[use_name] = str(ttf_path)
+            return use_name
         except Exception:
             return None
 
-    for path, idx in candidates:
-        got = _try_register(path, idx)
+    for src in sources:
+        ttf = _materialize_ttf_for_pdf(src)
+        got = _try_register_ttf(ttf) if ttf else None
         if got:
-            return got, path
+            return got, ttf
 
     urls = (
         (
@@ -705,7 +771,6 @@ def register_pdf_cjk_font(font_name: str = "SFCJK") -> tuple:
     try:
         import urllib.request
 
-        cache_dir.mkdir(parents=True, exist_ok=True)
         for url, dest in urls:
             tmp = Path(str(dest) + ".part")
             try:
@@ -718,7 +783,7 @@ def register_pdf_cjk_font(font_name: str = "SFCJK") -> tuple:
                         out.write(chunk)
                 if tmp.stat().st_size > 100_000:
                     tmp.replace(dest)
-                    got = _try_register(dest, None)
+                    got = _try_register_ttf(dest)
                     if got:
                         return got, dest
             except Exception:
@@ -730,14 +795,8 @@ def register_pdf_cjk_font(font_name: str = "SFCJK") -> tuple:
     except Exception:
         pass
 
-    try:
-        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-
-        pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
-        pdfmetrics.registerFont(UnicodeCIDFont("STHeiti-Light"))
-        return "STSong-Light", None
-    except Exception:
-        return "Helvetica", None
+    # 不再返回 Helvetica/CID：调用方应改走图片文字，避免全文小方块
+    return "", None
 
 
 def _resolve_pdf_cjk_font() -> tuple:
@@ -746,6 +805,8 @@ def _resolve_pdf_cjk_font() -> tuple:
     必须嵌入 TrueType 中文字体；CID（STSong）在 Chrome/手机常显示黑方块。
     """
     name, _path = register_pdf_cjk_font("SFCJK")
+    if not name:
+        return "Helvetica", "Helvetica"
     return name, name
 
 
