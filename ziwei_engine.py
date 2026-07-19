@@ -1,11 +1,12 @@
 """
 紫微斗数排盘（本地）
 
-安星规则对齐主流中州/常见软件口径（参考 iztro 同类算法）：
+安星规则对齐主流中州/常见软件口径（参考 iztro / 文墨天机同类算法）：
 - 寅宫为 0 起算
 - 顺数生月、逆数生时安命；顺数生时安身
 - 五虎遁起寅首 → 命宫干支 → 五行局
-- 局数除日数起紫微，对宫安天府，再布十四主星与常用辅星、四化
+- 局数除日数起紫微，对宫安天府，再布十四主星、六吉六煞、杂曜、四化
+- 另安长生十二神、博士十二神、小限年龄（盘面密度对齐文墨天机）
 """
 from __future__ import annotations
 
@@ -101,6 +102,53 @@ _BRIGHTNESS: Dict[str, List[str]] = {
 # 紫微系（逆）/ 天府系（顺）偏移表
 _ZIWEI_GROUP = ["紫微", "天机", "", "太阳", "武曲", "天同", "", "", "廉贞"]
 _TIANFU_GROUP = ["天府", "太阴", "贪狼", "巨门", "天相", "天梁", "七杀", "", "", "", "破军"]
+
+# 六吉 / 六煞（盘面着色）
+_SOFT_STARS = {
+    "左辅",
+    "右弼",
+    "文昌",
+    "文曲",
+    "天魁",
+    "天钺",
+    "禄存",
+    "天马",
+    "红鸾",
+    "天喜",
+}
+_TOUGH_STARS = {"擎羊", "陀罗", "火星", "铃星", "地空", "地劫"}
+
+_CHANGSHENG12 = [
+    "长生",
+    "沐浴",
+    "冠带",
+    "临官",
+    "帝旺",
+    "衰",
+    "病",
+    "死",
+    "墓",
+    "绝",
+    "胎",
+    "养",
+]
+_BOSHI12 = [
+    "博士",
+    "力士",
+    "青龙",
+    "小耗",
+    "将军",
+    "奏书",
+    "飞廉",
+    "喜神",
+    "病符",
+    "大耗",
+    "伏兵",
+    "官府",
+]
+
+# 长生起点（寅起索引）：水二/土五→申，木三→亥，金四→巳，火六→寅
+_CHANGSHENG_START = {2: 6, 3: 9, 4: 3, 5: 6, 6: 0}
 
 # 宫位主题（本地解读）
 _PALACE_HINTS = {
@@ -258,9 +306,14 @@ def compute_ziwei_chart(
                 "zhi": zhi,
                 "is_ming": yin_i == soul_index,
                 "is_shen": yin_i == body_index,
+                "is_laiyin": gan == year_gan,
                 "majors": [],
                 "minors": [],
+                "adjectives": [],
                 "sihua": [],
+                "changsheng": "",
+                "boshi": "",
+                "ages": [],
             }
         )
 
@@ -270,7 +323,11 @@ def compute_ziwei_chart(
         )
 
     def add_minor(yin_i: int, star: str) -> None:
-        palaces[yin_i]["minors"].append({"name": star, "type": "minor"})
+        kind = "soft" if star in _SOFT_STARS else ("tough" if star in _TOUGH_STARS else "minor")
+        palaces[yin_i]["minors"].append({"name": star, "type": kind})
+
+    def add_adj(yin_i: int, star: str) -> None:
+        palaces[_fix(yin_i)]["adjectives"].append({"name": star, "type": "adjective"})
 
     for i, s in enumerate(_ZIWEI_GROUP):
         if s:
@@ -370,6 +427,102 @@ def compute_ziwei_chart(
     add_minor(hong, "红鸾")
     add_minor(_fix(hong + 6), "天喜")
 
+    # —— 杂曜（文墨天机盘面密度）——
+    # 台辅 / 封诰（时系）
+    add_adj(_fix(_yin_idx_of_zhi("午") + time_index), "台辅")
+    add_adj(_fix(_yin_idx_of_zhi("寅") + time_index), "封诰")
+
+    # 月系：天刑、天姚、解神、阴煞、天月、天巫
+    m0 = month_for_palace - 1
+    add_adj(_fix(_yin_idx_of_zhi("酉") + m0), "天刑")
+    add_adj(_fix(_yin_idx_of_zhi("丑") + m0), "天姚")
+    yuejie_map = ["申", "戌", "子", "寅", "辰", "午"]
+    add_adj(_yin_idx_of_zhi(yuejie_map[m0 // 2]), "解神")
+    yinsha_map = ["寅", "子", "戌", "申", "午", "辰"]
+    add_adj(_yin_idx_of_zhi(yinsha_map[m0 % 6]), "阴煞")
+    tianyue_map = ["戌", "巳", "辰", "寅", "未", "卯", "亥", "未", "寅", "午", "戌", "寅"]
+    add_adj(_yin_idx_of_zhi(tianyue_map[m0]), "天月")
+    tianwu_map = ["巳", "申", "寅", "亥"]
+    add_adj(_yin_idx_of_zhi(tianwu_map[m0 % 4]), "天巫")
+
+    # 日系：三台八座、恩光天贵（初一=0）
+    day_i = max(0, ld - 1)
+    add_adj(_fix(zuo + day_i), "三台")
+    add_adj(_fix(you - day_i), "八座")
+    add_adj(_fix(chang + day_i - 1), "恩光")
+    add_adj(_fix(qu + day_i - 1), "天贵")
+
+    # 年系杂曜
+    yz = DIZHI.index(year_zhi) if year_zhi in DIZHI else 0
+    yg = TIANGAN.index(year_gan) if year_gan in TIANGAN else 0
+
+    # 华盖 / 咸池
+    huagai_xianchi = {
+        frozenset({"寅", "午", "戌"}): ("戌", "卯"),
+        frozenset({"申", "子", "辰"}): ("辰", "酉"),
+        frozenset({"巳", "酉", "丑"}): ("丑", "午"),
+        frozenset({"亥", "卯", "未"}): ("未", "子"),
+    }
+    for group, (hg, xc) in huagai_xianchi.items():
+        if year_zhi in group:
+            add_adj(_yin_idx_of_zhi(hg), "华盖")
+            add_adj(_yin_idx_of_zhi(xc), "咸池")
+            break
+
+    # 孤辰寡宿
+    guchen_guasu = {
+        frozenset({"寅", "卯", "辰"}): ("巳", "丑"),
+        frozenset({"巳", "午", "未"}): ("申", "辰"),
+        frozenset({"申", "酉", "戌"}): ("亥", "未"),
+        frozenset({"亥", "子", "丑"}): ("寅", "戌"),
+    }
+    for group, (gc, gs) in guchen_guasu.items():
+        if year_zhi in group:
+            add_adj(_yin_idx_of_zhi(gc), "孤辰")
+            add_adj(_yin_idx_of_zhi(gs), "寡宿")
+            break
+
+    # 天才天寿
+    add_adj(_fix(soul_index + yz), "天才")
+    add_adj(_fix(body_index + yz), "天寿")
+
+    # 破碎 / 蜚廉 / 龙池凤阁 / 天哭天虚
+    posui = ["巳", "丑", "酉"][yz % 3]
+    add_adj(_yin_idx_of_zhi(posui), "破碎")
+    feilian = ["申", "酉", "戌", "巳", "午", "未", "寅", "卯", "辰", "亥", "子", "丑"][yz]
+    add_adj(_yin_idx_of_zhi(feilian), "蜚廉")
+    add_adj(_fix(_yin_idx_of_zhi("辰") + yz), "龙池")
+    add_adj(_fix(_yin_idx_of_zhi("戌") - yz), "凤阁")
+    add_adj(_fix(_yin_idx_of_zhi("午") - yz), "天哭")
+    add_adj(_fix(_yin_idx_of_zhi("午") + yz), "天虚")
+
+    # 天官天福 / 天厨
+    tianguan = ["未", "辰", "巳", "寅", "卯", "酉", "亥", "酉", "戌", "午"][yg]
+    tianfu_adj = ["酉", "申", "子", "亥", "卯", "寅", "午", "巳", "午", "巳"][yg]
+    tianchu = ["巳", "午", "子", "巳", "午", "申", "寅", "午", "酉", "亥"][yg]
+    add_adj(_yin_idx_of_zhi(tianguan), "天官")
+    add_adj(_yin_idx_of_zhi(tianfu_adj), "天福")
+    add_adj(_yin_idx_of_zhi(tianchu), "天厨")
+
+    # 天德月德 / 天空 / 截路空亡 / 旬空 / 年解
+    add_adj(_fix(_yin_idx_of_zhi("酉") + yz), "天德")
+    add_adj(_fix(_yin_idx_of_zhi("巳") + yz), "月德")
+    add_adj(_fix(_yin_idx_of_zhi(year_zhi) + 1), "天空")
+    jielu = ["申", "午", "辰", "寅", "子"][yg % 5]
+    kongwang = ["酉", "未", "巳", "卯", "丑"][yg % 5]
+    add_adj(_yin_idx_of_zhi(jielu), "截路")
+    add_adj(_yin_idx_of_zhi(kongwang), "空亡")
+    xunkong = _fix(_yin_idx_of_zhi(year_zhi) + (9 - yg) + 1)
+    if (yz % 2) != (xunkong % 2):
+        xunkong = _fix(xunkong + 1)
+    add_adj(xunkong, "旬空")
+    nianjie = ["戌", "酉", "申", "未", "午", "巳", "辰", "卯", "寅", "丑", "子", "亥"][yz]
+    add_adj(_yin_idx_of_zhi(nianjie), "年解")
+
+    # 天伤天使（通行：奴仆/交友、疾厄）
+    add_adj(_fix(soul_index + 5), "天伤")
+    add_adj(_fix(soul_index + 7), "天使")
+
     # 四化挂到星上
     sihua_tuple = SIHUA_BY_YEAR_GAN.get(year_gan, ("", "", "", ""))
     sihua_list = []
@@ -407,6 +560,31 @@ def compute_ziwei_chart(
                 "end_age": start_age + 9,
             }
         )
+
+    # 长生十二神
+    cs_start = _CHANGSHENG_START.get(ju_num, 0)
+    for i, name_cs in enumerate(_CHANGSHENG12):
+        idx = _fix(cs_start + i) if forward else _fix(cs_start - i)
+        palaces[idx]["changsheng"] = name_cs
+
+    # 博士十二神（自禄存起）
+    for i, name_bs in enumerate(_BOSHI12):
+        idx = _fix(lu_i + i) if forward else _fix(lu_i - i)
+        palaces[idx]["boshi"] = name_bs
+
+    # 小限年龄：寅午戌辰起，申子辰戌起，巳酉丑未起，亥卯未丑起；男顺女逆
+    if year_zhi in ("寅", "午", "戌"):
+        age_start = _yin_idx_of_zhi("辰")
+    elif year_zhi in ("申", "子", "辰"):
+        age_start = _yin_idx_of_zhi("戌")
+    elif year_zhi in ("巳", "酉", "丑"):
+        age_start = _yin_idx_of_zhi("未")
+    else:
+        age_start = _yin_idx_of_zhi("丑")
+    male = gender_norm == "男"
+    for i in range(12):
+        idx = _fix(age_start + i) if male else _fix(age_start - i)
+        palaces[idx]["ages"] = [12 * j + i + 1 for j in range(8)]
 
     return {
         "ok": True,
@@ -500,14 +678,16 @@ def _star_line(p: Dict[str, Any]) -> str:
             bit += s["sihua"]
         majors.append(bit)
     minors = [s["name"] + (s.get("sihua") or "") for s in (p.get("minors") or [])]
-    return "、".join(majors + minors) if (majors or minors) else "（空宫）"
+    adjs = [s["name"] for s in (p.get("adjectives") or [])]
+    bits = majors + minors + adjs
+    return "、".join(bits) if bits else "（空宫）"
 
 
 def _star_palace_map(chart: Dict[str, Any]) -> Dict[str, str]:
     """星名 → 所在宫名。"""
     out: Dict[str, str] = {}
     for p in chart.get("palaces") or []:
-        for s in (p.get("majors") or []) + (p.get("minors") or []):
+        for s in (p.get("majors") or []) + (p.get("minors") or []) + (p.get("adjectives") or []):
             out[s["name"]] = p["name"]
     return out
 
@@ -822,7 +1002,7 @@ def render_ziwei_chart_html(
 
     by_zhi = {p.get("zhi"): p for p in (chart.get("palaces") or [])}
 
-    def star_html(s: dict, *, major: bool) -> str:
+    def star_html(s: dict, *, kind: str) -> str:
         name = esc(s.get("name") or "")
         sihua_tag = s.get("sihua") or ""
         mark = ""
@@ -833,23 +1013,37 @@ def render_ziwei_chart_html(
                 f"{esc(loc(short, short))}</sup>"
             )
         bright = s.get("brightness") or ""
-        bright_s = f"<span style='opacity:0.55;font-size:0.7em;'>/{esc(bright)}</span>" if bright and major else ""
-        weight = "700" if major else "500"
-        size = "0.95rem" if major else "0.78rem"
-        color = "#111" if major else "#455A64"
+        bright_s = (
+            f"<span style='opacity:0.55;font-size:0.68em;'>/{esc(bright)}</span>"
+            if bright and kind == "major"
+            else ""
+        )
+        if kind == "major":
+            weight, size, color = "700", "13px", "#111"
+        elif kind == "soft":
+            weight, size, color = "600", "11px", "#1B5E20"
+        elif kind == "tough":
+            weight, size, color = "600", "11px", "#B71C1C"
+        elif kind == "adjective":
+            weight, size, color = "400", "10px", "#546E7A"
+        else:
+            weight, size, color = "500", "11px", "#37474F"
         return (
-            f"<span style='display:inline-block;margin:0 4px 2px 0;font-weight:{weight};"
-            f"font-size:{size};color:{color};'>{name}{bright_s}{mark}</span>"
+            f"<span style='display:inline-block;margin:0 3px 1px 0;font-weight:{weight};"
+            f"font-size:{size};color:{color};line-height:1.25;'>{name}{bright_s}{mark}</span>"
         )
 
     def palace_cell(zhi: str) -> str:
         p = by_zhi.get(zhi) or {}
         pname = p.get("name") or zhi
         gan = p.get("gan") or ""
-        majors = "".join(star_html(s, major=True) for s in (p.get("majors") or []))
-        minors = "".join(star_html(s, major=False) for s in (p.get("minors") or []))
-        if not majors and not minors:
-            majors = f"<span style='opacity:0.45;'>{esc(loc('空宫', 'empty'))}</span>"
+        majors = "".join(star_html(s, kind="major") for s in (p.get("majors") or []))
+        minors = "".join(
+            star_html(s, kind=s.get("type") or "minor") for s in (p.get("minors") or [])
+        )
+        adjs = "".join(star_html(s, kind="adjective") for s in (p.get("adjectives") or []))
+        if not majors and not minors and not adjs:
+            majors = f"<span style='opacity:0.45;font-size:12px;'>{esc(loc('空宫', 'empty'))}</span>"
 
         # 高亮
         hl = False
@@ -887,26 +1081,44 @@ def render_ziwei_chart_html(
             tags.append(loc("命", "命"))
         if p.get("is_shen"):
             tags.append(loc("身", "身"))
+        if p.get("is_laiyin"):
+            tags.append(loc("来因", "来因"))
         tag_s = ("·".join(tags)) if tags else ""
 
-        bg = "#FFF8E1" if hl else "#FAFAFA"
-        border = "#F9A825" if hl else "#B0BEC5"
-        name_color = "#C62828" if p.get("is_ming") else "#1565C0"
+        meta_bits = []
+        if p.get("changsheng"):
+            meta_bits.append(esc(p["changsheng"]))
+        if p.get("boshi"):
+            meta_bits.append(esc(p["boshi"]))
+        meta_s = " · ".join(meta_bits)
+        ages = p.get("ages") or []
+        ages_s = " ".join(str(a) for a in ages[:6])
+        if len(ages) > 6:
+            ages_s += "…"
 
-        # 用 table 单元格内容（Streamlit markdown 对 CSS grid 支持差）
+        bg = "#FFF8E1" if hl else "#FAFAFA"
+        border = "#F9A825" if hl else "#90A4AE"
+        name_color = "#C62828" if (p.get("is_ming") or p.get("is_shen")) else "#0D47A1"
+
         return (
             f"<td style='width:25%;border:1.5px solid {border};background:{bg};"
-            f"padding:6px 7px;vertical-align:top;height:130px;'>"
-            f"<div style='line-height:1.35;min-height:72px;'>{majors}"
-            f"<div style='margin-top:2px;'>{minors}</div>"
-            f"{('<div style=\"margin-top:4px;font-size:11px;color:#6D4C41;\">' + esc(accent) + '</div>') if accent else ''}"
+            f"padding:4px 5px 3px;vertical-align:top;height:168px;'>"
+            f"<div style='line-height:1.2;min-height:88px;'>"
+            f"{majors}"
+            f"{('<div style=\"margin-top:1px;\">' + minors + '</div>') if minors else ''}"
+            f"{('<div style=\"margin-top:1px;\">' + adjs + '</div>') if adjs else ''}"
+            f"{('<div style=\"margin-top:3px;font-size:10px;color:#6D4C41;line-height:1.25;\">' + esc(accent) + '</div>') if accent else ''}"
             f"</div>"
-            f"<div style='margin-top:8px;font-size:12px;'>"
-            f"<span style='float:left;opacity:0.75;'>{esc(age)}</span>"
+            f"<div style='margin-top:4px;font-size:10px;color:#78909C;line-height:1.2;'>"
+            f"{meta_s}"
+            f"{('<br/>' + esc(ages_s)) if ages_s else ''}"
+            f"</div>"
+            f"<div style='margin-top:4px;font-size:12px;line-height:1.25;'>"
+            f"<span style='float:left;opacity:0.8;font-size:11px;'>{esc(age)}</span>"
             f"<span style='float:right;text-align:right;'>"
-            f"<b style='color:{name_color};'>{esc(pname)}"
+            f"<b style='color:{name_color};font-size:13px;'>{esc(pname)}"
             f"{('·' + esc(tag_s)) if tag_s else ''}</b><br/>"
-            f"<span style='opacity:0.8;'>{esc(gan)}{esc(zhi)}</span>"
+            f"<span style='opacity:0.85;font-size:11px;'>{esc(gan)}{esc(zhi)}</span>"
             f"</span><div style='clear:both;'></div></div>"
             f"</td>"
         )
@@ -973,14 +1185,24 @@ def render_ziwei_chart_html(
     dec = chart.get("decadals") or []
     if dec:
         bits = [
-            f"{d.get('start_age')}~{d.get('end_age')} {d.get('palace')}({d.get('zhi')})"
-            for d in dec[:6]
+            f"{d.get('start_age')}~{d.get('end_age')}{d.get('palace')}({d.get('zhi')})"
+            for d in dec
         ]
         blocks.append(
-            "<p style='font-size:12px;margin:8px 0 2px;opacity:0.85;'>"
-            + esc(loc("大限：", "Decades: ") + " · ".join(bits) + " …")
+            "<p style='font-size:11px;margin:8px 0 2px;opacity:0.85;line-height:1.45;'>"
+            + esc(loc("大限：", "Decades: ") + " · ".join(bits))
             + "</p>"
         )
+    blocks.append(
+        "<p style='font-size:10px;margin:2px 0 0;opacity:0.7;'>"
+        + esc(
+            loc(
+                "盘面：主星加粗 · 吉曜绿 · 煞曜红 · 杂曜灰 · 左下大限年龄 · 右下宫名干支 · 小字为长生/博士与小限",
+                "Majors bold · soft green · tough red · adj gray · decade ages bottom-left",
+            )
+        )
+        + "</p>"
+    )
     return "\n".join(blocks)
 
 
@@ -1045,7 +1267,17 @@ def chart_summary_for_ai(chart: Dict[str, Any]) -> str:
     by_name = {p["name"]: p for p in chart.get("palaces") or []}
     for pname in PALACE_NAMES:
         p = by_name.get(pname) or {}
-        lines.append(f"- {pname}({p.get('gan')}{p.get('zhi')}): {_star_line(p)}")
+        extra = []
+        if p.get("changsheng"):
+            extra.append(p["changsheng"])
+        if p.get("boshi"):
+            extra.append(p["boshi"])
+        if p.get("is_laiyin"):
+            extra.append("来因")
+        if p.get("is_shen"):
+            extra.append("身")
+        suf = (" |" + " ".join(extra)) if extra else ""
+        lines.append(f"- {pname}({p.get('gan')}{p.get('zhi')}): {_star_line(p)}{suf}")
     return "\n".join(lines)
 
 
@@ -1180,7 +1412,17 @@ def generate_ziwei_pdf_report(
         minors = "、".join(
             s["name"] + (s.get("sihua") or "") for s in (p.get("minors") or [])
         ) or "—"
-        add(f"{pname}（{p.get('gan')}{p.get('zhi')}）主星：{majors}；辅星：{minors}")
+        adjs = "、".join(s["name"] for s in (p.get("adjectives") or [])) or "—"
+        meta = []
+        if p.get("changsheng"):
+            meta.append(p["changsheng"])
+        if p.get("boshi"):
+            meta.append(p["boshi"])
+        meta_s = ("；" + "、".join(meta)) if meta else ""
+        add(
+            f"{pname}（{p.get('gan')}{p.get('zhi')}）主星：{majors}；辅星：{minors}；"
+            f"杂曜：{adjs}{meta_s}"
+        )
 
     sihua = chart.get("sihua") or []
     if sihua:
