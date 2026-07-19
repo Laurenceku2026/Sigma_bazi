@@ -1959,3 +1959,192 @@ def generate_hehun_pdf_report(
     doc.build(story)
     buffer.seek(0)
     return buffer
+
+
+def ziwei_pdf_filename(name: str = "") -> str:
+    """紫微 PDF 文件名。"""
+    import re
+    from datetime import datetime
+
+    raw = str(name or "user").strip()
+    safe = re.sub(r'[\\/:*?"<>|\s]+', "_", raw).strip("_") or "user"
+    return f"ZiWei_{safe[:40]}_{datetime.now():%Y%m%d}.pdf"
+
+
+def generate_ziwei_pdf_report(
+    chart: dict,
+    reading: dict,
+    *,
+    ai_deep: Optional[dict] = None,
+    lang: str = "zh",
+):
+    """紫微斗数 PDF：封面 + 命盘摘要 + 本地解读 +（可选）AI 深批。"""
+    import io
+    import re
+    from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+    from report_generator import ReportGenerator
+    from ziwei_engine import PALACE_NAMES
+
+    en = lang == "en"
+
+    def T(s: str) -> str:
+        if lang == "zh_hant":
+            try:
+                from zh_convert import to_traditional
+
+                return to_traditional(s)
+            except Exception:
+                return s
+        return s
+
+    font_body, font_head = _resolve_pdf_cjk_font()
+    cjk_path = _cjk_font_file()
+    use_pil = cjk_path is not None
+    buffer = io.BytesIO()
+    cover_title = "Sigma Fate Zi Wei Report" if en else T("六西格玛命理 · 紫微斗数报告")
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=1.8 * cm,
+        rightMargin=1.8 * cm,
+        topMargin=1.8 * cm,
+        bottomMargin=1.8 * cm,
+        title=cover_title,
+        author=str((chart or {}).get("name") or "user"),
+    )
+    styles = getSampleStyleSheet()
+    style_h1 = ParagraphStyle(
+        "ZW1", parent=styles["Normal"], fontName=font_head, fontSize=18, leading=26,
+        spaceBefore=6, spaceAfter=10, textColor="#0B1F33",
+    )
+    style_h2 = ParagraphStyle(
+        "ZW2", parent=styles["Normal"], fontName=font_head, fontSize=13, leading=20,
+        spaceBefore=12, spaceAfter=6, textColor="#1565C0",
+    )
+    style_body = ParagraphStyle(
+        "ZWB", parent=styles["Normal"], fontName=font_body, fontSize=10.5, leading=17,
+        alignment=TA_JUSTIFY, spaceAfter=8,
+    )
+    style_meta = ParagraphStyle(
+        "ZWM", parent=styles["Normal"], fontName=font_body, fontSize=11, leading=18,
+        alignment=TA_CENTER, spaceAfter=6,
+    )
+    content_width = A4[0] - 3.6 * cm
+    story = []
+
+    def _pdf_safe(text: str) -> str:
+        return str(text or "").replace("⚠️", "").replace("★", "*")
+
+    def P(text: str, style=style_body):
+        raw = _pdf_safe(str(text or "").strip())
+        if not en:
+            raw = T(raw)
+        if not raw:
+            return None
+        if use_pil:
+            img = _pdf_text_image(
+                raw,
+                font_path=cjk_path,
+                max_width_pt=content_width,
+                font_size=11 if style == style_body else (16 if style == style_h1 else 13),
+                fill="#0B1F33" if style != style_body else "#222222",
+                align="center" if style == style_meta else "left",
+            )
+            if img is not None:
+                return img
+        return Paragraph(raw.replace("\n", "<br/>"), style)
+
+    def add(text, style=style_body):
+        node = P(text, style=style)
+        if node is not None:
+            story.append(node)
+
+    name = (chart or {}).get("name") or ("Native" if en else "命主")
+    add(cover_title, style_h1)
+    add(
+        f"{name} · {chart.get('gender')} · {chart.get('solar_date')} "
+        f"{int(chart.get('birth_hour') or 0):02d}:{int(chart.get('birth_minute') or 0):02d}",
+        style_meta,
+    )
+    add(
+        f"{(chart.get('lunar') or {}).get('label')} · {chart.get('ju_name')} · "
+        f"{'命宫' if not en else 'Life'} {chart.get('ming_ganzhi')} · "
+        f"{'身宫' if not en else 'Body'} {chart.get('shen_palace')}",
+        style_meta,
+    )
+    story.append(Spacer(1, 0.3 * cm))
+
+    add("命盘十二宫" if not en else "Twelve palaces", style_h1)
+    by_name = {p["name"]: p for p in (chart.get("palaces") or [])}
+    for pname in PALACE_NAMES:
+        p = by_name.get(pname) or {}
+        majors = "、".join(
+            s["name"] + (f"({s.get('brightness')})" if s.get("brightness") else "") + (s.get("sihua") or "")
+            for s in (p.get("majors") or [])
+        ) or "—"
+        minors = "、".join(
+            s["name"] + (s.get("sihua") or "") for s in (p.get("minors") or [])
+        ) or "—"
+        add(f"{pname}（{p.get('gan')}{p.get('zhi')}）主星：{majors}；辅星：{minors}")
+
+    sihua = chart.get("sihua") or []
+    if sihua:
+        add("生年四化" if not en else "Natal mutagens", style_h2)
+        add("、".join(f"{x['star']}{x['type']}（{x['palace']}）" for x in sihua))
+
+    add("本地解读" if not en else "Local reading", style_h1)
+    for sec in (reading or {}).get("sections") or []:
+        add(sec.get("title") or "", style_h2)
+        add(sec.get("body") or "")
+
+    if isinstance(ai_deep, dict) and any(ai_deep.values()):
+        add("AI 深批" if not en else "AI deep read", style_h1)
+        add(
+            "以下为 AI 深批，理性参考，勿作宿命断言。"
+            if not en
+            else "AI deep read for reflection — not destiny."
+        )
+        for key, fallback in (
+            ("pattern", "命格总论" if not en else "Natal Pattern"),
+            ("career", "事业财运" if not en else "Career & Wealth"),
+            ("life", "感情身心" if not en else "Love, Health & Mind"),
+        ):
+            sec = ai_deep.get(key)
+            if not sec:
+                continue
+            page = dict(sec) if isinstance(sec, dict) else {"content": str(sec)}
+            title = page.get("title") or fallback
+            add(title, style_h2)
+            pro = page.get("professional") or []
+            if isinstance(pro, str):
+                pro = [pro]
+            for para in pro:
+                if str(para).strip():
+                    add(str(para).strip())
+            plain = page.get("plain") or {}
+            if isinstance(plain, dict):
+                if plain.get("summary"):
+                    add(("一句话：" if not en else "Summary: ") + str(plain.get("summary")))
+                for i, pt in enumerate(plain.get("points") or [], 1):
+                    add(f"{i}. {pt}")
+                if plain.get("detail"):
+                    add(str(plain.get("detail")))
+            elif page.get("content"):
+                content = re.sub(r"[#*`]+", "", str(page.get("content") or ""))
+                if not ReportGenerator._looks_like_json_blob(content):
+                    add(content)
+
+    add(
+        "仅供参考：紫微斗数本地规则 +（可选）AI 文笔，不构成人生决定依据。"
+        if not en
+        else "Reference only — not a life decision.",
+        style_body,
+    )
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
