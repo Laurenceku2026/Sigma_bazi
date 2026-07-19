@@ -85,6 +85,7 @@ for key, default in [
     ("ziwei_chart", None),
     ("ziwei_reading", None),
     ("ziwei_ai", None),
+    ("ziwei_ai_fp", None),
     ("ziwei_ai_watermarked", False),
 ]:
     if key == "user_id":
@@ -992,7 +993,24 @@ def _report_source_of(report: Any) -> str:
     return ""
 
 
+def _report_kind_of(report: Any) -> str:
+    data = _maybe_report_dict(report)
+    if not data:
+        return ""
+    meta = data.get("_meta")
+    if isinstance(meta, dict):
+        return str(meta.get("kind") or "").strip().lower()
+    return ""
+
+
+def _report_is_ziwei_ai(report: Any) -> bool:
+    return _report_kind_of(report) == "ziwei_ai_deep"
+
+
 def _report_is_ai(report: Any) -> bool:
+    """八字 AI 深批（排除紫微 AI，避免档案串用）。"""
+    if _report_is_ziwei_ai(report):
+        return False
     return _report_source_of(report) == "ai"
 
 
@@ -1003,6 +1021,100 @@ def _stamp_report_source(report: Dict[str, Any], source: str) -> Dict[str, Any]:
     meta.setdefault("generated_at", datetime.utcnow().isoformat() + "Z")
     out["_meta"] = meta
     return out
+
+
+def _stamp_ziwei_ai_report(ai: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(ai or {})
+    meta = dict(out.get("_meta") or {}) if isinstance(out.get("_meta"), dict) else {}
+    meta["source"] = "ai"
+    meta["kind"] = "ziwei_ai_deep"
+    meta.setdefault("generated_at", datetime.utcnow().isoformat() + "Z")
+    out["_meta"] = meta
+    return out
+
+
+def _ziwei_ai_chapters(ai: Any) -> Dict[str, Any]:
+    """去掉 _meta，仅保留章节内容供展示/PDF。"""
+    data = _maybe_report_dict(ai) or {}
+    return {k: v for k, v in data.items() if k != "_meta" and v not in (None, "", {}, [])}
+
+
+def _peek_reusable_ziwei_ai() -> Optional[Dict[str, Any]]:
+    """出生未变时，返回可复用的紫微 AI 深批章节（不调用 DeepSeek）。"""
+    birth = st.session_state.get("birth_info")
+    fp = _saved_birth_fingerprint(birth)
+    if fp is None:
+        return None
+
+    session_ai = _ziwei_ai_chapters(st.session_state.get("ziwei_ai"))
+    session_fp = st.session_state.get("ziwei_ai_fp")
+    if session_ai and (session_fp == fp or session_fp is None):
+        # 旧 session 可能尚未打 fp；当前盘未重排时直接复用
+        st.session_state.ziwei_ai_fp = fp
+        return session_ai
+
+    uid = st.session_state.get("user_id")
+    if not (supabase_client and st.session_state.get("auth_ok") and uid):
+        return None
+    try:
+        reports = supabase_client.get_reports(uid, limit=15) or []
+    except Exception:
+        return None
+
+    for row in reports:
+        content = _maybe_report_dict(row.get("report_content"))
+        if not content or not _report_is_ziwei_ai(content):
+            continue
+        row_bi = row.get("birth_info") if isinstance(row.get("birth_info"), dict) else None
+        if not row_bi or _saved_birth_fingerprint(row_bi) != fp:
+            continue
+        chapters = _ziwei_ai_chapters(content)
+        if chapters:
+            return chapters
+    return None
+
+
+def try_reuse_ziwei_ai_deep(*, can_ai_clean: bool) -> bool:
+    """若已有紫微 AI 深批存档则载入 session，返回 True（不调用 DeepSeek、不扣次）。"""
+    found = _peek_reusable_ziwei_ai()
+    if not found:
+        return False
+    birth = st.session_state.get("birth_info")
+    fp = _saved_birth_fingerprint(birth)
+    st.session_state.ziwei_ai = found
+    st.session_state.ziwei_ai_fp = fp
+    st.session_state.ziwei_ai_watermarked = not can_ai_clean
+    return True
+
+
+def _save_ziwei_ai_if_logged_in(ai: Dict[str, Any], chart: Optional[Dict[str, Any]] = None) -> None:
+    if not (supabase_client and st.session_state.get("auth_ok")):
+        return
+    birth = st.session_state.get("birth_info")
+    if not isinstance(birth, dict):
+        return
+    payload = _stamp_ziwei_ai_report(ai)
+    chart_meta = {"_kind": "ziwei"}
+    if isinstance(chart, dict):
+        chart_meta.update(
+            {
+                "ok": bool(chart.get("ok")),
+                "ming_ganzhi": chart.get("ming_ganzhi"),
+                "shen_palace": chart.get("shen_palace"),
+                "ju_name": chart.get("ju_name"),
+                "gender": chart.get("gender"),
+            }
+        )
+    try:
+        supabase_client.save_report(
+            st.session_state.user_id,
+            birth,
+            chart_meta,
+            payload,
+            payment_tier=st.session_state.subscription_tier or "free",
+        )
+    except Exception:
+        pass
 
 
 def _birth_inputs_match_saved_chart() -> bool:
@@ -1894,6 +2006,7 @@ def render_ziwei_tab() -> None:
             st.session_state.ziwei_chart = chart
             st.session_state.ziwei_reading = reading
             st.session_state.ziwei_ai = None
+            st.session_state.ziwei_ai_fp = None
             st.session_state.ziwei_ai_watermarked = False
             st.rerun()
         except Exception as e:
@@ -1964,16 +2077,24 @@ def render_ziwei_tab() -> None:
     else:
         st.caption(t("ziwei_ai_watermark_note", lang))
 
-    if st.button(t("ziwei_ai_btn", lang), type="primary", use_container_width=True, key="ziwei_ai_btn"):
+    reusable_ziwei = _peek_reusable_ziwei_ai()
+    ziwei_ai_label = (
+        t("ziwei_ai_btn_reuse", lang) if reusable_ziwei else t("ziwei_ai_btn", lang)
+    )
+    if st.button(ziwei_ai_label, type="primary", use_container_width=True, key="ziwei_ai_btn"):
         if not is_registered():
             st.warning(t("ziwei_ai_need_login", lang))
             st.session_state.show_login = True
+        elif reusable_ziwei and try_reuse_ziwei_ai_deep(can_ai_clean=can_ai_clean):
+            st.success(t("ziwei_ai_reuse_unchanged", lang))
+            st.rerun()
         elif not report_gen:
             st.warning(t("ai_engine_missing", lang))
         else:
             with st.spinner(t("generating", lang)):
                 try:
                     # 免费预览额度 / 付费报告额度（银卡）；金钻不扣次
+                    # 仅在真正调用 DeepSeek 时扣次；复用存档不扣
                     if tier == "free" and supabase_client and st.session_state.get("auth_ok"):
                         if not supabase_client.consume_free_preview_quota(st.session_state.user_id):
                             st.warning(t("free_preview_exhausted", lang))
@@ -1990,7 +2111,11 @@ def render_ziwei_tab() -> None:
                         lang=lang,
                     )
                     st.session_state.ziwei_ai = ai
+                    st.session_state.ziwei_ai_fp = _saved_birth_fingerprint(
+                        st.session_state.get("birth_info")
+                    )
                     st.session_state.ziwei_ai_watermarked = not can_ai_clean
+                    _save_ziwei_ai_if_logged_in(ai, chart)
                     st.rerun()
                 except Exception as e:
                     st.error(f"{t('ziwei_ai_fail', lang)}{e}")
