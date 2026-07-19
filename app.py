@@ -1998,11 +1998,20 @@ def render_ziwei_tab() -> None:
     ai = st.session_state.get("ziwei_ai")
     if isinstance(ai, dict) and any(ai.values()):
         st.markdown(f"### {t('ziwei_ai_heading', lang)}")
-        for key, label_key in (
-            ("pattern", "ziwei_ai_pattern"),
+        ai_keys = (
             ("career", "ziwei_ai_career"),
-            ("life", "ziwei_ai_life"),
-        ):
+            ("wealth", "ziwei_ai_wealth"),
+            ("love", "ziwei_ai_love"),
+            ("health", "ziwei_ai_health"),
+        )
+        # 兼容旧三章缓存
+        if not any(ai.get(k) for k, _ in ai_keys) and (ai.get("pattern") or ai.get("life")):
+            ai_keys = (
+                ("pattern", "ziwei_ai_career"),
+                ("career", "ziwei_ai_wealth"),
+                ("life", "ziwei_ai_love"),
+            )
+        for key, label_key in ai_keys:
             sec = ai.get(key)
             if not sec:
                 continue
@@ -2032,9 +2041,12 @@ def render_ziwei_tab() -> None:
             if isinstance(ai_for_pdf, dict) and report_gen:
                 norm = {}
                 for key, label_key in (
-                    ("pattern", "ziwei_ai_pattern"),
                     ("career", "ziwei_ai_career"),
-                    ("life", "ziwei_ai_life"),
+                    ("wealth", "ziwei_ai_wealth"),
+                    ("love", "ziwei_ai_love"),
+                    ("health", "ziwei_ai_health"),
+                    ("pattern", "ziwei_ai_career"),
+                    ("life", "ziwei_ai_love"),
                 ):
                     sec = ai_for_pdf.get(key)
                     if sec:

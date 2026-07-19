@@ -1721,7 +1721,7 @@ Reflective advice only — not destiny. Emphasize balance (avoid extremes)."""
         local_reading: dict,
         lang: str = "zh",
     ) -> Dict[str, Any]:
-        """紫微斗数 AI 深批：三章（命格总论 / 事业财运 / 感情身心）。"""
+        """紫微斗数 AI 深批：事业 / 财运 / 感情 / 健康 四章（与基础解读整合，避免重复三合四化飞星）。"""
         from ziwei_engine import chart_summary_for_ai
 
         prev_lang = getattr(self, "lang", "zh")
@@ -1730,67 +1730,70 @@ Reflective advice only — not destiny. Emphasize balance (avoid extremes)."""
         local_bits = []
         for sec in (local_reading or {}).get("sections") or []:
             local_bits.append(f"- {sec.get('title')}: {sec.get('body')}")
-        local_txt = "\n".join(local_bits[:8])
+        local_txt = "\n".join(local_bits[:12])
 
         en = lang == "en"
+        titles = {
+            "career": "Career" if en else "事业",
+            "wealth": "Wealth" if en else "财运",
+            "love": "Relationships" if en else "感情",
+            "health": "Health" if en else "健康",
+        }
         if en:
-            titles = {
-                "pattern": "Natal Pattern",
-                "career": "Career & Wealth",
-                "life": "Love, Health & Mind",
-            }
             system = (
                 "You are a Zi Wei Dou Shu counselor. Output JSON only:\n"
                 "{\n"
-                '  "pattern": {"professional": ["p1","p2","p3"], '
-                '"plain": {"summary":"...","points":["...","...","..."],"detail":"..."}},\n'
                 '  "career": {"professional": ["p1","p2","p3"], '
                 '"plain": {"summary":"...","points":["...","...","..."],"detail":"..."}},\n'
-                '  "life": {"professional": ["p1","p2","p3"], '
+                '  "wealth": {"professional": ["p1","p2","p3"], '
+                '"plain": {"summary":"...","points":["...","...","..."],"detail":"..."}},\n'
+                '  "love": {"professional": ["p1","p2","p3"], '
+                '"plain": {"summary":"...","points":["...","...","..."],"detail":"..."}},\n'
+                '  "health": {"professional": ["p1","p2","p3"], '
                 '"plain": {"summary":"...","points":["...","...","..."],"detail":"..."}}\n'
                 "}\n"
                 "professional MUST be exactly 3 paragraphs. plain forbids jargon. No markdown fences."
             )
-            prompt = f"""Zi Wei deep read in 3 chapters:
-1) pattern — Life palace, board, major-star structure, natal mutagens
-2) career — Career/Wealth/Travel palaces and practical work-money tips
-3) life — Spouse/Health/Fortune palaces, relationships and self-care
-Reflective advice only — not fate. Emphasize balance.
+            prompt = f"""Zi Wei deep read in 4 life-area chapters (do NOT re-explain San He / Si Hua / Flying theory):
+1) career — Career/Travel/Friends/Life; work path & timing
+2) wealth — Wealth/Property/Fortune; money style & risks
+3) love — Spouse/Fortune/Children; relationships
+4) health — Health/Parents/Life/Fortune; body-mind care
+Use chart facts; reflective advice only — not fate.
 Chart:
 {chart_txt}
 Local notes:
 {local_txt}
 """
         else:
-            titles = {
-                "pattern": "命格总论",
-                "career": "事业财运",
-                "life": "感情身心",
-            }
             system = (
                 "你是紫微斗数顾问。只输出 JSON：\n"
                 "{\n"
-                '  "pattern": {"professional": ["段1","段2","段3"], '
-                '"plain": {"summary":"一句话","points":["建议1","建议2","建议3"],"detail":"白话说明"}},\n'
                 '  "career": {"professional": ["段1","段2","段3"], '
                 '"plain": {"summary":"一句话","points":["建议1","建议2","建议3"],"detail":"白话说明"}},\n'
-                '  "life": {"professional": ["段1","段2","段3"], '
+                '  "wealth": {"professional": ["段1","段2","段3"], '
+                '"plain": {"summary":"一句话","points":["建议1","建议2","建议3"],"detail":"白话说明"}},\n'
+                '  "love": {"professional": ["段1","段2","段3"], '
+                '"plain": {"summary":"一句话","points":["建议1","建议2","建议3"],"detail":"白话说明"}},\n'
+                '  "health": {"professional": ["段1","段2","段3"], '
                 '"plain": {"summary":"一句话","points":["建议1","建议2","建议3"],"detail":"白话说明"}}\n'
                 "}\n"
                 "professional 必须恰好 3 段；plain 零术语（禁止庙旺、三方四正、化忌等）。不要代码块。"
+                "不要重复讲解三合/四化/飞星理论，直接落到该领域建议。"
             )
-            prompt = f"""请写紫微斗数 AI 深批三章（须综合四化、三合、飞星三套视角）：
-1) pattern「命格总论」：三合看命宫三方四正骨架，四化看生年禄权科忌，飞星看命宫飞出与自化；
-2) career「事业财运」：官禄/财帛/迁移宫，结合三方与飞化牵动给求职求财建议；
-3) life「感情身心」：夫妻/疾厄/福德宫，关系经营与身心保养。
-要求：理性参考、勿宿命断言；强调「三合看格局、四化看先天、飞星看连动、大限流年看应期」。
+            prompt = f"""请写紫微斗数 AI 深批四章（事业/财运/感情/健康）。基础解读已含三合→四化→飞星→大限，请勿重复理论，只做领域深化：
+1) career「事业」：官禄/迁移/交友/命宫，求职升迁与平台选择；
+2) wealth「财运」：财帛/田宅/福德，求财节奏与风险；
+3) love「感情」：夫妻/福德/子女，关系经营；
+4) health「健康」：疾厄/父母/命宫/福德，作息与身心保养。
+要求：理性参考、勿宿命断言；可点到大限应期。
 命盘：
 {chart_txt}
 基础解读摘要：
 {local_txt}
 专业每段 80–140 字；白话 summary≤40 字，detail 80–120 字。"""
 
-        raw = self._call_deepseek(prompt, system=system, max_tokens=5600)
+        raw = self._call_deepseek(prompt, system=system, max_tokens=6400)
         data = self._parse_json_loose(raw)
         if not isinstance(data, dict):
             data = {}
@@ -1801,29 +1804,32 @@ Local notes:
 
         out = {}
         for key, aliases in (
-            ("pattern", ("pattern", "命格总论", "总论", "natal")),
-            ("career", ("career", "事业财运", "事业", "财运")),
-            ("life", ("life", "感情身心", "感情", "身心")),
+            ("career", ("career", "事业", "事业财运")),
+            ("wealth", ("wealth", "财运", "财富")),
+            ("love", ("love", "感情", "感情身心", "life")),
+            ("health", ("health", "健康", "身心")),
         ):
             raw_sec = None
             for a in aliases:
                 if a in data and data.get(a) not in (None, "", [], {}):
                     raw_sec = data.get(a)
                     break
-            if raw_sec is None and key == "pattern" and (
+            # 旧模型若只返回 career+life：wealth 从 career 拆不成则留空；health/love 可共用 life
+            if raw_sec is None and key in ("love", "health") and data.get("life"):
+                raw_sec = data.get("life")
+            if raw_sec is None and key == "career" and (
                 data.get("professional") is not None or data.get("plain") is not None
             ):
                 raw_sec = data
-            if raw_sec is None and key == "pattern" and raw:
-                raw_sec = raw.strip()[:2000]
             page = self._normalize_hehun_chapter(raw_sec, titles[key], raw)
             out[key] = page
 
         if lang == "zh_hant":
             trad_titles = {
-                "pattern": "命格總論",
-                "career": "事業財運",
-                "life": "感情身心",
+                "career": "事業",
+                "wealth": "財運",
+                "love": "感情",
+                "health": "健康",
             }
             out = {k: self._to_traditional_page(v) for k, v in out.items()}
             for k, title in trad_titles.items():
