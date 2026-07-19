@@ -1,12 +1,12 @@
 """
 紫微斗数排盘（本地）
 
-安星规则对齐主流中州/常见软件口径（参考 iztro / 文墨天机同类算法）：
+安星规则对齐主流中州/常见软件口径（参考 iztro 同类算法）：
 - 寅宫为 0 起算
 - 顺数生月、逆数生时安命；顺数生时安身
 - 五虎遁起寅首 → 命宫干支 → 五行局
 - 局数除日数起紫微，对宫安天府，再布十四主星、六吉六煞、杂曜、四化
-- 另安长生十二神、博士十二神、小限年龄（盘面密度对齐文墨天机）
+- 另安长生十二神、博士十二神、小限年龄
 """
 from __future__ import annotations
 
@@ -427,7 +427,7 @@ def compute_ziwei_chart(
     add_minor(hong, "红鸾")
     add_minor(_fix(hong + 6), "天喜")
 
-    # —— 杂曜（文墨天机盘面密度）——
+    # —— 杂曜 ——
     # 台辅 / 封诰（时系）
     add_adj(_fix(_yin_idx_of_zhi("午") + time_index), "台辅")
     add_adj(_fix(_yin_idx_of_zhi("寅") + time_index), "封诰")
@@ -913,10 +913,7 @@ That is the **decade (大限)** for that palace: roughly ages 6–15 (nominal ag
 #### Three views (beginner)
 1. **Si Hua (四化)** — year-stem mutagens 禄/权/科/忌 = gain / power / fame / stress. See which palace they land in.  
 2. **San He (三合)** — Life palace + its trine + opposite (三方四正). Structure / pattern first.  
-3. **Flying Stars (飞星)** — each palace stem also flies 禄权科忌 to where those stars sit. Text `禄→Wealth` is that fly; `*` = self-mutagen (stays in-palace).
-
-#### About arrows in Wenmo Tianji
-Those arrows are **flying-star paths** (palace stem → target palace). We intentionally **do not** draw a full arrow web (too busy for beginners). Use the **Flying Stars** view: short labels like `禄→财帛` carry the same meaning without covering the plate.
+3. **Flying Stars (飞星)** — each palace has a stem that also flies 禄/权/科/忌 to where those stars sit (**fly path**). In the Flying Stars view, `禄→Wealth` means this palace’s stem flies Lu to Wealth; `*` = self-mutagen.
 
 #### Read order
 San He (structure) → Si Hua (natal mutagens) → Flying Stars (links) → decade ages for timing.
@@ -942,14 +939,13 @@ San He (structure) → Si Hua (natal mutagens) → Flying Stars (links) → deca
 2. **三合**  
    先看 **命宫的三方四正**（本宫 + 三合宫 + 对宫）里主星多不多、吉凶搭配如何，用来判断格局骨架高低。像看房子的承重墙，而不是先盯一扇窗。
 
-3. **飞星**  
-   每个宫有自己的**天干**，也能飞出禄权科忌，飞到盘中那颗星所在的宫。  
-   - 例如「禄→财帛」：本宫干飞化禄，落点在财帛宫，钱财议题被牵动。  
-   - 标 `*` 或写「自化」：飞回本宫，能量更内聚。
-
-#### 文墨天机里的箭头要不要加？
-文墨盘面上的箭头，多半就是 **飞星路径**（从某宫天干指向四化落点）。  
-我们**刻意不加满盘箭头**：新手盘会显得太密、难读。请改用上方的 **「飞星」视角**——宫内小字 `禄→某某宫` 表达的是同一件事，更清晰。
+3. **飞星**（怎么看）  
+   每个宫有自己的**天干**，按该干再飞出禄权科忌，落到盘中对应星所在的宫——「从本宫干 → 落点宫」就是 **飞星路径**。  
+   切换上方 **「飞星」视角** 后，看宫内小字即可：  
+   - `禄→财帛`：本宫天干飞化禄，落在财帛 → 本宫议题牵动财运  
+   - `权→官禄`：飞化权落官禄 → 主导力牵动事业  
+   - 带 `*`：**自化**（飞回本宫），力量更向内  
+   新手可先只看命宫、财帛、官禄、夫妻四宫的飞出。
 
 #### 建议读盘顺序
 三合看格局 → 四化看先天喜忌 → 飞星看宫际牵动 → 再对照大限年龄/年份看应期。
@@ -965,7 +961,7 @@ San He (structure) → Si Hua (natal mutagens) → Flying Stars (links) → deca
     return body
 
 
-# 方格盘地支位置（文墨天机式固定地盘）：4x4，中宫 2x2
+# 方格盘地支位置（固定地盘）：4x4，中宫 2x2
 #   巳 午 未 申
 #   辰 [中] 酉
 #   卯 [中] 戌
@@ -992,7 +988,7 @@ def render_ziwei_chart_html(
     lang: str = "zh",
     include_title: bool = False,
 ) -> str:
-    """文墨天机式十二宫方格盘。mode: sihua | sanhe | feixing。"""
+    """十二宫方格盘。mode: sihua | sanhe | feixing。"""
     en = lang == "en"
     mode = (mode or "sihua").lower()
     if mode in ("四化",):
@@ -1230,8 +1226,8 @@ def render_ziwei_chart_html(
         )
     else:
         hint = loc(
-            "飞星盘：宫内「禄→某某宫」= 该宫天干飞化路径（等同文墨箭头，文字版更清晰）；* 为自化。",
-            "Flying Stars: labels like Lu→palace = fly path (same idea as Wenmo arrows); * = self.",
+            "飞星盘：宫内「禄→某某宫」= 本宫天干飞化禄落到该宫；* 为自化（飞回本宫）。",
+            "Flying Stars: e.g. Lu→Wealth = this palace stem flies Lu to Wealth; * = self-mutagen.",
         )
 
     blocks.append(f"<p style='font-size:13px;margin:4px 0 8px;'>{esc(hint)}</p>")
@@ -1261,8 +1257,8 @@ def render_ziwei_chart_html(
         "<p style='font-size:10px;margin:2px 0 0;opacity:0.7;'>"
         + esc(
             loc(
-                "盘面：左下为大限虚岁与对应公历年 · 右下宫名干支 · 主星加粗 · 吉曜绿/煞曜红/杂曜灰 · 飞星视角用文字代替箭头",
-                "Bottom-left: decade age + calendar years · majors bold · Flying view uses text, not arrows",
+                "盘面：左下为大限虚岁与对应公历年 · 右下宫名干支 · 主星加粗 · 吉曜绿/煞曜红/杂曜灰 · 飞星视角看宫内「禄→某某宫」",
+                "Bottom-left: decade age + calendar years · majors bold · Flying view: Lu→palace labels",
             )
         )
         + "</p>"

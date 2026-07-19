@@ -58,7 +58,7 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "ziwei_mode_sihua": "四化",
         "ziwei_mode_sanhe": "三合",
         "ziwei_mode_feixing": "飞星",
-        "ziwei_mode_hint": "四化=生年禄权科忌落点；三合=命宫三方四正格局；飞星=各宫天干飞化（文字版箭头）。左下「大限 x~y岁 / 年份」是该宫十年运。详情见上方「基本理论」。",
+        "ziwei_mode_hint": "四化=生年禄权科忌落点；三合=命宫三方四正格局；飞星=各宫天干飞化路径（如禄→财帛）。左下「大限 x~y岁 / 年份」是该宫十年运。详情见上方「基本理论」。",
         "ziwei_basic_hint": "基于上方四化、三合、飞星排盘给出的专业规则摘要（非 AI）。",
         "ziwei_ai_btn": "生成 AI 深批",
         "ziwei_ai_heading": "AI 深批",
