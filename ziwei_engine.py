@@ -1636,11 +1636,33 @@ def generate_ziwei_pdf_report(
     from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 
     from report_generator import ReportGenerator
-    from utils import _pdf_fix_glyphs, register_pdf_cjk_font
+    from utils import (
+        _pdf_font_is_sc_subset,
+        _pdf_fix_glyphs,
+        _pdf_text_image,
+        register_pdf_cjk_font,
+    )
 
     en = lang == "en"
 
+    # 注册与缺字检测必须用同一 TTF（TTC 会先物化）；失败则改用图片文字，避免 Helvetica 全文方块
+    font_name, font_path = register_pdf_cjk_font("ZWPDF")
+    use_paragraphs = bool(font_name and font_path)
+    # 简体子集或未指定字体：PDF 统一走简体字形，保证可读
+    prefer_simplified = (not en) and (
+        (not use_paragraphs) or _pdf_font_is_sc_subset(font_path)
+    )
+
     def T(s: str) -> str:
+        if en or not s:
+            return s
+        if prefer_simplified:
+            try:
+                from zh_convert import to_simplified
+
+                return to_simplified(s)
+            except Exception:
+                return _pdf_fix_glyphs(s, None)
         if lang == "zh_hant":
             try:
                 from zh_convert import to_traditional
@@ -1649,9 +1671,6 @@ def generate_ziwei_pdf_report(
             except Exception:
                 return s
         return s
-
-    # 注册与缺字检测必须用同一字体文件（避免 TTC 检测通过、实际嵌入简体子集导致「祿」变方框）
-    font_name, font_path = register_pdf_cjk_font("ZWPDF")
 
     buffer = io.BytesIO()
     cover_title = T("六西格玛命理 · 紫微斗数报告") if not en else "Sigma Fate Zi Wei Report"
@@ -1666,6 +1685,7 @@ def generate_ziwei_pdf_report(
         author=str((chart or {}).get("name") or "user"),
     )
     styles = getSampleStyleSheet()
+    body_font = font_name if use_paragraphs else "Helvetica"
     style_cover_sub = ParagraphStyle(
         "ZWCoverSub",
         parent=styles["Normal"],
@@ -1679,52 +1699,57 @@ def generate_ziwei_pdf_report(
     style_h1 = ParagraphStyle(
         "ZW1",
         parent=styles["Normal"],
-        fontName=font_name,
+        fontName=body_font,
         fontSize=18,
         leading=26,
         spaceBefore=6,
         spaceAfter=10,
         textColor="#0B1F33",
         alignment=TA_LEFT,
+        wordWrap="CJK",
     )
     style_h1c = ParagraphStyle("ZW1C", parent=style_h1, alignment=TA_CENTER, fontSize=22, leading=30)
     style_h2 = ParagraphStyle(
         "ZW2",
         parent=styles["Normal"],
-        fontName=font_name,
+        fontName=body_font,
         fontSize=13,
         leading=20,
         spaceBefore=12,
         spaceAfter=6,
         textColor="#1565C0",
+        wordWrap="CJK",
     )
     style_body = ParagraphStyle(
         "ZWB",
         parent=styles["Normal"],
-        fontName=font_name,
+        fontName=body_font,
         fontSize=10.5,
         leading=17,
         alignment=TA_JUSTIFY,
         spaceAfter=8,
+        wordWrap="CJK",
     )
     style_meta = ParagraphStyle(
         "ZWM",
         parent=styles["Normal"],
-        fontName=font_name,
+        fontName=body_font,
         fontSize=11,
         leading=18,
         alignment=TA_CENTER,
         spaceAfter=6,
+        wordWrap="CJK",
     )
     style_toc = ParagraphStyle(
         "ZWToc",
         parent=styles["Normal"],
-        fontName=font_name,
+        fontName=body_font,
         fontSize=11,
         leading=18,
         alignment=TA_LEFT,
         leftIndent=12,
         spaceAfter=4,
+        wordWrap="CJK",
     )
     content_width = A4[0] - 3.6 * cm
     story = []
@@ -1739,14 +1764,32 @@ def generate_ziwei_pdf_report(
         return _pdf_fix_glyphs(raw, font_path)
 
     def add(text, style=style_body):
-        # 先转繁体（若需要），再按「实际嵌入字体」做缺字替补——顺序不可反
+        # 先按字体能力转繁/简，再缺字替补——顺序不可反
         raw = str(text or "").strip()
         if not en:
             raw = T(raw)
         raw = _pdf_safe(raw)
         if not raw:
             return
-        story.append(Paragraph(escape(raw).replace("\n", "<br/>"), style))
+        if use_paragraphs:
+            story.append(Paragraph(escape(raw).replace("\n", "<br/>"), style))
+            return
+        # 无可用 CJK 字体：绘成图片，绝不输出 Helvetica 方块
+        font_size = int(getattr(style, "fontSize", 11) or 11)
+        img = _pdf_text_image(
+            raw,
+            font_path=_cjk_font_file_safe(),
+            font_size=font_size,
+            max_width_pt=content_width,
+            align="center" if getattr(style, "alignment", TA_LEFT) == TA_CENTER else "left",
+        )
+        if img is not None:
+            story.append(img)
+
+    def _cjk_font_file_safe():
+        from utils import _cjk_font_file
+
+        return _cjk_font_file()
 
     def section_by_id(sec_id: str) -> Dict[str, str]:
         for sec in (reading or {}).get("sections") or []:
