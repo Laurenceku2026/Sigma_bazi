@@ -1633,12 +1633,10 @@ def generate_ziwei_pdf_report(
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 
     from report_generator import ReportGenerator
-    from utils import _cjk_font_file, _pdf_fix_glyphs, _resolve_pdf_cjk_font
+    from utils import _pdf_fix_glyphs, register_pdf_cjk_font
 
     en = lang == "en"
 
@@ -1652,24 +1650,8 @@ def generate_ziwei_pdf_report(
                 return s
         return s
 
-    # 注册覆盖更全的 CJK 字体（独立名字，避免被简体子集抢先占用）
-    font_path = _cjk_font_file()
-    font_name = "ZWPDF"
-    try:
-        registered = set(pdfmetrics.getRegisteredFontNames())
-    except Exception:
-        registered = set()
-    if font_name not in registered and font_path is not None:
-        try:
-            p = str(font_path)
-            if p.lower().endswith(".ttc"):
-                pdfmetrics.registerFont(TTFont(font_name, p, subfontIndex=0))
-            else:
-                pdfmetrics.registerFont(TTFont(font_name, p))
-        except Exception:
-            font_name, _ = _resolve_pdf_cjk_font()
-    elif font_name not in registered:
-        font_name, _ = _resolve_pdf_cjk_font()
+    # 注册与缺字检测必须用同一字体文件（避免 TTC 检测通过、实际嵌入简体子集导致「祿」变方框）
+    font_name, font_path = register_pdf_cjk_font("ZWPDF")
 
     buffer = io.BytesIO()
     cover_title = T("六西格玛命理 · 紫微斗数报告") if not en else "Sigma Fate Zi Wei Report"
@@ -1753,17 +1735,15 @@ def generate_ziwei_pdf_report(
             .replace("⚠️", "")
             .replace("★", "*")
             .replace("●", "-")
-            .replace("→", "->")
-            .replace("⇒", "->")
-            .replace("｜", "|")
-            .replace("—", "-")
         )
         return _pdf_fix_glyphs(raw, font_path)
 
     def add(text, style=style_body):
-        raw = _pdf_safe(str(text or "").strip())
+        # 先转繁体（若需要），再按「实际嵌入字体」做缺字替补——顺序不可反
+        raw = str(text or "").strip()
         if not en:
-            raw = _pdf_safe(T(raw))
+            raw = T(raw)
+        raw = _pdf_safe(raw)
         if not raw:
             return
         story.append(Paragraph(escape(raw).replace("\n", "<br/>"), style))
