@@ -1,8 +1,9 @@
 # Optional CJK fonts for PDF
 
-Bundled for Streamlit Cloud (embedded into PDF, avoids black squares / missing glyphs):
+Bundled for Streamlit Cloud (PIL draws Chinese into images; avoids ReportLab tofu):
 
-- `NotoSansSC-CJK-Fallback.ttc` — WenQuanYi Micro Hei (fuller SC/TC coverage; selectable text + digits)
-- `NotoSansSC-Regular.ttf` — Noto Sans SC subset (fallback)
+- `NotoSansSC-CJK-Fallback.ttf` — WenQuanYi Micro Hei face0 (preferred; full SC/TC, no TTC runtime extract)
+- `NotoSansSC-CJK-Fallback.ttc` — original collection (kept for reference)
+- `NotoSansSC-Regular.ttf` — Noto Sans SC subset (fallback; use simplified Chinese)
 
 Do not commit proprietary Windows fonts (SimHei / Microsoft YaHei).
