@@ -39,7 +39,7 @@ from utils import (
     render_bazi_chart,
 )
 from ziwei_engine import (
-    build_ziwei_local_reading,
+    build_ziwei_basic_reading,
     compute_ziwei_from_birth_info,
     format_ziwei_theory_markdown,
     generate_ziwei_pdf_report,
@@ -1868,7 +1868,7 @@ def apply_scroll_section_if_needed():
 
 
 def render_ziwei_tab() -> None:
-    """紫微斗数：排盘/本地解读全员开放；AI 深批全员可看，金卡+无水印与 PDF。"""
+    """紫微斗数：排盘（四化/三合/飞星）+ 基础解读全员开放；AI 深批金卡+无水印与 PDF。"""
     st.markdown(f"### {t('ziwei_heading', lang)}")
     st.caption(t("ziwei_intro", lang))
     with st.expander(t("ziwei_theory_title", lang), expanded=False):
@@ -1890,7 +1890,7 @@ def render_ziwei_tab() -> None:
     if st.button(t("ziwei_run", lang), type="primary", use_container_width=True, key="ziwei_run_btn"):
         try:
             chart = compute_ziwei_from_birth_info(bi, bd)
-            reading = build_ziwei_local_reading(chart, lang=lang)
+            reading = build_ziwei_basic_reading(chart, lang=lang)
             st.session_state.ziwei_chart = chart
             st.session_state.ziwei_reading = reading
             st.session_state.ziwei_ai = None
@@ -1901,21 +1901,40 @@ def render_ziwei_tab() -> None:
             return
 
     chart = st.session_state.get("ziwei_chart")
-    reading = st.session_state.get("ziwei_reading")
     if not isinstance(chart, dict) or not chart.get("ok"):
         return
 
-    # 语言切换时重刷本地解读文案
-    if isinstance(reading, dict) and reading.get("ok"):
-        # 若当前语言与上次不一致，按 chart 重算本地解读
-        pass
-    reading = build_ziwei_local_reading(chart, lang=lang)
+    reading = build_ziwei_basic_reading(chart, lang=lang)
     st.session_state.ziwei_reading = reading
 
+    # 紫微命盘：四化 / 三合 / 飞星（只显示一次标题）
     st.markdown(f"#### {t('ziwei_chart_heading', lang)}")
-    st.markdown(render_ziwei_chart_html(chart, lang=lang), unsafe_allow_html=True)
+    mode_labels = [
+        t("ziwei_mode_sihua", lang),
+        t("ziwei_mode_sanhe", lang),
+        t("ziwei_mode_feixing", lang),
+    ]
+    mode_keys = ["sihua", "sanhe", "feixing"]
+    picked = st.radio(
+        t("ziwei_mode_label", lang),
+        options=mode_labels,
+        horizontal=True,
+        key="ziwei_chart_mode",
+    )
+    mode = mode_keys[mode_labels.index(picked)] if picked in mode_labels else "sihua"
+    st.caption(t("ziwei_mode_hint", lang))
+    st.markdown(
+        render_ziwei_chart_html(chart, mode=mode, lang=lang, include_title=False),
+        unsafe_allow_html=True,
+    )
+
+    # 基础解读（基于三套排盘，只显示一次标题）
     st.markdown(f"#### {t('ziwei_local_heading', lang)}")
-    st.markdown(render_ziwei_reading_html(reading, lang=lang), unsafe_allow_html=True)
+    st.caption(t("ziwei_basic_hint", lang))
+    st.markdown(
+        render_ziwei_reading_html(reading, lang=lang, include_title=False),
+        unsafe_allow_html=True,
+    )
 
     st.markdown("---")
     tier = st.session_state.subscription_tier or "free"
