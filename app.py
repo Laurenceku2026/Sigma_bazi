@@ -1904,6 +1904,13 @@ def render_ziwei_tab() -> None:
     if not isinstance(chart, dict) or not chart.get("ok"):
         return
 
+    # 刷新盘面字段（如大限公历年），避免旧 session 缓存缺年份
+    try:
+        chart = compute_ziwei_from_birth_info(bi, bd)
+        st.session_state.ziwei_chart = chart
+    except Exception:
+        pass
+
     reading = build_ziwei_basic_reading(chart, lang=lang)
     st.session_state.ziwei_reading = reading
 
@@ -1935,7 +1942,7 @@ def render_ziwei_tab() -> None:
          background: transparent; color:#222; }}
   table {{ font-variant-east-asian: proportional-width; }}
 </style></head><body>{chart_html}</body></html>""",
-        height=860,
+        height=920,
         scrolling=True,
     )
 

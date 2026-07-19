@@ -1107,20 +1107,40 @@ def render_ziwei_chart_html(
                 )
             hl = pname == "命宫" or bool(fr and any(it["self"] for it in fr["flies"]))
 
-        # 大限：年龄 + 公历年（优先用宫内已挂的 decadal）
-        dec = p.get("decadal") or dec_by_palace.get(pname) or {}
-        age_line = ""
-        year_line = ""
-        if dec:
-            age_line = loc(
-                f"大限 {dec.get('start_age')}～{dec.get('end_age')}岁",
-                f"Dec {dec.get('start_age')}–{dec.get('end_age')}",
+        # 大限：年龄 + 公历年（缺年份时按出生年回填，避免旧缓存只显示岁数）
+        dec = dict(p.get("decadal") or dec_by_palace.get(pname) or {})
+        birth_year = 0
+        try:
+            birth_year = int(str(chart.get("solar_date") or "")[:4])
+        except Exception:
+            birth_year = 0
+        if dec and birth_year and (not dec.get("start_year") or not dec.get("end_year")):
+            try:
+                sa, ea = int(dec["start_age"]), int(dec["end_age"])
+                dec["start_year"] = birth_year + sa - 1
+                dec["end_year"] = birth_year + ea - 1
+            except Exception:
+                pass
+
+        timing_html = ""
+        if dec.get("start_age") is not None and dec.get("end_age") is not None:
+            age_bit = loc(
+                f"{dec.get('start_age')}～{dec.get('end_age')}岁",
+                f"{dec.get('start_age')}–{dec.get('end_age')}",
             )
             if dec.get("start_year") and dec.get("end_year"):
-                year_line = loc(
+                year_bit = loc(
                     f"{dec.get('start_year')}～{dec.get('end_year')}年",
                     f"{dec.get('start_year')}–{dec.get('end_year')}",
                 )
+                timing_txt = loc(f"大限 {age_bit}｜{year_bit}", f"Dec {age_bit} | {year_bit}")
+            else:
+                timing_txt = loc(f"大限 {age_bit}", f"Dec {age_bit}")
+            timing_html = (
+                f"<div style='margin-top:4px;padding-top:3px;border-top:1px solid #CFD8DC;"
+                f"font-size:11px;line-height:1.3;color:#263238;font-weight:600;'>"
+                f"{esc(timing_txt)}</div>"
+            )
 
         tags = []
         if p.get("is_ming"):
@@ -1147,19 +1167,11 @@ def render_ziwei_chart_html(
         bg = "#FFF8E1" if hl else "#FAFAFA"
         border = "#F9A825" if hl else "#90A4AE"
         name_color = "#C62828" if (p.get("is_ming") or p.get("is_shen")) else "#0D47A1"
-        timing_html = ""
-        if age_line or year_line:
-            timing_html = (
-                f"<div style='float:left;font-size:10px;line-height:1.25;color:#37474F;'>"
-                f"<div style='font-weight:600;'>{esc(age_line)}</div>"
-                f"{('<div style=\"opacity:0.85;\">' + esc(year_line) + '</div>') if year_line else ''}"
-                f"</div>"
-            )
 
         return (
             f"<td style='width:25%;border:1.5px solid {border};background:{bg};"
-            f"padding:4px 5px 3px;vertical-align:top;height:178px;'>"
-            f"<div style='line-height:1.2;min-height:82px;'>"
+            f"padding:4px 5px 3px;vertical-align:top;min-height:200px;'>"
+            f"<div style='line-height:1.2;min-height:72px;'>"
             f"{majors}"
             f"{('<div style=\"margin-top:1px;\">' + minors + '</div>') if minors else ''}"
             f"{('<div style=\"margin-top:1px;\">' + adjs + '</div>') if adjs else ''}"
@@ -1169,13 +1181,12 @@ def render_ziwei_chart_html(
             f"{meta_s}"
             f"{('<br/>' + esc(ages_s)) if ages_s else ''}"
             f"</div>"
-            f"<div style='margin-top:4px;font-size:12px;line-height:1.25;'>"
             f"{timing_html}"
-            f"<span style='float:right;text-align:right;'>"
+            f"<div style='margin-top:3px;font-size:12px;line-height:1.25;text-align:right;'>"
             f"<b style='color:{name_color};font-size:13px;'>{esc(pname)}"
             f"{('·' + esc(tag_s)) if tag_s else ''}</b><br/>"
             f"<span style='opacity:0.85;font-size:11px;'>{esc(gan)}{esc(zhi)}</span>"
-            f"</span><div style='clear:both;'></div></div>"
+            f"</div>"
             f"</td>"
         )
 
